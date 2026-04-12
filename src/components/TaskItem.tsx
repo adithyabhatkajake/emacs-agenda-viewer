@@ -237,7 +237,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
               <textarea
                 value={editText}
                 onChange={e => setEditText(e.target.value)}
-                className="w-full bg-things-bg border border-things-border rounded-md px-3 py-2 text-[12px] text-text-primary font-mono leading-relaxed outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/30 resize-y min-h-[60px] [color-scheme:dark]"
+                className="w-full bg-things-bg border border-things-border rounded-md px-3 py-2 text-[12px] text-text-primary font-mono leading-relaxed outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/30 resize-y min-h-[60px]"
                 rows={Math.max(3, editText.split('\n').length + 1)}
                 autoFocus
               />

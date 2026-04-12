@@ -2,22 +2,76 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ========== Light theme (default) ========== */
+:root {
+  --things-bg: 255 255 255;
+  --things-sidebar: 245 245 247;
+  --things-sidebar-hover: 232 232 237;
+  --things-sidebar-active: 221 221 227;
+  --things-surface: 240 240 242;
+  --things-border: 209 209 214;
+  --things-border-subtle: 229 229 234;
+  --accent: 52 120 246;
+  --accent-teal: 0 164 199;
+  --text-primary: 29 29 31;
+  --text-secondary: 110 110 115;
+  --text-tertiary: 174 174 178;
+  --done-green: 52 199 89;
+  --priority-a: 255 59 48;
+  --priority-b: 255 149 0;
+  --priority-c: 52 120 246;
+  --priority-d: 142 142 147;
+  --dot-yellow: 255 204 0;
+  --dot-blue: 52 120 246;
+  --dot-purple: 175 82 222;
+  --dot-red: 255 59 48;
+  --dot-green: 52 199 89;
+  --dot-orange: 255 149 0;
+  --dot-gray: 142 142 147;
+  color-scheme: light;
+}
+
+/* ========== Dark theme ========== */
+.dark {
+  --things-bg: 45 45 47;
+  --things-sidebar: 50 50 52;
+  --things-sidebar-hover: 58 58 60;
+  --things-sidebar-active: 72 72 74;
+  --things-surface: 50 50 52;
+  --things-border: 58 58 60;
+  --things-border-subtle: 56 56 58;
+  --accent: 95 160 244;
+  --accent-teal: 100 210 255;
+  --text-primary: 245 245 247;
+  --text-secondary: 152 152 157;
+  --text-tertiary: 99 99 102;
+  --done-green: 48 209 88;
+  --priority-a: 255 69 58;
+  --priority-b: 255 159 10;
+  --priority-c: 95 160 244;
+  --priority-d: 99 99 102;
+  --dot-yellow: 255 214 10;
+  --dot-blue: 95 160 244;
+  --dot-purple: 191 90 242;
+  --dot-red: 255 69 58;
+  --dot-green: 48 209 88;
+  --dot-orange: 255 159 10;
+  --dot-gray: 99 99 102;
+  color-scheme: dark;
+}
+
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-html {
-  color-scheme: dark;
-}
-
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: #2D2D2F;
-  color: #F5F5F7;
+  background: rgb(var(--things-bg));
+  color: rgb(var(--text-primary));
 }
 
 #root {
@@ -25,7 +79,6 @@ body {
   display: flex;
 }
 
-/* Custom scrollbar styling (Things 3 dark mode) */
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -33,15 +86,14 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #48484A;
+  background: rgb(var(--things-border));
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #636366;
+  background: rgb(var(--text-tertiary));
 }
 
-/* Selection colors */
 ::selection {
-  background: rgba(95, 160, 244, 0.3);
-  color: #F5F5F7;
+  background: rgba(var(--accent), 0.3);
+  color: rgb(var(--text-primary));
 }

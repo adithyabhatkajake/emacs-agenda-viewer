@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { TaskList } from './components/TaskList';
 import { useTasks } from './hooks/useTasks';
+import { useTheme } from './hooks/useTheme';
 import type { ViewFilter } from './types';
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
 
   const [filter, setFilter] = useState<ViewFilter>({ type: 'today' });
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const { mode: themeMode, cycle: cycleTheme } = useTheme();
 
   // Toggle with Cmd+\ or Ctrl+\
   useEffect(() => {
@@ -86,6 +88,8 @@ export default function App() {
           activeFilter={filter}
           onFilterChange={setFilter}
           isDoneState={isDoneState}
+          themeMode={themeMode}
+          onCycleTheme={cycleTheme}
         />
       )}
       <TaskList

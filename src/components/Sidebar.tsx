@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import type { AgendaFile, AgendaEntry, ViewFilter, OrgTask } from '../types';
+import type { ThemeMode } from '../hooks/useTheme';
 
 interface SidebarProps {
   files: AgendaFile[];
@@ -10,6 +12,8 @@ interface SidebarProps {
   activeFilter: ViewFilter;
   onFilterChange: (filter: ViewFilter) => void;
   isDoneState: (state: string | undefined) => boolean;
+  themeMode: ThemeMode;
+  onCycleTheme: () => void;
 }
 
 function isActive(current: ViewFilter, check: ViewFilter): boolean {
@@ -59,12 +63,34 @@ function fileIcon(name: string): string {
   return '\u{1F4C4}';
 }
 
+function SidebarSection({ title, defaultCollapsed, children }: { title: string; defaultCollapsed?: boolean; children: React.ReactNode }) {
+  const [collapsed, setCollapsed] = useState(!!defaultCollapsed);
+  return (
+    <div className="px-3 pb-1">
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="flex items-center gap-1.5 w-full text-[11px] font-medium text-text-tertiary uppercase tracking-wider px-3 py-1.5 hover:text-text-secondary transition-colors"
+      >
+        <span className={`text-[8px] transition-transform ${collapsed ? '' : 'rotate-90'}`}>{'\u25B6'}</span>
+        {title}
+      </button>
+      {!collapsed && (
+        <div className="flex flex-col gap-0.5">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Sidebar({
   files,
   categories,
   allTags,
   activeFilter,
   onFilterChange,
+  themeMode,
+  onCycleTheme,
 }: SidebarProps) {
   const iconItem = (label: string, filter: ViewFilter, icon: string) => {
     const active = isActive(activeFilter, filter);
@@ -85,65 +111,65 @@ export function Sidebar({
   };
 
   return (
-    <aside className="w-60 min-w-[220px] bg-things-sidebar flex flex-col h-full overflow-y-auto select-none">
-      <div className="px-5 pt-6 pb-3">
+    <aside className="w-60 min-w-[220px] bg-things-sidebar flex flex-col h-full select-none">
+      <div className="px-5 pt-6 pb-3 flex-shrink-0">
         <h1 className="text-[13px] font-semibold text-text-tertiary tracking-wide uppercase">
           Agenda
         </h1>
       </div>
 
-      {/* Smart views */}
-      <div className="px-3 pb-2 flex flex-col gap-0.5">
-        {iconItem('All Tasks', { type: 'all' }, '\u{2630}')}
-        {iconItem('Today', { type: 'today' }, '\u{2B50}')}
-        {iconItem('Upcoming', { type: 'upcoming' }, '\u{1F4C5}')}
-      </div>
-
-      <div className="mx-4 border-t border-things-border my-2" />
-
-      {/* Categories */}
-      <div className="px-3 pb-1">
-        <div className="text-[11px] font-medium text-text-tertiary uppercase tracking-wider px-3 py-1.5">
-          Categories
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {/* Smart views */}
+        <div className="px-3 pb-2 flex flex-col gap-0.5">
+          {iconItem('All Tasks', { type: 'all' }, '\u{2630}')}
+          {iconItem('Today', { type: 'today' }, '\u{2B50}')}
+          {iconItem('Upcoming', { type: 'upcoming' }, '\u{1F4C5}')}
         </div>
-        <div className="flex flex-col gap-0.5">
+
+        <div className="mx-4 border-t border-things-border my-2" />
+
+        {/* Categories */}
+        <SidebarSection title="Categories">
           {categories.map(cat =>
             iconItem(cat, { type: 'category', category: cat }, categoryIcon(cat))
           )}
-        </div>
-      </div>
+        </SidebarSection>
 
-      <div className="mx-4 border-t border-things-border my-2" />
+        <div className="mx-4 border-t border-things-border my-2" />
 
-      {/* Files */}
-      <div className="px-3 pb-1">
-        <div className="text-[11px] font-medium text-text-tertiary uppercase tracking-wider px-3 py-1.5">
-          Files
-        </div>
-        <div className="flex flex-col gap-0.5">
+        {/* Files */}
+        <SidebarSection title="Files" defaultCollapsed>
           {files.map(f =>
             iconItem(f.name, { type: 'file', path: f.path }, fileIcon(f.name))
           )}
-        </div>
-      </div>
+        </SidebarSection>
 
-      {allTags.length > 0 && (
-        <>
-          <div className="mx-4 border-t border-things-border my-2" />
-          <div className="px-3 pb-3">
-            <div className="text-[11px] font-medium text-text-tertiary uppercase tracking-wider px-3 py-1.5">
-              Tags
-            </div>
-            <div className="flex flex-col gap-0.5">
+        {allTags.length > 0 && (
+          <>
+            <div className="mx-4 border-t border-things-border my-2" />
+            <SidebarSection title="Tags" defaultCollapsed>
               {allTags.map(tag =>
                 iconItem(tag, { type: 'tag', tag }, '\u{1F3F7}\uFE0F')
               )}
-            </div>
-          </div>
-        </>
-      )}
+            </SidebarSection>
+          </>
+        )}
+      </div>
 
-      <div className="flex-1" />
+      {/* Theme toggle — pinned at bottom */}
+      <div className="flex-shrink-0 px-4 py-3 border-t border-things-border">
+        <button
+          onClick={onCycleTheme}
+          className="flex items-center gap-2 w-full px-3 py-1.5 rounded-lg text-[12px] text-text-secondary hover:bg-things-sidebar-hover hover:text-text-primary transition-colors"
+          title={`Theme: ${themeMode} (click to cycle)`}
+        >
+          <span className="text-[14px]">
+            {themeMode === 'dark' ? '\u{1F319}' : themeMode === 'light' ? '\u2600\uFE0F' : '\u{1F305}'}
+          </span>
+          <span className="capitalize">{themeMode === 'auto' ? 'Auto' : themeMode}</span>
+        </button>
+      </div>
     </aside>
   );
 }
