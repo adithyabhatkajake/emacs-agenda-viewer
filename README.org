@@ -1,0 +1,103 @@
+#+title: Emacs Agenda Viewer
+
+
+*Motivation and AI disclaimer.* I have always liked Things 3 and Todoist for their ease of use. But I always found their feature set incomplete and lacking. I made peace with Emacs as it is powerful and extensible. But the org agenda interface always felt dated and clunky. So this is my vibe-coded attempt to connect a web front-end using emacs-client to the emacs backend to improve the visuals. Yes, this is vibe coded with AI, do what you want with this information. But feature requests and pull requests are welcome.
+
+** Architecture
+
+#+begin_example
+  Browser (React/Vite)  <--HTTP-->  Express Server  <--emacsclient-->  Emacs
+       :5173                           :3001                         (org-mode)
+#+end_example
+
+- =elisp/eav.el= :: Elisp helper loaded into running Emacs. Uses =org-agenda-get-day-entries= (org's own agenda machinery) for accurate filtering. Provides functions for reading/writing tasks, notes, clock, priorities, scheduling, deadlines.
+- =server/= :: Express + TypeScript backend. Calls =emacsclient --eval= to execute elisp. Writes large JSON results to temp files to avoid control character issues with stdout.
+- =src/= :: React + TypeScript + Tailwind CSS frontend. Things 3 dark mode design.
+
+** Setup
+
+*** Prerequisites
+
+- *Emacs* with =server-mode= enabled (=M-x server-start= or add =(server-start)= to your init file)
+- *Node.js* >= 18
+- *npm*
+- =emacsclient= must be on your =PATH=
+
+*** Install
+
+#+begin_src shell
+git clone git@github.com:adithyabhatkajake/emacs-agenda-viewer.git
+cd emacs-agenda-viewer
+npm install
+#+end_src
+
+** Usage
+
+1. Make sure Emacs is running with server mode:
+   #+begin_src elisp
+   (server-start)
+   #+end_src
+
+2. Start the dev server:
+   #+begin_src shell
+   npm run dev
+   #+end_src
+
+3. Open http://localhost:5173 in your browser.
+
+The app loads =elisp/eav.el= into your running Emacs on first request. All changes (state, priority, schedule, deadline, notes, clock) are written directly to your org files via =emacsclient=.
+
+*** Keyboard shortcuts
+
+| Key       | Action          |
+|-----------+-----------------|
+| =Cmd+\=   | Toggle sidebar  |
+
+** Features
+
+*** Views
+- *Today*: Calendar events (banner), scheduled tasks, deadlines due today/overdue
+- *Upcoming*: Next 7 days, grouped by date with events/scheduled/deadlines sub-sections
+- *All Tasks*: Every non-done heading with a TODO state
+- *Category/File/Tag*: Filter by org category, file, or tag
+
+*** Task actions (click to use)
+- *TODO state*: Click the state pill (TODO/NEXT/WAIT/etc.) to pick any state from the sequence
+- *Priority*: Click the priority badge (A/B/C/D) to change or remove priority
+- *Scheduled/Deadline*: Click to open date+time picker with quick options (Today, Tomorrow, Next Week) and a mini calendar
+- *Notes*: Click a task title to expand, then click the pencil icon to edit notes. Org checklists (=- [ ]=) render as interactive checkboxes.
+- *Clock*: Expand a task and click "Clock In" to start =org-clock-in=. A live timer banner appears at the top. Click "Stop" or "Stop Clock" to clock out.
+
+*** Sorting & Grouping
+- *Sort*: Agenda order, priority, category (toolbar buttons)
+- *Group*: Multi-select toggleable groups: agenda (scheduled vs deadlines), priority, category, state. Groups are collapsible by clicking the header.
+
+*** Org features supported
+- All TODO keyword sequences (custom states like WAIT, FLLW, SMDY, PROJ, DRFT, PROG)
+- Priorities A-D
+- Scheduled dates with repeaters (=.+1d=, =++1w=, etc.)
+- Deadlines with warning days (=-3d=) respecting =org-deadline-warning-days=
+- Active timestamps in body text
+- Org links, bold, italic, code/verbatim rendering in titles and notes
+- Org checklists with progress bar
+- Org clocking (clock-in, clock-out, live timer)
+- Property drawers and logbook preserved during edits
+
+** Missing features
+
+- Refile (backend exists but no UI yet)
+- Tag editing (backend exists but no UI yet)
+- Creating new tasks
+- Effort estimation editing
+- Search/filter by text
+- Habit tracking visualization
+- Agenda custom commands (only the default day/week view is used)
+- Light mode theme
+
+** Tech stack
+
+- [[https://react.dev][React 19]] + [[https://www.typescriptlang.org][TypeScript]]
+- [[https://vite.dev][Vite 6]]
+- [[https://tailwindcss.com][Tailwind CSS 3]]
+- [[https://expressjs.com][Express 5]]
+- [[https://orgmode.org][Org-mode]] via =emacsclient=
