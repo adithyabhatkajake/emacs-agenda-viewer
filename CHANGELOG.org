@@ -1,0 +1,21 @@
+#+title: Changelog
+
+** 0.1.1
+
+- Fix checklist rendering: support all three org checkbox states (=[ ]=, =[-]=, =[X]=)
+- In-progress =[-]= items render as orange checkboxes with a dash, italic text
+- Progress bar shows orange segment for in-progress items alongside green for checked
+- Clicking a checkbox cycles: unchecked -> in-progress -> checked -> unchecked
+
+** 0.1
+
+Initial feature-complete release.
+
+- Today/Upcoming/All Tasks views using org-agenda's own machinery
+- Clickable TODO states, priorities, scheduled/deadline dates with calendar+time picker
+- Inline notes viewing/editing with interactive org checklists
+- Org clocking (clock-in, clock-out, live timer banner)
+- Multi-level grouping (agenda type, priority, category, state) with collapsible headers
+- Calendar event banners, org markup rendering (bold, italic, code, links)
+- Light/dark/auto theme switching with proper CSS variable system
+- Collapsible sidebar with keyboard shortcut (=Cmd+\=)

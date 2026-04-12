@@ -277,13 +277,13 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
                     content={notes}
                     onToggleCheck={async (index) => {
                       if (!notes) return;
-                      // Find the Nth checklist item in the raw text and toggle it
+                      // Find the Nth checklist item and cycle: [ ] -> [-] -> [X] -> [ ]
                       let count = 0;
                       const newNotes = notes.replace(
-                        /^([ \t]*-\s+\[)([ Xx])(\]\s+)/gm,
+                        /^([ \t]*-\s+\[)([ Xx\-])(\]\s+)/gm,
                         (match, before, check, after) => {
                           if (count++ === index) {
-                            const newCheck = check.toLowerCase() === 'x' ? ' ' : 'X';
+                            const newCheck = check === ' ' ? '-' : check === '-' ? 'X' : ' ';
                             return `${before}${newCheck}${after}`;
                           }
                           return match;

@@ -64,14 +64,16 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
   const lines = content.split('\n');
 
   // Group consecutive checklist items together, tracking global index
+  // state: ' ' = unchecked, '-' = in-progress, 'X'/'x' = checked
+  type CheckItem = { state: string; text: string; globalIndex: number };
   const blocks: Array<
-    | { type: 'checklist'; items: Array<{ checked: boolean; text: string; globalIndex: number }> }
+    | { type: 'checklist'; items: CheckItem[] }
     | { type: 'text'; lines: string[] }
     | { type: 'created'; date: string }
   > = [];
   let checklistGlobalIndex = 0;
 
-  let currentChecklist: Array<{ checked: boolean; text: string; globalIndex: number }> | null = null;
+  let currentChecklist: CheckItem[] | null = null;
   let currentText: string[] | null = null;
 
   const flushChecklist = () => {
@@ -100,13 +102,13 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
       continue;
     }
 
-    // Checklist item: - [ ] text or - [X] text
-    const checklistMatch = trimmed.match(/^-\s+\[([ Xx])\]\s+(.+)$/);
+    // Checklist item: - [ ] text, - [X] text, or - [-] text
+    const checklistMatch = trimmed.match(/^-\s+\[([ Xx\-])\]\s+(.+)$/);
     if (checklistMatch) {
       flushText();
       if (!currentChecklist) currentChecklist = [];
       currentChecklist.push({
-        checked: checklistMatch[1].toLowerCase() === 'x',
+        state: checklistMatch[1],
         text: checklistMatch[2],
         globalIndex: checklistGlobalIndex++,
       });
@@ -124,9 +126,10 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
 
   // Count checklist progress
   const allCheckItems = blocks
-    .filter((b): b is { type: 'checklist'; items: Array<{ checked: boolean; text: string; globalIndex: number }> } => b.type === 'checklist')
+    .filter((b): b is { type: 'checklist'; items: CheckItem[] } => b.type === 'checklist')
     .flatMap(b => b.items);
-  const checkedCount = allCheckItems.filter(i => i.checked).length;
+  const checkedCount = allCheckItems.filter(i => i.state.toLowerCase() === 'x').length;
+  const inProgressCount = allCheckItems.filter(i => i.state === '-').length;
   const totalCheck = allCheckItems.length;
 
   return (
@@ -146,11 +149,17 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
               {/* Progress bar if there are checklist items */}
               {i === blocks.findIndex(b => b.type === 'checklist') && totalCheck > 0 && (
                 <div className="flex items-center gap-2 mb-2">
-                  <div className="flex-1 h-1.5 bg-things-bg rounded-full overflow-hidden">
+                  <div className="flex-1 h-1.5 bg-things-bg rounded-full overflow-hidden flex">
                     <div
-                      className="h-full bg-done-green rounded-full transition-all"
-                      style={{ width: `${totalCheck > 0 ? (checkedCount / totalCheck) * 100 : 0}%` }}
+                      className="h-full bg-done-green rounded-l-full transition-all"
+                      style={{ width: `${(checkedCount / totalCheck) * 100}%` }}
                     />
+                    {inProgressCount > 0 && (
+                      <div
+                        className="h-full bg-priority-b transition-all"
+                        style={{ width: `${(inProgressCount / totalCheck) * 100}%` }}
+                      />
+                    )}
                   </div>
                   <span className="text-[10px] text-text-tertiary tabular-nums">
                     {checkedCount}/{totalCheck}
@@ -158,31 +167,42 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
                 </div>
               )}
 
-              {block.items.map((item, j) => (
-                <div key={j} className="flex items-start gap-2.5 py-1">
-                  {/* Checkbox — clickable */}
-                  <button
-                    onClick={() => onToggleCheck?.(item.globalIndex)}
-                    className={`mt-0.5 w-4 h-4 rounded flex-shrink-0 border flex items-center justify-center transition-colors ${
-                      item.checked
-                        ? 'bg-done-green border-done-green hover:bg-done-green/80'
-                        : 'border-text-tertiary/50 hover:border-done-green/70'
-                    } ${onToggleCheck ? 'cursor-pointer' : 'cursor-default'}`}
-                  >
-                    {item.checked && (
-                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                        <path d="M2 5L4.5 7.5L8 3" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    )}
-                  </button>
-                  {/* Label */}
-                  <span className={`text-[13px] leading-snug ${
-                    item.checked ? 'line-through text-text-tertiary' : 'text-text-secondary'
-                  }`}>
-                    {renderInline(item.text)}
-                  </span>
-                </div>
-              ))}
+              {block.items.map((item, j) => {
+                const isChecked = item.state.toLowerCase() === 'x';
+                const isInProgress = item.state === '-';
+                return (
+                  <div key={j} className="flex items-start gap-2.5 py-1">
+                    {/* Checkbox — clickable, cycles: [ ] -> [-] -> [X] -> [ ] */}
+                    <button
+                      onClick={() => onToggleCheck?.(item.globalIndex)}
+                      className={`mt-0.5 w-4 h-4 rounded flex-shrink-0 border flex items-center justify-center transition-colors ${
+                        isChecked
+                          ? 'bg-done-green border-done-green hover:bg-done-green/80'
+                          : isInProgress
+                          ? 'bg-priority-b border-priority-b hover:bg-priority-b/80'
+                          : 'border-text-tertiary/50 hover:border-done-green/70'
+                      } ${onToggleCheck ? 'cursor-pointer' : 'cursor-default'}`}
+                    >
+                      {isChecked && (
+                        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                          <path d="M2 5L4.5 7.5L8 3" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                      {isInProgress && (
+                        <div className="w-2 h-0.5 rounded-full bg-white" />
+                      )}
+                    </button>
+                    {/* Label */}
+                    <span className={`text-[13px] leading-snug ${
+                      isChecked ? 'line-through text-text-tertiary' :
+                      isInProgress ? 'text-text-secondary italic' :
+                      'text-text-secondary'
+                    }`}>
+                      {renderInline(item.text)}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           );
         }
