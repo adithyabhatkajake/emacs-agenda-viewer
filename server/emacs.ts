@@ -185,6 +185,29 @@ export async function getAgendaRange(startDate: string, endDate: string): Promis
   return eavCall<AgendaEntry[]>(`(eav-get-agenda-range "${startDate}" "${endDate}")`);
 }
 
+export interface RefileTarget {
+  name: string;
+  file: string;
+  pos: number;
+}
+
+export async function getRefileTargets(): Promise<RefileTarget[]> {
+  return eavCall<RefileTarget[]>('(eav-get-refile-targets)');
+}
+
+export async function refileToTarget(
+  sourceFile: string, sourcePos: number, targetFile: string, targetPos: number,
+): Promise<void> {
+  await ensureLoaded();
+  await emacsEval(`(eav-refile-to-target "${sourceFile}" ${sourcePos} "${targetFile}" ${targetPos})`);
+}
+
+export async function setTitle(file: string, pos: number, title: string): Promise<void> {
+  await ensureLoaded();
+  const escaped = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  await emacsEval(`(eav-set-title "${file}" ${pos} "${escaped}")`);
+}
+
 export async function setTodoState(file: string, pos: number, state: string): Promise<void> {
   await ensureLoaded();
   const escaped = state.replace(/"/g, '\\"');
@@ -250,9 +273,17 @@ export async function getCaptureTemplates(): Promise<CaptureTemplate[]> {
   return eavCall<CaptureTemplate[]>('(eav-get-capture-templates)');
 }
 
-export async function executeCapture(templateKey: string, title: string): Promise<void> {
+export async function executeCapture(
+  templateKey: string,
+  title: string,
+  priority?: string,
+  scheduled?: string,
+  deadline?: string,
+): Promise<void> {
   await ensureLoaded();
-  const escapedKey = templateKey.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const escapedTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  await emacsEval(`(eav-capture "${escapedKey}" "${escapedTitle}")`);
+  const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const priArg = priority ? `"${esc(priority)}"` : 'nil';
+  const schArg = scheduled ? `"${esc(scheduled)}"` : 'nil';
+  const dlArg = deadline ? `"${esc(deadline)}"` : 'nil';
+  await emacsEval(`(eav-capture "${esc(templateKey)}" "${esc(title)}" ${priArg} ${schArg} ${dlArg})`);
 }

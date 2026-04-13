@@ -86,7 +86,7 @@ export function TodoStateMenu({
         ref={triggerRef}
         onClick={() => { if (!disabled && keywords) setOpen(!open); }}
         disabled={disabled}
-        className={`mt-px flex-shrink-0 rounded-md px-2 py-[3px] text-[10px] font-bold tracking-wide border transition-all
+        className={`mt-px flex-shrink-0 rounded-md px-2.5 md:px-2 py-[5px] md:py-[3px] text-[11px] md:text-[10px] font-bold tracking-wide border transition-all
           ${style.bg} ${style.text} ${style.border}
           ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:brightness-125'}
           ${open ? 'ring-1 ring-white/20' : ''}

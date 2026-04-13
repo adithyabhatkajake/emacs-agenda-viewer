@@ -234,11 +234,12 @@ function DatePickerDropdown({
           type="time"
           value={pendingTime}
           onChange={(e) => setPendingTime(e.target.value)}
+          onBlur={() => { if (pendingDate && pendingTime) confirmAndClose(pendingDate, pendingTime); }}
           onKeyDown={(e) => { if (e.key === 'Enter' && pendingDate) confirmAndClose(pendingDate, pendingTime || null); }}
           className="flex-1 bg-things-bg border border-things-border rounded-md px-2 py-1 text-[12px] text-text-primary outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/30 transition-colors"
         />
         {pendingTime && (
-          <button onClick={() => setPendingTime('')} className="text-text-tertiary hover:text-text-secondary text-[10px]" title="Clear time">{'\u2715'}</button>
+          <button onClick={() => { setPendingTime(''); if (pendingDate) confirmAndClose(pendingDate, null); }} className="text-text-tertiary hover:text-text-secondary text-[10px]" title="Clear time">{'\u2715'}</button>
         )}
       </div>
 

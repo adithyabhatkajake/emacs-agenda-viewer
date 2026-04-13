@@ -474,6 +474,52 @@ Replaces only the user-visible body text."
       (save-buffer)))
   (json-encode '((success . t))))
 
+(defun eav-get-refile-targets ()
+  "Return refile targets as JSON.
+Each target is an alist with name, file, and pos."
+  (require 'org-refile)
+  ;; org-refile-get-targets needs to be called from an org buffer
+  (let* ((default-buf (org-get-agenda-file-buffer (car (org-agenda-files))))
+         (targets (with-current-buffer default-buf
+                    (org-refile-get-targets default-buf)))
+         results)
+    (dolist (target targets)
+      (let* ((name (nth 0 target))
+             (file (nth 1 target))
+             (raw-pos (nth 3 target))
+             (pos (cond ((markerp raw-pos) (marker-position raw-pos))
+                        ((numberp raw-pos) raw-pos)
+                        (t nil))))
+        (when (and file pos)
+          (push (list (cons 'name name)
+                      (cons 'file (expand-file-name file))
+                      (cons 'pos pos))
+                results))))
+    (json-encode (vconcat (nreverse results)))))
+
+(defun eav-refile-to-target (source-file source-pos target-file target-pos)
+  "Refile heading at SOURCE-POS in SOURCE-FILE to TARGET-POS in TARGET-FILE."
+  (let ((target-name ""))
+    (with-current-buffer (find-file-noselect source-file)
+      (goto-char source-pos)
+      (org-back-to-heading t)
+      (org-refile nil nil (list target-name target-file nil target-pos))
+      (save-buffer))
+    ;; Save target buffer too
+    (with-current-buffer (find-file-noselect target-file)
+      (save-buffer)))
+  (json-encode '((success . t))))
+
+(defun eav-set-title (file pos title)
+  "Set the heading title at POS in FILE to TITLE.
+Preserves TODO state, priority, and tags."
+  (with-current-buffer (find-file-noselect file)
+    (goto-char pos)
+    (org-back-to-heading t)
+    (org-edit-headline title)
+    (save-buffer))
+  (json-encode '((success . t))))
+
 (defun eav-set-todo-state (file pos state)
   "Set the TODO state of heading at POS in FILE to STATE."
   (with-current-buffer (find-file-noselect file)
@@ -641,25 +687,55 @@ Returns a vector of alists with name, type, and options."
           (push (nreverse result) results))))
     (json-encode (vconcat (nreverse results)))))
 
-(defun eav-capture (template-key title)
+(defun eav-capture (template-key title &optional priority scheduled deadline)
   "Execute org-capture non-interactively for TEMPLATE-KEY.
-TITLE replaces %? in the template via `org-capture-initial'."
+TITLE is inserted where %? would be.
+PRIORITY is a single character string (\"A\", \"B\", etc.) or nil.
+SCHEDULED and DEADLINE are org timestamp strings or nil.
+
+Flow: org-capture runs its full pipeline --
+  1. `org-capture-fill-template' expands %u, %t, %<...>, %a, %i, %^{...}
+  2. `org-capture-place-entry' inserts the expanded template into the target buffer
+  3. `org-capture--position-cursor' finds %? -- we advise this to insert TITLE there
+  4. `:immediate-finish' causes `org-capture-finalize' to save and clean up
+  5. After finalize, we visit the captured entry to set priority/scheduled/deadline"
   (require 'org-capture)
-  (let* ((org-capture-initial title)
-         (entry (assoc template-key org-capture-templates))
+  (let* ((entry (assoc template-key org-capture-templates))
          (plist (nthcdr 5 entry))
          (had-immediate (plist-get plist :immediate-finish)))
     (unless entry
       (error "Unknown capture template key: %s" template-key))
-    ;; Temporarily force :immediate-finish so capture doesn't wait for editing
+    ;; Temporarily force :immediate-finish
     (unless had-immediate
       (setcdr (nthcdr 4 entry)
               (plist-put (copy-sequence plist) :immediate-finish t)))
     (unwind-protect
-        (org-capture nil template-key)
+        ;; Advise org-capture--position-cursor to insert TITLE at %?
+        ;; instead of just removing %? (which is the default behavior)
+        (cl-letf (((symbol-function 'org-capture--position-cursor)
+                   (lambda (beg end)
+                     (goto-char beg)
+                     (when (search-forward "%?" end t)
+                       (replace-match title t t)))))
+          (org-capture nil template-key))
       ;; Restore original plist
       (unless had-immediate
         (setcdr (nthcdr 4 entry) plist)))
+    ;; Set priority/scheduled/deadline on the captured entry
+    (when (or priority scheduled deadline)
+      (let ((marker org-capture-last-stored-marker))
+        (when (and marker (marker-buffer marker))
+          (with-current-buffer (marker-buffer marker)
+            (save-excursion
+              (goto-char marker)
+              (org-back-to-heading t)
+              (when priority
+                (org-priority (string-to-char priority)))
+              (when scheduled
+                (org-schedule nil scheduled))
+              (when deadline
+                (org-deadline nil deadline))
+              (save-buffer))))))
     (json-encode '((success . t)))))
 
 (provide 'eav)

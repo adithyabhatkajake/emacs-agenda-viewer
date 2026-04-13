@@ -27,17 +27,16 @@ export function useTasks() {
 
   const loadData = useCallback(async () => {
     try {
-      setError(null);
       const today = todayStr();
       const upcoming = addDays(today, 7);
-      const [t, f, k, c, todayE, upcomingE, clock] = await Promise.all([
+      // Fetch core data — clock status is non-fatal
+      const [t, f, k, c, todayE, upcomingE] = await Promise.all([
         fetchTasks(),
         fetchFiles(),
         fetchKeywords(),
         fetchConfig(),
         fetchAgendaDay(today),
         fetchAgendaRange(addDays(today, 1), upcoming),
-        fetchClockStatus(),
       ]);
       setTasks(t);
       setFiles(f);
@@ -45,10 +44,18 @@ export function useTasks() {
       setConfig(c);
       setTodayEntries(todayE);
       setUpcomingEntries(upcomingE);
-      setClockStatus(clock);
       hasLoaded.current = true;
+      setError(null);
+      // Clock status fetch is best-effort
+      try {
+        const clock = await fetchClockStatus();
+        setClockStatus(clock);
+      } catch { /* ignore clock poll failure */ }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      // Only show fatal error on initial load; on refresh, keep existing data
+      if (!hasLoaded.current) {
+        setError(err instanceof Error ? err.message : 'Unknown error');
+      }
     } finally {
       setInitialLoading(false);
     }

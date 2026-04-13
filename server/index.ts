@@ -10,6 +10,9 @@ import {
   getAgendaRange,
   getTodoKeywords,
   getConfig,
+  getRefileTargets,
+  refileToTarget,
+  setTitle,
   setTodoState,
   setPriority,
   setTags,
@@ -167,6 +170,45 @@ app.get('/api/agenda/range', async (req, res) => {
   }
 });
 
+// GET /api/refile/targets - get refile targets
+app.get('/api/refile/targets', async (_req, res) => {
+  try {
+    const targets = await getRefileTargets();
+    res.json(targets);
+  } catch (err) {
+    console.error('Failed to get refile targets:', err);
+    res.status(500).json({ error: 'Failed to get refile targets' });
+  }
+});
+
+// POST /api/refile - refile a task
+app.post('/api/refile', async (req, res) => {
+  try {
+    const { sourceFile, sourcePos, targetFile, targetPos } = req.body;
+    if (!sourceFile || sourcePos === undefined || !targetFile || targetPos === undefined) {
+      res.status(400).json({ error: 'sourceFile, sourcePos, targetFile, targetPos required' });
+      return;
+    }
+    await refileToTarget(sourceFile, sourcePos, targetFile, targetPos);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to refile:', err);
+    res.status(500).json({ error: 'Failed to refile task' });
+  }
+});
+
+// PATCH /api/tasks/:id/title - change heading title
+app.patch('/api/tasks/:id/title', async (req, res) => {
+  try {
+    const { file, pos, title } = req.body;
+    await setTitle(file, pos, title);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to set title:', err);
+    res.status(500).json({ error: 'Failed to set title' });
+  }
+});
+
 // PATCH /api/tasks/:id/state - change TODO state
 app.patch('/api/tasks/:id/state', async (req, res) => {
   try {
@@ -253,12 +295,12 @@ app.get('/api/capture/templates', async (_req, res) => {
 // POST /api/capture - execute a capture
 app.post('/api/capture', async (req, res) => {
   try {
-    const { templateKey, title } = req.body;
+    const { templateKey, title, priority, scheduled, deadline } = req.body;
     if (!templateKey || !title) {
       res.status(400).json({ error: 'templateKey and title are required' });
       return;
     }
-    await executeCapture(templateKey, title);
+    await executeCapture(templateKey, title, priority, scheduled, deadline);
     res.json({ success: true });
   } catch (err) {
     console.error('Failed to capture:', err);

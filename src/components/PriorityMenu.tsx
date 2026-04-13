@@ -49,7 +49,7 @@ export function PriorityMenu({ currentPriority, onSelect, disabled }: PriorityMe
         ref={triggerRef}
         onClick={() => { if (!disabled) setOpen(!open); }}
         disabled={disabled}
-        className={`mt-px flex-shrink-0 rounded px-1.5 py-[3px] text-[10px] font-bold border transition-all
+        className={`mt-px flex-shrink-0 rounded px-2 md:px-1.5 py-[5px] md:py-[3px] text-[11px] md:text-[10px] font-bold border transition-all
           ${current ? `${current.bg} ${current.text} ${current.border}` : 'bg-things-surface text-text-tertiary border-things-border'}
           ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:brightness-125'}
           ${open ? 'ring-1 ring-white/20' : ''}

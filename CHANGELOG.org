@@ -1,5 +1,37 @@
 #+title: Changelog
 
+** 0.1.8
+
+- Mobile UX improvements
+  - Long-press (500ms) on tasks opens context menu (replaces right-click on mobile)
+  - Increased row padding, pill sizes, and font sizes on mobile for better touch targets
+  - =select-none= prevents text selection during long-press
+
+** 0.1.7
+
+- Fix false "Connection Error" screen on transient emacsclient failures
+  - Clock status polling is now best-effort; failure doesn't take down the app
+  - After initial load, refresh failures preserve existing data instead of showing error screen
+  - Fixed infinite retry loop caused by =error= in =useCallback= dependency array
+- Date picker auto-confirms when time input loses focus (no need to press the confirm button)
+- Mutation failures (stale positions) now trigger a data refresh for recovery
+
+** 0.1.6
+
+- Right-click context menu on tasks with "Edit title" and "Refile" options
+  - Edit title: inline text input using org's =org-edit-headline= (preserves TODO state, priority, tags)
+  - Refile: searchable modal with all =org-refile-get-targets= headings, type to filter
+  - Uses org's own =org-refile= with =rfloc= parameter for correct refile behavior
+
+** 0.1.5
+
+- Fix capture: use =cl-letf= to advise =org-capture--position-cursor= instead of string replacement
+  - Lets org's full template expansion pipeline run unmodified
+  - Title is inserted at =%?= position by the advised cursor function
+- Optional priority, scheduled date, and deadline when capturing
+  - Inline pickers in capture form (priority A-D, date with quick options + time)
+  - Applied to the captured entry via =org-capture-last-stored-marker= after finalize
+
 ** 0.1.4
 
 - Org capture from the web UI

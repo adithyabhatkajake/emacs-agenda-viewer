@@ -54,10 +54,12 @@ The app loads =elisp/eav.el= into your running Emacs on first request. All chang
 
 *** Keyboard shortcuts
 
-| Key       | Action          |
-|-----------+-----------------|
-| =Cmd+\=   | Toggle sidebar  |
-| =Cmd+N=   | New capture      |
+| Key          | Action                     |
+|--------------+----------------------------|
+| =Cmd+\=      | Toggle sidebar             |
+| =Cmd+N=      | New capture                |
+| Right-click  | Context menu (edit/refile)  |
+| Long-press   | Context menu (mobile)      |
 
 ** Features
 
@@ -74,12 +76,14 @@ The app loads =elisp/eav.el= into your running Emacs on first request. All chang
 - Select a template, type a title, press Enter -- org-capture runs in Emacs with =:immediate-finish=
 - All template expansions (=%u=, =%t=, =%<=...=>= timestamps, etc.) are handled by org itself
 
-*** Task actions (click to use)
+*** Task actions (click/right-click to use)
 - *TODO state*: Click the state pill (TODO/NEXT/WAIT/etc.) to pick any state from the sequence
 - *Priority*: Click the priority badge (A/B/C/D) to change or remove priority
 - *Scheduled/Deadline*: Click to open date+time picker with quick options (Today, Tomorrow, Next Week) and a mini calendar
 - *Notes*: Click a task title to expand, then click the pencil icon to edit notes. Org checklists (=- [ ]=) render as interactive checkboxes.
 - *Clock*: Expand a task and click "Clock In" to start =org-clock-in=. A live timer banner appears at the top. Click "Stop" or "Stop Clock" to clock out.
+- *Edit title*: Right-click (or long-press on mobile) a task and select "Edit title"
+- *Refile*: Right-click (or long-press on mobile) a task and select "Refile" to move it to another heading
 
 *** Sorting & Grouping
 - *Sort*: Agenda order, priority, category (toolbar buttons)
@@ -119,9 +123,7 @@ The UI is fully responsive -- use it from your phone's browser. If you run Tails
 
 ** Missing features
 
-- Refile (backend exists but no UI yet)
 - Tag editing (backend exists but no UI yet)
-- Creating new tasks (basic capture works; function-target templates need Emacs)
 - Effort estimation editing
 - Search/filter by text
 - Habit tracking visualization

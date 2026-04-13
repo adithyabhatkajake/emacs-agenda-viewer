@@ -1,6 +1,29 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import type { OrgTask, AgendaEntry, TodoKeywords } from '../types';
-import { updateTodoState, updatePriority, updateScheduled, updateDeadline, fetchNotes, saveNotes, clockIn, clockOutApi, type ClockStatus } from '../api/tasks';
+import { updateTodoState, updatePriority, updateScheduled, updateDeadline, updateTitle, fetchRefileTargets, refileTask, fetchNotes, saveNotes, clockIn, clockOutApi, type ClockStatus, type RefileTarget } from '../api/tasks';
+
+function useLongPress(callback: (e: React.TouchEvent) => void, ms = 500) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    timerRef.current = setTimeout(() => {
+      callbackRef.current(e);
+      timerRef.current = null;
+    }, ms);
+  }, [ms]);
+
+  const onTouchEnd = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  return { onTouchStart, onTouchEnd, onTouchMove: onTouchEnd };
+}
 import { TodoStateMenu } from './TodoStateMenu';
 import { PriorityMenu } from './PriorityMenu';
 import { DatePicker } from './DatePicker';
@@ -61,7 +84,54 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState('');
   const [saving, setSaving] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleText, setTitleText] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [refileOpen, setRefileOpen] = useState(false);
+  const contextRef = useRef<HTMLDivElement>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const done = isDoneState(task.todoState);
+
+  // Long press for mobile context menu
+  const longPress = useLongPress((e) => {
+    const touch = e.touches?.[0] || e.changedTouches?.[0];
+    if (touch) {
+      setContextMenu({ x: touch.clientX, y: touch.clientY });
+    }
+  });
+
+  // Close context menu on outside click
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (contextRef.current && !contextRef.current.contains(e.target as Node)) setContextMenu(null);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [contextMenu]);
+
+  // Focus title input when editing
+  useEffect(() => {
+    if (editingTitle && titleInputRef.current) {
+      titleInputRef.current.focus();
+      titleInputRef.current.select();
+    }
+  }, [editingTitle]);
+
+  const handleTitleSave = async () => {
+    const trimmed = titleText.trim();
+    if (!trimmed || trimmed === task.title || updating) return;
+    setUpdating(true);
+    try {
+      await updateTitle(task, trimmed);
+      setEditingTitle(false);
+      onRefresh();
+    } catch (err) {
+      console.error('Failed to update title:', err);
+    } finally {
+      setUpdating(false);
+    }
+  };
 
   const toggleExpand = async () => {
     if (expanded) {
@@ -103,7 +173,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
     if (updating) return;
     setUpdating(true);
     try { await updateScheduled(task, timestamp); onRefresh(); }
-    catch (err) { console.error('Failed to set scheduled:', err); }
+    catch (err) { console.error('Failed to set scheduled:', err); onRefresh(); }
     finally { setUpdating(false); }
   };
 
@@ -111,7 +181,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
     if (updating) return;
     setUpdating(true);
     try { await updateDeadline(task, timestamp); onRefresh(); }
-    catch (err) { console.error('Failed to set deadline:', err); }
+    catch (err) { console.error('Failed to set deadline:', err); onRefresh(); }
     finally { setUpdating(false); }
   };
 
@@ -119,7 +189,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
     if (updating) return;
     setUpdating(true);
     try { await updateScheduled(task, ''); onRefresh(); }
-    catch (err) { console.error('Failed to clear scheduled:', err); }
+    catch (err) { console.error('Failed to clear scheduled:', err); onRefresh(); }
     finally { setUpdating(false); }
   };
 
@@ -127,7 +197,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
     if (updating) return;
     setUpdating(true);
     try { await updateDeadline(task, ''); onRefresh(); }
-    catch (err) { console.error('Failed to clear deadline:', err); }
+    catch (err) { console.error('Failed to clear deadline:', err); onRefresh(); }
     finally { setUpdating(false); }
   };
 
@@ -150,7 +220,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
       } ${done ? 'opacity-40' : ''}`}
     >
       {/* Main row */}
-      <div className="flex items-center gap-2 px-3 md:px-5 py-1.5">
+      <div className="flex items-center gap-2 px-3 md:px-5 py-2.5 md:py-1.5">
         {/* State pill */}
         {task.todoState ? (
           <TodoStateMenu
@@ -173,17 +243,40 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
           disabled={updating}
         />
 
-        {/* Main content — click to expand */}
-        <div className="flex-1 min-w-0 cursor-pointer" onClick={toggleExpand}>
+        {/* Main content — click to expand, right-click/long-press for context menu */}
+        <div
+          className="flex-1 min-w-0 cursor-pointer select-none"
+          onClick={toggleExpand}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu({ x: e.clientX, y: e.clientY });
+          }}
+          {...longPress}
+        >
           {/* Title + inline metadata */}
-          <span
-            className={`text-[13px] leading-snug ${
-              done ? 'line-through text-text-tertiary' : 'text-text-primary'
-            }`}
-          >
-            {renderInline(task.title)}
-          </span>
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[10px] text-text-tertiary">
+          {editingTitle ? (
+            <input
+              ref={titleInputRef}
+              value={titleText}
+              onChange={(e) => setTitleText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleTitleSave(); }
+                if (e.key === 'Escape') { e.preventDefault(); setEditingTitle(false); }
+              }}
+              onBlur={handleTitleSave}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full bg-things-bg/80 border border-accent/40 rounded px-2 py-0.5 text-[13px] text-text-primary outline-none focus:ring-1 focus:ring-accent/30"
+            />
+          ) : (
+            <span
+              className={`text-[14px] md:text-[13px] leading-snug ${
+                done ? 'line-through text-text-tertiary' : 'text-text-primary'
+              }`}
+            >
+              {renderInline(task.title)}
+            </span>
+          )}
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[11px] md:text-[10px] text-text-tertiary">
             {isAgenda && effectiveAgendaType && (
               <span className={
                 effectiveAgendaType === 'deadline' ? 'text-priority-a' :
@@ -356,6 +449,145 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
           </div>
         </div>
       )}
+
+      {/* Context menu */}
+      {contextMenu && createPortal(
+        <div
+          ref={contextRef}
+          className="fixed z-[9999] bg-things-surface/95 rounded-lg shadow-2xl shadow-black/50 border border-things-border py-1 min-w-[140px]"
+          style={{ top: contextMenu.y, left: contextMenu.x, backdropFilter: 'blur(24px)' }}
+        >
+          <button
+            onClick={() => {
+              setTitleText(task.title);
+              setEditingTitle(true);
+              setContextMenu(null);
+            }}
+            className="w-full text-left px-3 py-1.5 text-[12px] text-text-primary hover:bg-things-sidebar-hover/80 transition-colors"
+          >
+            Edit title
+          </button>
+          <button
+            onClick={() => {
+              setRefileOpen(true);
+              setContextMenu(null);
+            }}
+            className="w-full text-left px-3 py-1.5 text-[12px] text-text-primary hover:bg-things-sidebar-hover/80 transition-colors"
+          >
+            Refile
+          </button>
+        </div>,
+        document.body
+      )}
+
+      {/* Refile picker */}
+      {refileOpen && (
+        <RefilePicker
+          task={task}
+          onClose={() => setRefileOpen(false)}
+          onRefiled={onRefresh}
+        />
+      )}
     </div>
+  );
+}
+
+// ---- Refile Picker ----
+
+function RefilePicker({ task, onClose, onRefiled }: { task: DisplayItem; onClose: () => void; onRefiled: () => void }) {
+  const [targets, setTargets] = useState<RefileTarget[] | null>(null);
+  const [query, setQuery] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    fetchRefileTargets()
+      .then(setTargets)
+      .catch(() => setError('Failed to load refile targets'));
+  }, []);
+
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.focus();
+  }, [targets]);
+
+  const filtered = targets?.filter(t => {
+    if (!query.trim()) return true;
+    const q = query.toLowerCase();
+    return t.name.toLowerCase().includes(q);
+  }).slice(0, 50); // limit to 50 results
+
+  const handleSelect = async (target: RefileTarget) => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await refileTask(task.file, task.pos, target.file, target.pos);
+      onRefiled();
+      onClose();
+    } catch {
+      setError('Failed to refile');
+      setSubmitting(false);
+    }
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] flex items-start justify-center pt-[15vh]"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="absolute inset-0 bg-black/50" style={{ backdropFilter: 'blur(4px)' }} />
+      <div
+        className="relative w-full max-w-[520px] mx-4 bg-things-surface/95 rounded-xl shadow-2xl shadow-black/50 border border-things-border overflow-hidden"
+        style={{ backdropFilter: 'blur(24px)' }}
+      >
+        <div className="px-4 pt-4 pb-2 flex items-center justify-between">
+          <h2 className="text-[13px] font-semibold text-text-primary">Refile to...</h2>
+          <button onClick={onClose} className="text-text-tertiary hover:text-text-secondary text-[18px] leading-none px-1">&times;</button>
+        </div>
+
+        {error && <div className="mx-4 mb-2 px-3 py-2 rounded-lg bg-priority-a/10 text-priority-a text-[11px]">{error}</div>}
+
+        <div className="px-4 pb-2">
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+              if (e.key === 'Enter' && filtered && filtered.length === 1) {
+                e.preventDefault();
+                handleSelect(filtered[0]);
+              }
+            }}
+            placeholder="Search headings..."
+            className="w-full bg-things-bg/80 border border-things-border rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary/60 focus:outline-none focus:ring-1 focus:ring-accent/40 focus:border-accent/40"
+          />
+        </div>
+
+        <div className="max-h-[40vh] overflow-y-auto px-2 pb-2">
+          {!targets ? (
+            <div className="py-6 text-center text-text-tertiary text-[12px]">Loading targets...</div>
+          ) : filtered && filtered.length === 0 ? (
+            <div className="py-6 text-center text-text-tertiary text-[12px]">No matching headings</div>
+          ) : (
+            filtered?.map((target, i) => (
+              <button
+                key={`${target.file}::${target.pos}::${i}`}
+                onClick={() => handleSelect(target)}
+                disabled={submitting}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-things-sidebar-hover/80 transition-colors flex items-baseline gap-2 min-w-0"
+              >
+                <span className="text-[12px] text-text-primary truncate flex-1">{target.name}</span>
+                <span className="text-[9px] text-text-tertiary flex-shrink-0 truncate max-w-[120px]">
+                  {target.file.split('/').pop()?.replace(/\.org$/, '')}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }

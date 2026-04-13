@@ -83,6 +83,38 @@ export async function saveNotes(file: string, pos: number, notes: string): Promi
   if (!res.ok) throw new Error('Failed to save notes');
 }
 
+export interface RefileTarget {
+  name: string;
+  file: string;
+  pos: number;
+}
+
+export async function fetchRefileTargets(): Promise<RefileTarget[]> {
+  const res = await fetch(`${BASE}/refile/targets`);
+  if (!res.ok) throw new Error('Failed to fetch refile targets');
+  return res.json();
+}
+
+export async function refileTask(
+  sourceFile: string, sourcePos: number, targetFile: string, targetPos: number,
+): Promise<void> {
+  const res = await fetch(`${BASE}/refile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sourceFile, sourcePos, targetFile, targetPos }),
+  });
+  if (!res.ok) throw new Error('Failed to refile task');
+}
+
+export async function updateTitle(task: OrgTask | { file: string; pos: number; id: string }, title: string): Promise<void> {
+  const res = await fetch(`${BASE}/tasks/${encodeURIComponent(task.id)}/title`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file, pos: task.pos, title }),
+  });
+  if (!res.ok) throw new Error('Failed to update title');
+}
+
 export async function updateTodoState(task: OrgTask, state: string): Promise<void> {
   const res = await fetch(`${BASE}/tasks/${encodeURIComponent(task.id)}/state`, {
     method: 'PATCH',
@@ -134,11 +166,15 @@ export async function fetchCaptureTemplates(): Promise<CaptureTemplate[]> {
   return res.json();
 }
 
-export async function captureTask(templateKey: string, title: string): Promise<void> {
+export async function captureTask(
+  templateKey: string,
+  title: string,
+  options?: { priority?: string; scheduled?: string; deadline?: string },
+): Promise<void> {
   const res = await fetch(`${BASE}/capture`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ templateKey, title }),
+    body: JSON.stringify({ templateKey, title, ...options }),
   });
   if (!res.ok) throw new Error('Failed to capture task');
 }
