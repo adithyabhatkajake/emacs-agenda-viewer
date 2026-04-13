@@ -304,9 +304,20 @@ function formatElapsed(seconds: number): string {
 export function TaskList({
   tasks, todayEntries, upcomingEntries, filter, keywords, isDoneState, clockStatus, onRefresh, onRefreshClock, sidebarOpen, onToggleSidebar,
 }: TaskListProps) {
-  const [sortKey, setSortKey] = useState<SortKey>('default');
-  const [activeGroups, setActiveGroups] = useState<GroupKey[]>([]);
-  const [showDone, setShowDone] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>(() => {
+    const saved = localStorage.getItem('eav-sort');
+    return (saved as SortKey) || 'default';
+  });
+  const [activeGroups, setActiveGroups] = useState<GroupKey[]>(() => {
+    try { return JSON.parse(localStorage.getItem('eav-groups') || '[]'); }
+    catch { return []; }
+  });
+  const [showDone, setShowDone] = useState(() => localStorage.getItem('eav-showDone') === 'true');
+
+  // Persist sort/group/showDone to localStorage
+  useEffect(() => { localStorage.setItem('eav-sort', sortKey); }, [sortKey]);
+  useEffect(() => { localStorage.setItem('eav-groups', JSON.stringify(activeGroups)); }, [activeGroups]);
+  useEffect(() => { localStorage.setItem('eav-showDone', String(showDone)); }, [showDone]);
 
   // Live clock timer
   const [clockElapsed, setClockElapsed] = useState(0);
