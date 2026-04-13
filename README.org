@@ -7,8 +7,10 @@
 
 #+begin_example
   Browser (React/Vite)  <--HTTP-->  Express Server  <--emacsclient-->  Emacs
-       :5173                           :3001                         (org-mode)
+       :5173 (dev)                     :3001                         (org-mode)
 #+end_example
+
+In production (=npm start=), the Express server serves the built frontend directly -- no Vite process needed.
 
 - =elisp/eav.el= :: Elisp helper loaded into running Emacs. Uses =org-agenda-get-day-entries= (org's own agenda machinery) for accurate filtering. Provides functions for reading/writing tasks, notes, clock, priorities, scheduling, deadlines.
 - =server/= :: Express + TypeScript backend. Calls =emacsclient --eval= to execute elisp. Writes large JSON results to temp files to avoid control character issues with stdout.
@@ -38,12 +40,15 @@ npm install
    (server-start)
    #+end_src
 
-2. Start the dev server:
+2. Build and start the production server:
    #+begin_src shell
-   npm run dev
+   npm run build
+   npm start
    #+end_src
 
-3. Open http://localhost:5173 in your browser.
+3. Open http://localhost:3001 in your browser.
+
+For development with hot-reload, use =npm run dev= (opens on port 5173).
 
 The app loads =elisp/eav.el= into your running Emacs on first request. All changes (state, priority, schedule, deadline, notes, clock) are written directly to your org files via =emacsclient=.
 
@@ -83,6 +88,27 @@ The app loads =elisp/eav.el= into your running Emacs on first request. All chang
 - Org clocking (clock-in, clock-out, live timer)
 - Property drawers and logbook preserved during edits
 
+*** Running as a Background Service (macOS)
+
+A launchd plist is included at =~/Library/LaunchAgents/com.hermitsage.emacs-agenda-viewer.plist=.
+
+#+begin_src shell
+# Start the service (runs on login, auto-restarts on crash)
+launchctl load ~/Library/LaunchAgents/com.hermitsage.emacs-agenda-viewer.plist
+
+# Stop the service
+launchctl unload ~/Library/LaunchAgents/com.hermitsage.emacs-agenda-viewer.plist
+
+# View logs
+tail -f ~/Library/Logs/emacs-agenda-viewer.log
+#+end_src
+
+The server binds to =0.0.0.0:3001=, so it's accessible over Tailscale or any local network.
+
+*** Mobile Access
+
+The UI is fully responsive -- use it from your phone's browser. If you run Tailscale, just visit =http://<your-tailscale-ip>:3001=.
+
 ** Missing features
 
 - Refile (backend exists but no UI yet)
@@ -92,7 +118,6 @@ The app loads =elisp/eav.el= into your running Emacs on first request. All chang
 - Search/filter by text
 - Habit tracking visualization
 - Agenda custom commands (only the default day/week view is used)
-- Light mode theme
 
 ** Tech stack
 

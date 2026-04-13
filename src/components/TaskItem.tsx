@@ -150,7 +150,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
       } ${done ? 'opacity-40' : ''}`}
     >
       {/* Main row */}
-      <div className="flex items-center gap-2 px-5 py-1.5">
+      <div className="flex items-center gap-2 px-3 md:px-5 py-1.5">
         {/* State pill */}
         {task.todoState ? (
           <TodoStateMenu
@@ -183,7 +183,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
           >
             {renderInline(task.title)}
           </span>
-          <span className="flex items-center gap-2 mt-0.5 text-[10px] text-text-tertiary">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[10px] text-text-tertiary">
             {isAgenda && effectiveAgendaType && (
               <span className={
                 effectiveAgendaType === 'deadline' ? 'text-priority-a' :
@@ -206,7 +206,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
 
       {/* Expanded detail panel */}
       {expanded && (
-        <div className="px-5 pb-2 pt-0 ml-[62px]">
+        <div className="px-3 md:px-5 pb-2 pt-0 ml-2 md:ml-[62px]">
           {/* Notes header with edit toggle */}
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[10px] text-text-tertiary uppercase tracking-wider font-semibold">Notes</span>
@@ -312,7 +312,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
           )}
 
           {/* Date pickers + Clock */}
-          <div className="flex items-center gap-2 mt-1">
+          <div className="flex flex-wrap items-center gap-2 mt-1">
             <DatePicker
               label="Scheduled"
               currentDate={task.scheduled?.raw}

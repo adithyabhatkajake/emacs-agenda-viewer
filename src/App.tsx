@@ -5,6 +5,17 @@ import { useTasks } from './hooks/useTasks';
 import { useTheme } from './hooks/useTheme';
 import type { ViewFilter } from './types';
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    const handler = () => setIsMobile(mq.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isMobile;
+}
+
 export default function App() {
   const {
     tasks,
@@ -22,9 +33,16 @@ export default function App() {
     refreshClock,
   } = useTasks();
 
+  const isMobile = useIsMobile();
   const [filter, setFilter] = useState<ViewFilter>({ type: 'today' });
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
   const { mode: themeMode, cycle: cycleTheme } = useTheme();
+
+  // Close sidebar on mobile when navigating
+  const handleFilterChange = (f: ViewFilter) => {
+    setFilter(f);
+    if (isMobile) setSidebarOpen(false);
+  };
 
   // Toggle with Cmd+\ or Ctrl+\
   useEffect(() => {
@@ -77,6 +95,13 @@ export default function App() {
 
   return (
     <>
+      {/* Mobile backdrop */}
+      {sidebarOpen && isMobile && (
+        <div
+          className="fixed inset-0 bg-black/40 z-30 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
       {sidebarOpen && (
         <Sidebar
           files={files}
@@ -86,10 +111,12 @@ export default function App() {
           todayEntries={todayEntries}
           upcomingEntries={upcomingEntries}
           activeFilter={filter}
-          onFilterChange={setFilter}
+          onFilterChange={handleFilterChange}
           isDoneState={isDoneState}
           themeMode={themeMode}
           onCycleTheme={cycleTheme}
+          isMobile={isMobile}
+          onClose={() => setSidebarOpen(false)}
         />
       )}
       <TaskList

@@ -1,13 +1,14 @@
 {
   "name": "emacs-agenda-viewer",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:client": "vite",
     "dev:server": "tsx watch server/index.ts",
-    "build": "tsc -b && vite build"
+    "build": "tsc -b && vite build",
+    "start": "tsx server/index.ts"
   },
   "dependencies": {
     "express": "^5.1.0",

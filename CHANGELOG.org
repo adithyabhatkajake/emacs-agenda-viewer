@@ -1,5 +1,20 @@
 #+title: Changelog
 
+** 0.1.2
+
+- Mobile-friendly responsive layout
+  - Sidebar becomes a slide-over drawer with backdrop on small screens
+  - Header controls (sort, group) wrap to a second row on narrow viewports
+  - Reduced padding and expanded-panel indent on mobile
+  - Metadata rows and date pickers wrap gracefully
+- Production server mode: Express serves built frontend (=npm start=)
+  - Single-process deployment on port 3001, no separate Vite dev server needed
+- launchd service plist for running as a background macOS service
+- Safe-area / notch support for iOS devices (=viewport-fit=cover=, =env(safe-area-inset-*)=)
+- Use =100dvh= for proper mobile browser viewport height
+- Touch-action: manipulation on buttons to eliminate tap delay
+- Fix Express 5 catch-all route syntax (=*= -> =/{*path}=) for production static serving
+
 ** 0.1.1
 
 - Fix checklist rendering: support all three org checkbox states (=[ ]=, =[-]=, =[X]=)

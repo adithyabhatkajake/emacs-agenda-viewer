@@ -170,7 +170,7 @@ function GroupHeader({ label, depth, collapsed, onToggle, count }: { label: stri
   const pad = depth === 0 ? 'pt-3 pb-1' : 'pt-2 pb-0.5';
   return (
     <div
-      className={`px-5 ${pad} flex items-center gap-2 cursor-pointer select-none group/hdr`}
+      className={`px-3 md:px-5 ${pad} flex items-center gap-2 cursor-pointer select-none group/hdr`}
       onClick={onToggle}
     >
       <span className={`text-[9px] text-text-tertiary transition-transform ${collapsed ? '' : 'rotate-90'}`}>{'\u25B6'}</span>
@@ -185,7 +185,7 @@ function GroupHeader({ label, depth, collapsed, onToggle, count }: { label: stri
 
 function SectionHeader({ title, count }: { title: string; count: number }) {
   return (
-    <div className="px-5 pt-4 pb-1.5 flex items-baseline gap-3 border-b border-things-border-subtle/40 sticky top-0 bg-things-bg/95 backdrop-blur-sm z-10">
+    <div className="px-3 md:px-5 pt-4 pb-1.5 flex items-baseline gap-3 border-b border-things-border-subtle/40 sticky top-0 bg-things-bg/95 backdrop-blur-sm z-10">
       <span className="text-[14px] font-bold text-text-primary">{title}</span>
       <span className="text-[10px] text-text-tertiary tabular-nums">{count}</span>
     </div>
@@ -196,7 +196,7 @@ function SectionHeader({ title, count }: { title: string; count: number }) {
 function EventBanners({ events }: { events: DisplayItem[] }) {
   if (events.length === 0) return null;
   return (
-    <div className="px-5 pt-2 pb-1 flex flex-col gap-0.5">
+    <div className="px-3 md:px-5 pt-2 pb-1 flex flex-col gap-0.5">
       {events.map(event => (
         <div
           key={event.id + ('agendaType' in event ? (event as AgendaEntry).agendaType : '')}
@@ -385,28 +385,48 @@ export function TaskList({
   return (
     <main className="flex-1 flex flex-col h-full overflow-hidden bg-things-bg">
       {/* Header */}
-      <div className="px-5 py-3 border-b border-things-border flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          {onToggleSidebar && (
+      <div className="px-4 md:px-5 py-3 border-b border-things-border">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {onToggleSidebar && (
+              <button
+                onClick={onToggleSidebar}
+                className="text-text-tertiary hover:text-text-secondary transition-colors text-[14px]"
+                title={sidebarOpen ? 'Hide sidebar (\u2318\\)' : 'Show sidebar (\u2318\\)'}
+              >
+                {sidebarOpen ? '\u25E7' : '\u2630'}
+              </button>
+            )}
+            <h2 className="text-lg md:text-xl font-bold text-text-primary tracking-tight">{filterTitle(filter)}</h2>
+          </div>
+          <div className="flex items-center gap-2 md:gap-3">
             <button
-              onClick={onToggleSidebar}
-              className="text-text-tertiary hover:text-text-secondary transition-colors text-[14px]"
-              title={sidebarOpen ? 'Hide sidebar (\u2318\\)' : 'Show sidebar (\u2318\\)'}
+              onClick={() => setShowDone(!showDone)}
+              className={`text-[11px] px-2 md:px-2.5 py-1 rounded-md transition-colors ${
+                showDone ? 'bg-done-green/15 text-done-green' : 'bg-things-surface text-text-secondary hover:bg-things-sidebar-hover'
+              }`}
             >
-              {sidebarOpen ? '\u25E7' : '\u25A1'}
+              {showDone ? 'Hide done' : 'Show done'}
             </button>
-          )}
-          <h2 className="text-xl font-bold text-text-primary tracking-tight">{filterTitle(filter)}</h2>
+            <button
+              onClick={onRefresh}
+              className="text-[11px] px-2 md:px-2.5 py-1 rounded-md bg-things-surface text-text-secondary hover:bg-things-sidebar-hover transition-colors"
+              title="Refresh from Emacs"
+            >{'\u21BB'}</button>
+            <span className="text-[11px] text-text-tertiary tabular-nums">{totalCount}</span>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
+
+        {/* Sort & Group controls — second row on mobile */}
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 mt-2">
           {/* Sort */}
-          <div className="flex items-center gap-1.5 text-xs text-text-tertiary">
-            <span>Sort:</span>
+          <div className="flex items-center gap-1 md:gap-1.5 text-xs text-text-tertiary">
+            <span className="text-[10px] md:text-xs">Sort:</span>
             {sortOptions.map(key => (
               <button
                 key={key}
                 onClick={() => setSortKey(key)}
-                className={`px-2.5 py-1 rounded-md transition-colors capitalize text-[11px] ${
+                className={`px-2 md:px-2.5 py-1 rounded-md transition-colors capitalize text-[11px] ${
                   sortKey === key
                     ? 'bg-accent/20 text-accent'
                     : 'bg-things-surface hover:bg-things-sidebar-hover text-text-secondary'
@@ -417,16 +437,17 @@ export function TaskList({
             ))}
           </div>
 
-          <div className="w-px h-4 bg-things-border" />
+          <div className="w-px h-4 bg-things-border hidden md:block" />
+          <div className="w-full md:hidden" />
 
           {/* Group — multi-select toggles */}
-          <div className="flex items-center gap-1.5 text-xs text-text-tertiary">
-            <span>Group:</span>
+          <div className="flex items-center gap-1 md:gap-1.5 text-xs text-text-tertiary">
+            <span className="text-[10px] md:text-xs">Group:</span>
             {ALL_GROUP_KEYS.map(key => (
               <button
                 key={key}
                 onClick={() => toggleGroup(key)}
-                className={`px-2.5 py-1 rounded-md transition-colors capitalize text-[11px] ${
+                className={`px-2 md:px-2.5 py-1 rounded-md transition-colors capitalize text-[11px] ${
                   activeGroups.includes(key)
                     ? 'bg-dot-purple/20 text-dot-purple'
                     : 'bg-things-surface hover:bg-things-sidebar-hover text-text-secondary'
@@ -445,23 +466,6 @@ export function TaskList({
               </button>
             )}
           </div>
-
-          <div className="w-px h-4 bg-things-border" />
-
-          <button
-            onClick={() => setShowDone(!showDone)}
-            className={`text-[11px] px-2.5 py-1 rounded-md transition-colors ${
-              showDone ? 'bg-done-green/15 text-done-green' : 'bg-things-surface text-text-secondary hover:bg-things-sidebar-hover'
-            }`}
-          >
-            {showDone ? 'Hide done' : 'Show done'}
-          </button>
-          <button
-            onClick={onRefresh}
-            className="text-[11px] px-2.5 py-1 rounded-md bg-things-surface text-text-secondary hover:bg-things-sidebar-hover transition-colors"
-            title="Refresh from Emacs"
-          >{'\u21BB'}</button>
-          <span className="text-[11px] text-text-tertiary tabular-nums">{totalCount}</span>
         </div>
       </div>
 
@@ -469,7 +473,7 @@ export function TaskList({
       <div className="flex-1 overflow-y-auto">
         {/* Clock banner */}
         {clockStatus.clocking && clockStatus.heading && (
-          <div className="mx-5 mt-3 mb-1 px-4 py-2 rounded-lg bg-done-green/10 border border-done-green/20 flex items-center gap-3">
+          <div className="mx-3 md:mx-5 mt-3 mb-1 px-3 md:px-4 py-2 rounded-lg bg-done-green/10 border border-done-green/20 flex items-center gap-3">
             <span className="w-2 h-2 rounded-full bg-done-green animate-pulse flex-shrink-0" />
             <span className="text-[12px] text-done-green font-medium flex-1 truncate">
               {renderInline(clockStatus.heading)}
@@ -525,7 +529,7 @@ export function TaskList({
 
             return (
               <div key={date}>
-                <div className="px-5 pt-4 pb-1 border-b border-things-border-subtle/30 sticky top-0 bg-things-bg/95 backdrop-blur-sm z-10">
+                <div className="px-3 md:px-5 pt-4 pb-1 border-b border-things-border-subtle/30 sticky top-0 bg-things-bg/95 backdrop-blur-sm z-10">
                   <div className="flex items-baseline gap-2">
                     <span className="text-2xl font-bold text-text-primary tabular-nums leading-none">{dayNum}</span>
                     <span className="text-[12px] font-medium text-text-secondary">

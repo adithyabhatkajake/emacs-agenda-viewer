@@ -14,6 +14,8 @@ interface SidebarProps {
   isDoneState: (state: string | undefined) => boolean;
   themeMode: ThemeMode;
   onCycleTheme: () => void;
+  isMobile?: boolean;
+  onClose?: () => void;
 }
 
 function isActive(current: ViewFilter, check: ViewFilter): boolean {
@@ -91,6 +93,8 @@ export function Sidebar({
   onFilterChange,
   themeMode,
   onCycleTheme,
+  isMobile,
+  onClose,
 }: SidebarProps) {
   const iconItem = (label: string, filter: ViewFilter, icon: string) => {
     const active = isActive(activeFilter, filter);
@@ -111,11 +115,21 @@ export function Sidebar({
   };
 
   return (
-    <aside className="w-60 min-w-[220px] bg-things-sidebar flex flex-col h-full select-none">
-      <div className="px-5 pt-6 pb-3 flex-shrink-0">
+    <aside className={`bg-things-sidebar flex flex-col h-full select-none ${
+      isMobile
+        ? 'fixed inset-y-0 left-0 w-[280px] z-40 shadow-2xl'
+        : 'w-60 min-w-[220px]'
+    }`}>
+      <div className="px-5 pt-6 pb-3 flex-shrink-0 flex items-center justify-between">
         <h1 className="text-[13px] font-semibold text-text-tertiary tracking-wide uppercase">
           Agenda
         </h1>
+        {isMobile && onClose && (
+          <button
+            onClick={onClose}
+            className="text-text-tertiary hover:text-text-secondary transition-colors text-lg leading-none"
+          >{'\u2715'}</button>
+        )}
       </div>
 
       {/* Scrollable content */}
