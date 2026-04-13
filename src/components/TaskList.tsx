@@ -49,16 +49,32 @@ function extractDateMs(raw: string | undefined): number {
   return new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3])).getTime();
 }
 
+function extractTimeMinutes(item: DisplayItem): number {
+  if ('timeOfDay' in item && (item as AgendaEntry).timeOfDay) {
+    const t = (item as AgendaEntry).timeOfDay!;
+    const m = t.match(/(\d{1,2}):(\d{2})/);
+    if (m) return parseInt(m[1]) * 60 + parseInt(m[2]);
+  }
+  const raw = item.scheduled?.raw || item.deadline?.raw;
+  if (raw) {
+    const m = raw.match(/(\d{1,2}):(\d{2})/);
+    if (m) return parseInt(m[1]) * 60 + parseInt(m[2]);
+  }
+  return Infinity;
+}
+
 function sortItems(items: DisplayItem[], sortKey: SortKey): DisplayItem[] {
   if (sortKey === 'default') return items;
   return [...items].sort((a, b) => {
+    let cmp = 0;
     switch (sortKey) {
-      case 'priority': return priorityOrd(a.priority) - priorityOrd(b.priority);
-      case 'state': return (a.todoState || '').localeCompare(b.todoState || '');
-      case 'deadline': return (extractDateMs(a.deadline?.raw) || extractDateMs(a.scheduled?.raw)) - (extractDateMs(b.deadline?.raw) || extractDateMs(b.scheduled?.raw));
-      case 'category': return a.category.localeCompare(b.category);
-      default: return 0;
+      case 'priority': cmp = priorityOrd(a.priority) - priorityOrd(b.priority); break;
+      case 'state': cmp = (a.todoState || '').localeCompare(b.todoState || ''); break;
+      case 'deadline': cmp = (extractDateMs(a.deadline?.raw) || extractDateMs(a.scheduled?.raw)) - (extractDateMs(b.deadline?.raw) || extractDateMs(b.scheduled?.raw)); break;
+      case 'category': cmp = a.category.localeCompare(b.category); break;
     }
+    if (cmp === 0) cmp = extractTimeMinutes(a) - extractTimeMinutes(b);
+    return cmp;
   });
 }
 

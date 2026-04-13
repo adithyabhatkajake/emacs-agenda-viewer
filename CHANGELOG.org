@@ -1,5 +1,11 @@
 #+title: Changelog
 
+** 0.1.3
+
+- Secondary sort by scheduled/deadline time within primary sort groups
+  - When sorting by priority, tasks with the same priority are sub-sorted by their scheduled time
+  - Works across all sort modes (priority, state, category, deadline)
+
 ** 0.1.2
 
 - Mobile-friendly responsive layout
