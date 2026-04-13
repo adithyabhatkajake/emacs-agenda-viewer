@@ -21,6 +21,8 @@ import {
   getClockStatus,
   clockIn,
   clockOut,
+  getCaptureTemplates,
+  executeCapture,
 } from './emacs.js';
 
 const app = express();
@@ -234,6 +236,33 @@ app.post('/api/tasks/:id/refile', async (req, res) => {
   } catch (err) {
     console.error('Failed to refile:', err);
     res.status(500).json({ error: 'Failed to refile task' });
+  }
+});
+
+// GET /api/capture/templates - get capture templates
+app.get('/api/capture/templates', async (_req, res) => {
+  try {
+    const templates = await getCaptureTemplates();
+    res.json(templates);
+  } catch (err) {
+    console.error('Failed to fetch capture templates:', err);
+    res.status(500).json({ error: 'Failed to fetch capture templates' });
+  }
+});
+
+// POST /api/capture - execute a capture
+app.post('/api/capture', async (req, res) => {
+  try {
+    const { templateKey, title } = req.body;
+    if (!templateKey || !title) {
+      res.status(400).json({ error: 'templateKey and title are required' });
+      return;
+    }
+    await executeCapture(templateKey, title);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to capture:', err);
+    res.status(500).json({ error: 'Failed to capture task' });
   }
 });
 

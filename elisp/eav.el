@@ -543,5 +543,124 @@ If TIMESTAMP is empty, remove the deadline."
     (save-buffer))
   (json-encode '((success . t))))
 
+;;; ---- Capture ----
+
+(defun eav--resolve-capture-file (file-spec)
+  "Resolve FILE-SPEC from a capture template target to an absolute path.
+Returns nil if the file cannot be resolved (e.g., it's a function)."
+  (cond
+   ((null file-spec) nil)
+   ((stringp file-spec)
+    (if (string-empty-p file-spec)
+        (and (boundp 'org-default-notes-file)
+             (expand-file-name org-default-notes-file org-directory))
+      (expand-file-name file-spec org-directory)))
+   ((symbolp file-spec)
+    (let ((val (and (boundp file-spec) (symbol-value file-spec))))
+      (when (stringp val)
+        (expand-file-name val org-directory))))
+   (t nil)))
+
+(defun eav--parse-template-prompts (template-str)
+  "Parse %^{prompt} fields from TEMPLATE-STR.
+Returns a vector of alists with name, type, and options."
+  (let (prompts)
+    (when (stringp template-str)
+      (with-temp-buffer
+        (insert template-str)
+        (goto-char (point-min))
+        (while (re-search-forward "%\\^\\(?:{\\([^}]*\\)}\\)?\\([gGtTuUpCL]\\)?" nil t)
+          (let* ((braces (match-string 1))
+                 (key (match-string 2))
+                 (parts (when braces (split-string braces "|")))
+                 (name (or (car parts) ""))
+                 (options (cdr parts))
+                 (type (cond
+                        ((member key '("g" "G")) "tags")
+                        ((member key '("t" "T" "u" "U")) "date")
+                        ((equal key "p") "property")
+                        (t "string"))))
+            (push (list (cons 'name name)
+                        (cons 'type type)
+                        (cons 'options (vconcat (or options []))))
+                  prompts)))))
+    (vconcat (nreverse prompts))))
+
+(defun eav-get-capture-templates ()
+  "Return org-capture-templates metadata as JSON."
+  (require 'org-capture)
+  (let (results)
+    (dolist (entry org-capture-templates)
+      (if (= (length entry) 2)
+          ;; Group header: ("n" "Capture Notes")
+          (push (list (cons 'key (nth 0 entry))
+                      (cons 'description (nth 1 entry))
+                      (cons 'isGroup t)
+                      (cons 'webSupported :json-false))
+                results)
+        ;; Full template entry
+        (let* ((key (nth 0 entry))
+               (desc (nth 1 entry))
+               (type (symbol-name (nth 2 entry)))
+               (target (nth 3 entry))
+               (template (nth 4 entry))
+               (plist (nthcdr 5 entry))
+               (target-type (symbol-name (car target)))
+               (target-file (eav--resolve-capture-file (nth 1 target)))
+               (target-headline (when (member (car target)
+                                              '(file+headline file+olp))
+                                  (let ((h (nth 2 target)))
+                                    (cond ((stringp h) h)
+                                          ((and (symbolp h) (boundp h))
+                                           (symbol-value h))
+                                          (t nil)))))
+               (template-str (when (stringp template) template))
+               (template-is-fn (and (listp template)
+                                    (eq (car template) 'function)))
+               (target-is-fn (member (car target) '(function)))
+               (web-supported (and (not target-is-fn)
+                                   (not template-is-fn)
+                                   target-file
+                                   (stringp template)))
+               (prompts (eav--parse-template-prompts template-str))
+               (result (list (cons 'key key)
+                             (cons 'description desc)
+                             (cons 'type type)
+                             (cons 'isGroup :json-false)
+                             (cons 'targetType target-type)
+                             (cons 'webSupported (if web-supported t :json-false))
+                             (cons 'prompts prompts))))
+          (when target-file
+            (push (cons 'targetFile target-file) result))
+          (when target-headline
+            (push (cons 'targetHeadline target-headline) result))
+          (when template-str
+            (push (cons 'template template-str) result))
+          (when template-is-fn
+            (push (cons 'templateIsFunction t) result))
+          (push (nreverse result) results))))
+    (json-encode (vconcat (nreverse results)))))
+
+(defun eav-capture (template-key title)
+  "Execute org-capture non-interactively for TEMPLATE-KEY.
+TITLE replaces %? in the template via `org-capture-initial'."
+  (require 'org-capture)
+  (let* ((org-capture-initial title)
+         (entry (assoc template-key org-capture-templates))
+         (plist (nthcdr 5 entry))
+         (had-immediate (plist-get plist :immediate-finish)))
+    (unless entry
+      (error "Unknown capture template key: %s" template-key))
+    ;; Temporarily force :immediate-finish so capture doesn't wait for editing
+    (unless had-immediate
+      (setcdr (nthcdr 4 entry)
+              (plist-put (copy-sequence plist) :immediate-finish t)))
+    (unwind-protect
+        (org-capture nil template-key)
+      ;; Restore original plist
+      (unless had-immediate
+        (setcdr (nthcdr 4 entry) plist)))
+    (json-encode '((success . t)))))
+
 (provide 'eav)
 ;;; eav.el ends here

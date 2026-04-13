@@ -73,6 +73,26 @@ export interface TodoKeywords {
   }>;
 }
 
+export interface CapturePrompt {
+  name: string;
+  type: 'string' | 'date' | 'tags' | 'property';
+  options: string[];
+}
+
+export interface CaptureTemplate {
+  key: string;
+  description: string;
+  type?: string;
+  isGroup: boolean;
+  targetType?: string;
+  targetFile?: string;
+  targetHeadline?: string;
+  template?: string;
+  templateIsFunction?: boolean;
+  prompts?: CapturePrompt[];
+  webSupported: boolean;
+}
+
 export type ViewFilter =
   | { type: 'all' }
   | { type: 'today' }

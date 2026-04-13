@@ -1,4 +1,4 @@
-import type { OrgTask, AgendaEntry, AgendaFile, TodoKeywords, OrgConfig } from '../types';
+import type { OrgTask, AgendaEntry, AgendaFile, TodoKeywords, OrgConfig, CaptureTemplate } from '../types';
 
 const BASE = '/api';
 
@@ -126,4 +126,19 @@ export async function updateDeadline(task: OrgTask, timestamp: string): Promise<
     body: JSON.stringify({ file: task.file, pos: task.pos, timestamp }),
   });
   if (!res.ok) throw new Error('Failed to update deadline');
+}
+
+export async function fetchCaptureTemplates(): Promise<CaptureTemplate[]> {
+  const res = await fetch(`${BASE}/capture/templates`);
+  if (!res.ok) throw new Error('Failed to fetch capture templates');
+  return res.json();
+}
+
+export async function captureTask(templateKey: string, title: string): Promise<void> {
+  const res = await fetch(`${BASE}/capture`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ templateKey, title }),
+  });
+  if (!res.ok) throw new Error('Failed to capture task');
 }

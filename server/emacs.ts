@@ -223,3 +223,36 @@ export async function refileTask(
     `(eav-refile-task "${sourceFile}" ${sourcePos} "${targetFile}" ${targetPos})`
   );
 }
+
+// ---- Capture ----
+
+export interface CapturePrompt {
+  name: string;
+  type: 'string' | 'date' | 'tags' | 'property';
+  options: string[];
+}
+
+export interface CaptureTemplate {
+  key: string;
+  description: string;
+  type?: string;
+  isGroup: boolean;
+  targetType?: string;
+  targetFile?: string;
+  targetHeadline?: string;
+  template?: string;
+  templateIsFunction?: boolean;
+  prompts?: CapturePrompt[];
+  webSupported: boolean;
+}
+
+export async function getCaptureTemplates(): Promise<CaptureTemplate[]> {
+  return eavCall<CaptureTemplate[]>('(eav-get-capture-templates)');
+}
+
+export async function executeCapture(templateKey: string, title: string): Promise<void> {
+  await ensureLoaded();
+  const escapedKey = templateKey.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const escapedTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  await emacsEval(`(eav-capture "${escapedKey}" "${escapedTitle}")`);
+}

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { TaskList } from './components/TaskList';
+import { CaptureModal } from './components/CaptureModal';
 import { useTasks } from './hooks/useTasks';
 import { useTheme } from './hooks/useTheme';
 import type { ViewFilter } from './types';
@@ -36,6 +37,7 @@ export default function App() {
   const isMobile = useIsMobile();
   const [filter, setFilter] = useState<ViewFilter>({ type: 'today' });
   const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
+  const [captureOpen, setCaptureOpen] = useState(false);
   const { mode: themeMode, cycle: cycleTheme } = useTheme();
 
   // Close sidebar on mobile when navigating
@@ -44,12 +46,16 @@ export default function App() {
     if (isMobile) setSidebarOpen(false);
   };
 
-  // Toggle with Cmd+\ or Ctrl+\
+  // Keyboard shortcuts: Cmd+\ toggle sidebar, Cmd+N capture
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') {
         e.preventDefault();
         setSidebarOpen(prev => !prev);
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
+        e.preventDefault();
+        setCaptureOpen(true);
       }
     };
     document.addEventListener('keydown', handler);
@@ -117,6 +123,7 @@ export default function App() {
           onCycleTheme={cycleTheme}
           isMobile={isMobile}
           onClose={() => setSidebarOpen(false)}
+          onCapture={() => setCaptureOpen(true)}
         />
       )}
       <TaskList
@@ -131,6 +138,11 @@ export default function App() {
         onRefreshClock={refreshClock}
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen(prev => !prev)}
+      />
+      <CaptureModal
+        open={captureOpen}
+        onClose={() => setCaptureOpen(false)}
+        onCaptured={refresh}
       />
     </>
   );

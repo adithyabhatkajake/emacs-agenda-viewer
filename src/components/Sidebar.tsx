@@ -16,6 +16,7 @@ interface SidebarProps {
   onCycleTheme: () => void;
   isMobile?: boolean;
   onClose?: () => void;
+  onCapture?: () => void;
 }
 
 function isActive(current: ViewFilter, check: ViewFilter): boolean {
@@ -95,6 +96,7 @@ export function Sidebar({
   onCycleTheme,
   isMobile,
   onClose,
+  onCapture,
 }: SidebarProps) {
   const iconItem = (label: string, filter: ViewFilter, icon: string) => {
     const active = isActive(activeFilter, filter);
@@ -124,12 +126,21 @@ export function Sidebar({
         <h1 className="text-[13px] font-semibold text-text-tertiary tracking-wide uppercase">
           Agenda
         </h1>
-        {isMobile && onClose && (
-          <button
-            onClick={onClose}
-            className="text-text-tertiary hover:text-text-secondary transition-colors text-lg leading-none"
-          >{'\u2715'}</button>
-        )}
+        <div className="flex items-center gap-1.5">
+          {onCapture && (
+            <button
+              onClick={onCapture}
+              title="New task (Cmd+N)"
+              className="w-6 h-6 flex items-center justify-center rounded-md text-text-tertiary hover:text-accent hover:bg-accent/10 transition-colors text-[16px] leading-none font-light"
+            >+</button>
+          )}
+          {isMobile && onClose && (
+            <button
+              onClick={onClose}
+              className="text-text-tertiary hover:text-text-secondary transition-colors text-lg leading-none"
+            >{'\u2715'}</button>
+          )}
+        </div>
       </div>
 
       {/* Scrollable content */}

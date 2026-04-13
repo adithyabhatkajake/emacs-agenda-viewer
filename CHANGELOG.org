@@ -1,5 +1,14 @@
 #+title: Changelog
 
+** 0.1.4
+
+- Org capture from the web UI
+  - Reads =org-capture-templates= from Emacs and presents them in a modal (=Cmd+N= or sidebar =+= button)
+  - Supports =entry= type templates with static file/headline targets
+  - Templates with function targets or bodies shown as "Emacs only"
+  - Runs org-capture non-interactively with =:immediate-finish=; all =%u=, =%t=, =%<...>= expansions handled by org
+  - "+" button in sidebar header for quick access
+
 ** 0.1.3
 
 - Secondary sort by scheduled/deadline time within primary sort groups

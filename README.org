@@ -57,6 +57,7 @@ The app loads =elisp/eav.el= into your running Emacs on first request. All chang
 | Key       | Action          |
 |-----------+-----------------|
 | =Cmd+\=   | Toggle sidebar  |
+| =Cmd+N=   | New capture      |
 
 ** Features
 
@@ -65,6 +66,13 @@ The app loads =elisp/eav.el= into your running Emacs on first request. All chang
 - *Upcoming*: Next 7 days, grouped by date with events/scheduled/deadlines sub-sections
 - *All Tasks*: Every non-done heading with a TODO state
 - *Category/File/Tag*: Filter by org category, file, or tag
+
+*** Capture (create new tasks)
+- Press =Cmd+N= or click the *+* button in the sidebar to open the capture modal
+- Picks up your =org-capture-templates= from Emacs -- all =entry= type templates with static targets are supported
+- Templates with function targets/bodies (e.g. denote) are shown grayed as "Emacs only"
+- Select a template, type a title, press Enter -- org-capture runs in Emacs with =:immediate-finish=
+- All template expansions (=%u=, =%t=, =%<=...=>= timestamps, etc.) are handled by org itself
 
 *** Task actions (click to use)
 - *TODO state*: Click the state pill (TODO/NEXT/WAIT/etc.) to pick any state from the sequence
@@ -113,7 +121,7 @@ The UI is fully responsive -- use it from your phone's browser. If you run Tails
 
 - Refile (backend exists but no UI yet)
 - Tag editing (backend exists but no UI yet)
-- Creating new tasks
+- Creating new tasks (basic capture works; function-target templates need Emacs)
 - Effort estimation editing
 - Search/filter by text
 - Habit tracking visualization
