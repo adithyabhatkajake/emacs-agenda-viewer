@@ -1,5 +1,19 @@
 #+title: Changelog
 
+** 0.1.10
+
+- Fix checklist parsing for all org bullet types
+  - =+= and =*= bullets now parsed as checklist items (not just =-=)
+  - Ordered bullets (=1.=, =a)=) with checkboxes also supported
+  - Sub-items (=-= lines under a =+ [ ]= item) grouped under their parent
+  - Multi-line checklist items render sub-text indented below
+  - Checkbox toggle works for all bullet types
+
+** 0.1.9
+
+- Persist sort, group-by, and show-done settings in =localStorage=
+  - Restored on page load so preferences survive refresh
+
 ** 0.1.8
 
 - Mobile UX improvements
