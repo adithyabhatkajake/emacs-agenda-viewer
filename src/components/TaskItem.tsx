@@ -373,7 +373,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
                       // Find the Nth checklist item and cycle: [ ] -> [-] -> [X] -> [ ]
                       let count = 0;
                       const newNotes = notes.replace(
-                        /^([ \t]*-\s+\[)([ Xx\-])(\]\s+)/gm,
+                        /^([ \t]*[-+*]\s+\[)([ Xx\-])(\]\s+)/gm,
                         (match, before, check, after) => {
                           if (count++ === index) {
                             const newCheck = check === ' ' ? '-' : check === '-' ? 'X' : ' ';

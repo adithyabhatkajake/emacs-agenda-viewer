@@ -102,8 +102,9 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
       continue;
     }
 
-    // Checklist item: - [ ] text, - [X] text, or - [-] text
-    const checklistMatch = trimmed.match(/^-\s+\[([ Xx\-])\]\s+(.+)$/);
+    // Checklist item: [-+*] [ ] text, [-+*] [X] text, or [-+*] [-] text
+    // Also ordered: 1. [ ] text, 1) [ ] text, a. [ ] text
+    const checklistMatch = trimmed.match(/^(?:[-+*]|(?:[0-9]+|[A-Za-z])[.)]) +\[([ Xx\-])\]\s+(.+)$/);
     if (checklistMatch) {
       flushText();
       if (!currentChecklist) currentChecklist = [];
@@ -113,6 +114,21 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
         globalIndex: checklistGlobalIndex++,
       });
       continue;
+    }
+
+    // Sub-item text under a checklist item (starts with - or + but no checkbox)
+    // Append to the last checklist item's text
+    if (currentChecklist && currentChecklist.length > 0) {
+      const subItemMatch = trimmed.match(/^[-+*]\s+(.+)$/);
+      if (subItemMatch) {
+        currentChecklist[currentChecklist.length - 1].text += '\n' + subItemMatch[1];
+        continue;
+      }
+      // Continuation text (indented or plain text following a checklist item)
+      if (trimmed.length > 0 && !trimmed.startsWith('*')) {
+        currentChecklist[currentChecklist.length - 1].text += '\n' + trimmed;
+        continue;
+      }
     }
 
     // Regular text line
@@ -192,14 +208,18 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
                         <div className="w-2 h-0.5 rounded-full bg-white" />
                       )}
                     </button>
-                    {/* Label */}
-                    <span className={`text-[13px] leading-snug ${
+                    {/* Label (may have sub-lines) */}
+                    <div className={`text-[13px] leading-snug ${
                       isChecked ? 'line-through text-text-tertiary' :
                       isInProgress ? 'text-text-secondary italic' :
                       'text-text-secondary'
                     }`}>
-                      {renderInline(item.text)}
-                    </span>
+                      {item.text.split('\n').map((subline, k) => (
+                        <div key={k} className={k > 0 ? 'ml-0.5 mt-0.5 text-[12px] text-text-tertiary' : ''}>
+                          {renderInline(subline)}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 );
               })}
