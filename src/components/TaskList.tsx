@@ -81,7 +81,13 @@ function sortItems(items: DisplayItem[], sortKey: SortKey): DisplayItem[] {
 function isEventEntry(item: DisplayItem): boolean {
   if (!('agendaType' in item)) return false;
   const e = item as AgendaEntry;
-  return (e.agendaType === 'timestamp' || e.agendaType === 'sexp') && !e.todoState;
+  // org-agenda classifies calendar-style entries with one of these types:
+  //   `timestamp' -- single active timestamp in body
+  //   `block'     -- ranged `<a>--<b>' timestamp (e.g. Game Night)
+  //   `sexp'      -- diary sexp entry
+  // All three are events, not TODOs — route them to EventBanners.
+  const eventTypes = ['timestamp', 'block', 'sexp'];
+  return eventTypes.includes(e.agendaType) && !e.todoState;
 }
 
 function isDeadlineEntry(item: DisplayItem): boolean {

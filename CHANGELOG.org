@@ -1,5 +1,10 @@
 #+title: Changelog
 
+** 0.1.13
+
+- Classify =block= agenda entries as events, not TODOs
+  - org-agenda emits =block= for ranged =<a>--<b>= timestamps (e.g. a calendar event that spans hours or days). Previously =isEventEntry= only matched =timestamp= and =sexp=, so block-type events fell through to the TODO list with empty state/priority pills. Now they route to =EventBanners= alongside the other calendar-style entries.
+
 ** 0.1.12
 
 - Render active timestamps in notes as formatted chips instead of raw =<...>= text
