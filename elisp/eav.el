@@ -400,6 +400,29 @@ Uses org-agenda's own machinery to determine which entries appear."
     (org-clock-out))
   (json-encode '((success . t))))
 
+(defun eav--propagate-checkbox-parents (beg end)
+  "Fix parent checkbox states for all plain lists between BEG and END.
+Delegates to `org-list-struct-fix-box' so parent items become [X] when every
+descendant is checked, [-] when some descendants are checked or in-progress,
+and [ ] otherwise — matching org's own cookie-aggregation behavior."
+  (save-excursion
+    (goto-char beg)
+    (let ((seen-starts nil)
+          (item-re "^[ \t]*\\(?:[-+*]\\|[0-9]+[.)]\\|[A-Za-z][.)]\\)[ \t]+\\[[ Xx-]\\]"))
+      (while (re-search-forward item-re end t)
+        (let ((line-start (line-beginning-position)))
+          (save-excursion
+            (goto-char line-start)
+            (let* ((struct (ignore-errors (org-list-struct)))
+                   (list-beg (and struct (caar struct))))
+              (when (and struct list-beg (not (member list-beg seen-starts)))
+                (push list-beg seen-starts)
+                (let ((parents (org-list-parents-alist struct))
+                      (prevs (org-list-prevs-alist struct))
+                      (old-struct (copy-tree struct)))
+                  (org-list-struct-fix-box struct parents prevs)
+                  (org-list-struct-apply-struct struct old-struct))))))))))
+
 (defun eav-get-heading-notes (file pos)
   "Get the notes/body content of heading at POS in FILE as JSON."
   (let ((notes nil))
@@ -470,9 +493,15 @@ Replaces only the user-visible body text."
                 (forward-line 1)))
             ;; Insert the new notes
             (when (and new-notes (not (string-empty-p new-notes)))
-              (insert new-notes "\n")))))
-      (save-buffer)))
-  (json-encode '((success . t))))
+              (let ((insert-beg (point)))
+                (insert new-notes "\n")
+                ;; Propagate parent checkbox states via org's list machinery.
+                (eav--propagate-checkbox-parents insert-beg (point)))))))
+      (save-buffer)
+      ;; Re-read body so the caller sees the propagated parent states.
+      (goto-char pos)
+      (let ((final (eav--get-heading-content)))
+        (json-encode `((success . t) (notes . ,(or final ""))))))))
 
 (defun eav-get-refile-targets ()
   "Return refile targets as JSON.

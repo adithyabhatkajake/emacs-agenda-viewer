@@ -65,7 +65,8 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
 
   // Group consecutive checklist items together, tracking global index
   // state: ' ' = unchecked, '-' = in-progress, 'X'/'x' = checked
-  type CheckItem = { state: string; text: string; globalIndex: number };
+  // indent: leading-whitespace column count in the org source (for nesting)
+  type CheckItem = { state: string; text: string; globalIndex: number; indent: number };
   const blocks: Array<
     | { type: 'checklist'; items: CheckItem[] }
     | { type: 'text'; lines: string[] }
@@ -92,6 +93,7 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
 
   for (const line of lines) {
     const trimmed = line.trim();
+    const indent = line.length - line.trimStart().length;
 
     // Created timestamp
     const createdMatch = trimmed.match(/^Created:\s*\[(\d{4}-\d{2}-\d{2}\s+\w+)\]$/);
@@ -112,6 +114,7 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
         state: checklistMatch[1],
         text: checklistMatch[2],
         globalIndex: checklistGlobalIndex++,
+        indent,
       });
       continue;
     }
@@ -160,6 +163,9 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
         }
 
         if (block.type === 'checklist') {
+          // Map each distinct indent column within this block to a depth (0, 1, 2, ...)
+          const uniqueIndents = Array.from(new Set(block.items.map(it => it.indent))).sort((a, b) => a - b);
+          const depthFor = (indent: number) => uniqueIndents.indexOf(indent);
           return (
             <div key={i} className="flex flex-col gap-0">
               {/* Progress bar if there are checklist items */}
@@ -186,8 +192,13 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
               {block.items.map((item, j) => {
                 const isChecked = item.state.toLowerCase() === 'x';
                 const isInProgress = item.state === '-';
+                const depth = depthFor(item.indent);
                 return (
-                  <div key={j} className="flex items-start gap-2.5 py-1">
+                  <div
+                    key={j}
+                    className="flex items-start gap-2.5 py-1"
+                    style={depth > 0 ? { paddingLeft: `${depth * 18}px` } : undefined}
+                  >
                     {/* Checkbox — clickable, cycles: [ ] -> [-] -> [X] -> [ ] */}
                     <button
                       onClick={() => onToggleCheck?.(item.globalIndex)}

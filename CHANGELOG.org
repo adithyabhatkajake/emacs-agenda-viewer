@@ -1,5 +1,13 @@
 #+title: Changelog
 
+** 0.1.11
+
+- Nested org checklists render with hierarchy (indentation per nesting level)
+  - =NotesRenderer= tracks each item's source indent and maps distinct indents to depths per block
+- Parent checkbox states aggregate from descendants, matching org's native behavior
+  - After saving notes, elisp helper =eav--propagate-checkbox-parents= runs =org-list-struct-fix-box= on each list in the heading body so parents become =[X]= when all children are checked, =[-]= when some are checked or in progress
+  - =eav-set-heading-notes= now returns the propagated notes; the UI updates local state with the server's final version
+
 ** 0.1.10
 
 - Fix checklist parsing for all org bullet types

@@ -170,11 +170,14 @@ export async function getHeadingNotes(file: string, pos: number): Promise<string
   return result.notes;
 }
 
-export async function setHeadingNotes(file: string, pos: number, notes: string): Promise<void> {
+export async function setHeadingNotes(file: string, pos: number, notes: string): Promise<string> {
   await ensureLoaded();
   // Escape the notes for elisp string
   const escaped = notes.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  await emacsEval(`(eav-set-heading-notes "${file}" ${pos} "${escaped}")`);
+  const result = await eavCall<{ success: boolean; notes: string }>(
+    `(eav-set-heading-notes "${file}" ${pos} "${escaped}")`
+  );
+  return result.notes;
 }
 
 export async function getAgendaDay(date: string): Promise<AgendaEntry[]> {

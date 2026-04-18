@@ -74,13 +74,15 @@ export async function clockOutApi(): Promise<void> {
   if (!res.ok) throw new Error('Failed to clock out');
 }
 
-export async function saveNotes(file: string, pos: number, notes: string): Promise<void> {
+export async function saveNotes(file: string, pos: number, notes: string): Promise<string> {
   const res = await fetch(`${BASE}/notes`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file, pos, notes }),
   });
   if (!res.ok) throw new Error('Failed to save notes');
+  const data = await res.json();
+  return data.notes ?? notes;
 }
 
 export interface RefileTarget {

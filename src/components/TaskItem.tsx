@@ -340,8 +340,8 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
                     if (saving) return;
                     setSaving(true);
                     try {
-                      await saveNotes(task.file, task.pos, editText);
-                      setNotes(editText);
+                      const propagated = await saveNotes(task.file, task.pos, editText);
+                      setNotes(propagated);
                       setEditing(false);
                     } catch (err) {
                       console.error('Failed to save notes:', err);
@@ -384,7 +384,10 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
                       );
                       setNotes(newNotes);
                       try {
-                        await saveNotes(task.file, task.pos, newNotes);
+                        // Server returns notes with org's native parent-checkbox
+                        // propagation applied ([X]/[-] on parents derived from children).
+                        const propagated = await saveNotes(task.file, task.pos, newNotes);
+                        if (propagated !== newNotes) setNotes(propagated);
                       } catch (err) {
                         console.error('Failed to save checkbox toggle:', err);
                         setNotes(notes); // revert on failure

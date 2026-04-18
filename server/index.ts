@@ -135,8 +135,8 @@ app.put('/api/notes', async (req, res) => {
       res.status(400).json({ error: 'file and pos required' });
       return;
     }
-    await setHeadingNotes(file, pos, notes || '');
-    res.json({ success: true });
+    const finalNotes = await setHeadingNotes(file, pos, notes || '');
+    res.json({ success: true, notes: finalNotes });
   } catch (err) {
     console.error('Failed to set notes:', err);
     res.status(500).json({ error: 'Failed to set notes' });
