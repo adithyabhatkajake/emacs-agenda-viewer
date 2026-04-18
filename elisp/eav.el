@@ -7,33 +7,87 @@
 ;;; Code:
 
 (require 'org)
+(require 'org-element)
 (require 'json)
 
+(defun eav--ts-component (year month day hour minute)
+  "Build an alist for one end of a timestamp.
+Omits HOUR/MINUTE when nil so consumers can distinguish date-only from
+timed timestamps."
+  (let ((parts `((year . ,year) (month . ,month) (day . ,day))))
+    (when hour (setq parts (append parts `((hour . ,hour)))))
+    (when minute (setq parts (append parts `((minute . ,minute)))))
+    parts))
+
+(defun eav--unit-to-char (unit-sym)
+  "Map a repeater/warning unit symbol (`hour', `day', ...) to org's single-char form."
+  (pcase unit-sym
+    ('hour "h") ('day "d") ('week "w") ('month "m") ('year "y")
+    (_ (and unit-sym (substring (symbol-name unit-sym) 0 1)))))
+
+(defun eav--repeater-type-to-string (sym)
+  "Map an org-element repeater-type symbol to its source syntax."
+  (pcase sym
+    ('cumulate "+") ('catch-up "++") ('restart ".+")
+    (_ (and sym (symbol-name sym)))))
+
+(defun eav--timestamp-element-to-alist (ts)
+  "Convert an org-element timestamp TS into a JSON-friendly alist.
+Uses org's own parser output, so range/time-of-day/repeater/warning
+info comes straight from org without any regex re-parsing."
+  (when ts
+    (let* ((raw (org-element-property :raw-value ts))
+           (type (org-element-property :type ts))
+           (range-type (org-element-property :range-type ts))
+           (y1 (org-element-property :year-start ts))
+           (m1 (org-element-property :month-start ts))
+           (d1 (org-element-property :day-start ts))
+           (h1 (org-element-property :hour-start ts))
+           (mn1 (org-element-property :minute-start ts))
+           (y2 (org-element-property :year-end ts))
+           (m2 (org-element-property :month-end ts))
+           (d2 (org-element-property :day-end ts))
+           (h2 (org-element-property :hour-end ts))
+           (mn2 (org-element-property :minute-end ts))
+           (rep-type (org-element-property :repeater-type ts))
+           (rep-value (org-element-property :repeater-value ts))
+           (rep-unit (org-element-property :repeater-unit ts))
+           (warn-value (org-element-property :warning-value ts))
+           (warn-unit (org-element-property :warning-unit ts))
+           ;; Preserve legacy `date' field: the first bracket substring.
+           (date-part (and raw
+                           (string-match org-ts-regexp-both raw)
+                           (match-string 0 raw)))
+           (result `((raw . ,raw)
+                     (date . ,(or date-part raw))
+                     (type . ,(and type (symbol-name type)))
+                     (start . ,(eav--ts-component y1 m1 d1 h1 mn1)))))
+      (when range-type
+        (push (cons 'rangeType (symbol-name range-type)) result))
+      (when (or y2 m2 d2)
+        (push (cons 'end (eav--ts-component y2 m2 d2 h2 mn2)) result))
+      (when (and rep-type (not (eq rep-type 'none)))
+        (push (cons 'repeater
+                    `((type . ,(eav--repeater-type-to-string rep-type))
+                      (value . ,rep-value)
+                      (unit . ,(eav--unit-to-char rep-unit))))
+              result))
+      (when (and warn-value warn-unit)
+        (push (cons 'warning
+                    `((value . ,warn-value)
+                      (unit . ,(eav--unit-to-char warn-unit))))
+              result))
+      (nreverse result))))
+
 (defun eav--parse-timestamp (ts-string)
-  "Parse an org timestamp string TS-STRING into an alist.
-Handles repeaters (.+1d) and warning periods (-3d)."
-  (when (and ts-string (string-match org-ts-regexp-both ts-string))
-    (let* ((date-part (match-string 0 ts-string))
-           (result `((raw . ,ts-string)
-                     (date . ,date-part)))
-           ;; Extract repeater if present: .+1d, ++1w, +1m etc.
-           (repeater (when (string-match
-                           "\\([.+]?\\+\\)\\([0-9]+\\)\\([hdwmy]\\)"
-                           ts-string)
-                       `((type . ,(match-string 1 ts-string))
-                         (value . ,(string-to-number (match-string 2 ts-string)))
-                         (unit . ,(match-string 3 ts-string)))))
-           ;; Extract warning period if present: -3d
-           (warning (when (string-match
-                          "-\\([0-9]+\\)\\([hdwmy]\\)"
-                          ts-string)
-                      `((value . ,(string-to-number (match-string 1 ts-string)))
-                        (unit . ,(match-string 2 ts-string))))))
-      (when repeater
-        (push (cons 'repeater repeater) result))
-      (when warning
-        (push (cons 'warning warning) result))
-      result)))
+  "Parse an org timestamp TS-STRING into a structured alist.
+Delegates to `org-element-timestamp-parser' so range/time-of-day/repeater
+/warning semantics match org's own interpretation."
+  (when (and ts-string (not (string-empty-p ts-string)))
+    (with-temp-buffer
+      (insert ts-string)
+      (goto-char (point-min))
+      (eav--timestamp-element-to-alist (org-element-timestamp-parser)))))
 
 (defun eav--get-heading-content ()
   "Get the body content of the current heading (excluding subheadings, drawers, and planning).
@@ -70,16 +124,23 @@ Collects non-drawer, non-planning text lines."
         (if (string-empty-p text) nil text)))))
 
 (defun eav--extract-active-timestamps (text)
-  "Extract active timestamps (not SCHEDULED/DEADLINE) from TEXT.
-Returns a list of parsed timestamp alists."
+  "Extract active timestamps and ranges from TEXT.
+Returns a list of parsed timestamp alists. Uses org's own parser so
+`<a>--<b>' ranges come back as a single structured entry."
   (when text
     (let (timestamps)
       (with-temp-buffer
         (insert text)
         (goto-char (point-min))
         (while (re-search-forward org-ts-regexp nil t)
-          (let ((ts (match-string 0)))
-            (push (eav--parse-timestamp ts) timestamps))))
+          (goto-char (match-beginning 0))
+          (let ((ts (org-element-timestamp-parser)))
+            (if ts
+                (progn
+                  (push (eav--timestamp-element-to-alist ts) timestamps)
+                  (goto-char (or (org-element-property :end ts)
+                                 (match-end 0))))
+              (goto-char (match-end 0))))))
       (nreverse timestamps))))
 
 (defun eav--extract-task-at-point ()
@@ -424,13 +485,18 @@ and [ ] otherwise — matching org's own cookie-aggregation behavior."
                   (org-list-struct-apply-struct struct old-struct))))))))))
 
 (defun eav-get-heading-notes (file pos)
-  "Get the notes/body content of heading at POS in FILE as JSON."
-  (let ((notes nil))
+  "Get the notes/body content of heading at POS in FILE as JSON.
+Also returns parsed active timestamps found in the body so the frontend
+can render them as formatted chips without re-parsing."
+  (let ((notes nil)
+        (timestamps nil))
     (when (file-exists-p file)
       (with-current-buffer (find-file-noselect file)
         (goto-char pos)
-        (setq notes (eav--get-heading-content))))
-    (json-encode `((notes . ,(or notes ""))))))
+        (setq notes (eav--get-heading-content))
+        (setq timestamps (eav--extract-active-timestamps notes))))
+    (json-encode `((notes . ,(or notes ""))
+                   (activeTimestamps . ,(vconcat (or timestamps [])))))))
 
 (defun eav-set-heading-notes (file pos new-notes)
   "Set the notes/body content of heading at POS in FILE to NEW-NOTES.
@@ -500,8 +566,11 @@ Replaces only the user-visible body text."
       (save-buffer)
       ;; Re-read body so the caller sees the propagated parent states.
       (goto-char pos)
-      (let ((final (eav--get-heading-content)))
-        (json-encode `((success . t) (notes . ,(or final ""))))))))
+      (let* ((final (eav--get-heading-content))
+             (timestamps (eav--extract-active-timestamps final)))
+        (json-encode `((success . t)
+                       (notes . ,(or final ""))
+                       (activeTimestamps . ,(vconcat (or timestamps [])))))))))
 
 (defun eav-get-refile-targets ()
   "Return refile targets as JSON.

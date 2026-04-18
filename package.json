@@ -1,20 +1,24 @@
 {
   "name": "emacs-agenda-viewer",
   "private": true,
-  "version": "0.1.11",
+  "version": "0.1.12",
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:client": "vite",
     "dev:server": "tsx watch server/index.ts",
     "build": "tsc -b && vite build",
-    "start": "tsx server/index.ts"
+    "start": "tsx server/index.ts",
+    "test": "emacs -batch -l ert -l elisp/eav-tests.el -f ert-run-tests-batch-and-exit",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
-    "express": "^5.1.0",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "express": "^5.1.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.2",
     "@types/node": "^22.15.3",

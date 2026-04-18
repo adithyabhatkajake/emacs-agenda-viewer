@@ -1,0 +1,106 @@
+#+TITLE: Nested checklist fixtures
+#+CATEGORY: Fixtures
+
+Each heading's body is the "input" the frontend would send to a save.
+The :EXPECTED: property holds the body we expect after save-side
+parent-checkbox propagation runs (delegated to org-list-struct-fix-box).
+Bodies are written flush-left so the literal indentation we care about
+is the nesting depth, not the heading offset.
+
+* dash: all children checked → parent X
+:PROPERTIES:
+:EXPECTED: - [X] Parent\n  - [X] A\n  - [X] B
+:END:
+- [ ] Parent
+  - [X] A
+  - [X] B
+
+* dash: mixed children → parent dash
+:PROPERTIES:
+:EXPECTED: - [-] Parent\n  - [X] A\n  - [ ] B
+:END:
+- [ ] Parent
+  - [X] A
+  - [ ] B
+
+* dash: all children unchecked → parent stays blank
+:PROPERTIES:
+:EXPECTED: - [ ] Parent\n  - [ ] A\n  - [ ] B
+:END:
+- [ ] Parent
+  - [ ] A
+  - [ ] B
+
+* dash: one in-progress child → parent dash
+:PROPERTIES:
+:EXPECTED: - [-] Parent\n  - [-] A\n  - [ ] B
+:END:
+- [ ] Parent
+  - [-] A
+  - [ ] B
+
+* plus: all children checked → parent X
+:PROPERTIES:
+:EXPECTED: + [X] Parent\n  + [X] A\n  + [X] B
+:END:
++ [ ] Parent
+  + [X] A
+  + [X] B
+
+* plus: mixed → parent dash
+:PROPERTIES:
+:EXPECTED: + [-] Parent\n  + [X] A\n  + [ ] B
+:END:
++ [ ] Parent
+  + [X] A
+  + [ ] B
+
+* star-indented: all checked → parent X
+:PROPERTIES:
+:EXPECTED: - [X] Parent\n  * [X] A\n  * [X] B
+:END:
+- [ ] Parent
+  * [X] A
+  * [X] B
+
+* ordered numeric dot: all checked → parent X
+:PROPERTIES:
+:EXPECTED: 1. [X] Parent\n   1. [X] A\n   2. [X] B
+:END:
+1. [ ] Parent
+   1. [X] A
+   2. [X] B
+
+* ordered numeric paren: all checked → parent X
+:PROPERTIES:
+:EXPECTED: 1) [X] Parent\n   1) [X] A\n   2) [X] B
+:END:
+1) [ ] Parent
+   1) [X] A
+   2) [X] B
+
+* three-level all checked → all ancestors X
+:PROPERTIES:
+:EXPECTED: - [X] Root\n  - [X] Mid\n    - [X] Leaf
+:END:
+- [ ] Root
+  - [ ] Mid
+    - [X] Leaf
+
+* three-level mixed → chain of dashes
+:PROPERTIES:
+:EXPECTED: - [-] Root\n  - [X] Mid\n    - [X] Leaf A\n    - [X] Leaf B\n  - [ ] Mid 2
+:END:
+- [ ] Root
+  - [ ] Mid
+    - [X] Leaf A
+    - [X] Leaf B
+  - [ ] Mid 2
+
+* mixed bullet styles in one list
+:PROPERTIES:
+:EXPECTED: - [X] Parent\n  + [X] A\n  + [X] B
+:END:
+- [ ] Parent
+  + [X] A
+  + [X] B

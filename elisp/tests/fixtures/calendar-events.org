@@ -1,0 +1,48 @@
+#+TITLE: Calendar event fixtures
+#+CATEGORY: Fixtures
+
+* single date
+  <2026-04-18 Sat>
+
+* date with time
+  <2026-04-18 Sat 14:30>
+
+* time range same day
+  <2026-04-18 Sat 14:30-16:00>
+
+* range across midnight
+  <2026-04-18 Sat 19:00>--<2026-04-19 Sun 01:00>
+
+* multi-day range
+  <2026-04-18 Sat>--<2026-04-22 Wed>
+
+* repeater weekly
+  <2026-04-18 Sat +1w>
+
+* repeater catch-up
+  <2026-04-18 Sat ++1m>
+
+* repeater restart
+  <2026-04-18 Sat .+1d>
+
+* warning period
+  <2026-04-18 Sat -3d>
+
+* scheduled only
+  SCHEDULED: <2026-04-18 Sat>
+
+* deadline with warning
+  DEADLINE: <2026-04-25 Sat -3d>
+
+* scheduled with repeater
+  SCHEDULED: <2026-04-18 Sat .+1d>
+
+* multiple timestamps in body
+  First <2026-04-18 Sat> then <2026-04-20 Mon 10:00>.
+
+* inactive timestamp in body
+  Created [2026-04-10 Fri] — meeting <2026-04-18 Sat>
+
+* event with location
+  <2026-04-18 Sat 19:00>--<2026-04-19 Sun 01:00>
+  39784 Bissy Common Fremont, CA 94548

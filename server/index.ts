@@ -85,8 +85,8 @@ app.get('/api/notes', async (req, res) => {
       res.status(400).json({ error: 'file and pos query params required' });
       return;
     }
-    const notes = await getHeadingNotes(file as string, parseInt(pos as string));
-    res.json({ notes });
+    const result = await getHeadingNotes(file as string, parseInt(pos as string));
+    res.json(result);
   } catch (err) {
     console.error('Failed to fetch notes:', err);
     res.status(500).json({ error: 'Failed to fetch notes' });

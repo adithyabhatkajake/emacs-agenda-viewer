@@ -1,9 +1,90 @@
 import type { ReactNode } from 'react';
+import type { OrgTimestamp, OrgTimestampComponent } from '../types';
 
 interface NotesRendererProps {
   content: string;
+  /** Active timestamps parsed server-side — each `raw' string in `content' gets replaced with a formatted chip. */
+  timestamps?: OrgTimestamp[];
   /** Called with the checklist item index (across all checklists) when a checkbox is toggled */
   onToggleCheck?: (index: number) => void;
+}
+
+function formatComponentDate(c: OrgTimestampComponent): string {
+  return new Date(c.year, c.month - 1, c.day).toLocaleDateString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric',
+  });
+}
+
+function formatComponentTime(c: OrgTimestampComponent): string | null {
+  if (c.hour === undefined || c.minute === undefined) return null;
+  return new Date(2000, 0, 1, c.hour, c.minute).toLocaleTimeString('en-US', {
+    hour: 'numeric', minute: '2-digit',
+  });
+}
+
+function formatTimestamp(ts: OrgTimestamp): string {
+  if (!ts.start) return ts.raw;
+  const sDate = formatComponentDate(ts.start);
+  const sTime = formatComponentTime(ts.start);
+  const start = sTime ? `${sDate}, ${sTime}` : sDate;
+
+  const isRange = ts.rangeType || (ts.type && ts.type.endsWith('-range'));
+  if (!isRange || !ts.end) return start;
+
+  const eDate = formatComponentDate(ts.end);
+  const eTime = formatComponentTime(ts.end);
+  const sameDay = ts.start.year === ts.end.year
+    && ts.start.month === ts.end.month
+    && ts.start.day === ts.end.day;
+  // Same day with times: "Sat Apr 18, 2:30 PM – 4:00 PM"
+  if (sameDay && eTime) return `${start} \u2013 ${eTime}`;
+  const end = eTime ? `${eDate}, ${eTime}` : eDate;
+  return `${start} \u2013 ${end}`;
+}
+
+function TimestampChip({ ts }: { ts: OrgTimestamp }) {
+  const inactive = ts.type === 'inactive' || ts.type === 'inactive-range';
+  return (
+    <span
+      className={`inline-flex items-center rounded-md px-1.5 py-[1px] text-[11px] font-medium border align-baseline ${
+        inactive
+          ? 'bg-things-surface text-text-tertiary border-things-border'
+          : 'bg-accent/10 text-accent border-accent/20'
+      }`}
+      data-testid="timestamp-chip"
+      title={ts.raw}
+    >
+      {formatTimestamp(ts)}
+    </span>
+  );
+}
+
+/** Replace every `ts.raw' occurrence in `line' with a TimestampChip. */
+function renderLineWithTimestamps(line: string, timestamps: OrgTimestamp[]): ReactNode[] {
+  if (!timestamps.length) return renderInline(line);
+  type Span = { start: number; end: number; ts: OrgTimestamp };
+  const spans: Span[] = [];
+  for (const ts of timestamps) {
+    if (!ts.raw) continue;
+    let idx = 0;
+    while ((idx = line.indexOf(ts.raw, idx)) !== -1) {
+      spans.push({ start: idx, end: idx + ts.raw.length, ts });
+      idx += ts.raw.length;
+    }
+  }
+  if (!spans.length) return renderInline(line);
+  spans.sort((a, b) => a.start - b.start || b.end - a.end);
+
+  const out: ReactNode[] = [];
+  let pos = 0;
+  for (const s of spans) {
+    if (s.start < pos) continue; // overlap — the longer match already covered it
+    if (s.start > pos) out.push(...renderInline(line.slice(pos, s.start)));
+    out.push(<TimestampChip key={`ts-${s.start}`} ts={s.ts} />);
+    pos = s.end;
+  }
+  if (pos < line.length) out.push(...renderInline(line.slice(pos)));
+  return out;
 }
 
 /** Parse inline org markup within a text segment */
@@ -60,7 +141,7 @@ export function renderInline(text: string): ReactNode[] {
 }
 
 /** Parse and render org notes content */
-export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
+export function NotesRenderer({ content, timestamps = [], onToggleCheck }: NotesRendererProps) {
   const lines = content.split('\n');
 
   // Group consecutive checklist items together, tracking global index
@@ -248,7 +329,7 @@ export function NotesRenderer({ content, onToggleCheck }: NotesRendererProps) {
             <div key={i} className="text-[13px] text-text-secondary leading-relaxed">
               {textLines.map((line, j) => (
                 <div key={j} className={line.length === 0 ? 'h-2' : ''}>
-                  {line.length > 0 && renderInline(line)}
+                  {line.length > 0 && renderLineWithTimestamps(line, timestamps)}
                 </div>
               ))}
             </div>

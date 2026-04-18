@@ -84,6 +84,7 @@ The app loads =elisp/eav.el= into your running Emacs on first request. All chang
 - *Clock*: Expand a task and click "Clock In" to start =org-clock-in=. A live timer banner appears at the top. Click "Stop" or "Stop Clock" to clock out.
 - *Edit title*: Right-click (or long-press on mobile) a task and select "Edit title"
 - *Refile*: Right-click (or long-press on mobile) a task and select "Refile" to move it to another heading
+- *Calendar events*: Active timestamps in the body (=<YYYY-MM-DD Day HH:MM>=, including ranges and =<a>--<b>= spans) render as formatted chips. Parsing is delegated to =org-element-timestamp-parser=, so repeaters, warnings, and time-ranges are interpreted exactly as org sees them.
 
 *** Sorting & Grouping
 - *Sort*: Agenda order, priority, category (toolbar buttons)
@@ -120,6 +121,20 @@ The server binds to =0.0.0.0:3001=, so it's accessible over Tailscale or any loc
 *** Mobile Access
 
 The UI is fully responsive -- use it from your phone's browser. If you run Tailscale, just visit =http://<your-tailscale-ip>:3001=.
+
+** Testing
+
+Two suites — both exercise real code paths, no mocks at the parsing or business-logic layer.
+
+*** Elisp (=npm test=)
+
+ERT tests in =elisp/eav-tests.el= using fixture =.org= files under =elisp/tests/fixtures/=:
+- =calendar-events.org= -- timestamps of every flavor (single date, date+time, time-range same day, =<a>--<b>= range across midnight, multi-day range, repeaters =+=/=++=/=.+=, warning periods, SCHEDULED/DEADLINE, multiple in body, inactive). Each test parses the fixture through =eav--parse-timestamp= / =eav--extract-active-timestamps= and asserts on the structured output.
+- =nested-lists.org= -- one heading per checklist scenario (=-=, =+=, =*=, =1.=, =1)=, mixed bullets, three-level nesting). Each heading carries the propagated body in an =:EXPECTED:= property; the test saves the input body via =eav-set-heading-notes= (which runs =org-list-struct-fix-box=) and compares the result to expected.
+
+*** End-to-end (=npm run test:e2e=)
+
+Playwright specs in =tests/e2e/= run against real Chromium (desktop, 1280x800) and real WebKit (mobile, iPhone 13 profile). =/api/*= calls are mocked via =page.route= with regex patterns scoped to the API path (so they don't shadow Vite's =/src/api/*= module requests); the clock is frozen with =page.clock.install= to keep the agenda-day URL deterministic. Covers the original Game Night bug: active-range timestamps in notes must render as formatted chips, not raw angle-bracket text, on both viewports.
 
 ** Missing features
 

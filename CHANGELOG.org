@@ -1,5 +1,16 @@
 #+title: Changelog
 
+** 0.1.12
+
+- Render active timestamps in notes as formatted chips instead of raw =<...>= text
+  - Backend =eav--parse-timestamp= now delegates to =org-element-timestamp-parser=, returning structured start/end components, range type, repeater, and warning fields
+  - =<a>--<b>= ranges (e.g. Game Night spanning midnight) come back as a single entry with both endpoints -- not two separate timestamps
+  - =eav-get-heading-notes= also returns parsed =activeTimestamps= so the frontend can render chips by looking up each =raw= occurrence
+  - =NotesRenderer= swaps each =raw= string in the body with a =TimestampChip= that formats via the browser's locale
+- Test infrastructure
+  - Elisp fixture-based tests (=elisp/tests/fixtures/{calendar-events,nested-lists}.org=) covering every timestamp flavor and every checklist bullet type (=-=, =+=, =*=, =1.=, =1)=, mixed, three-level). =npm test= runs 33 ERT tests
+  - Playwright end-to-end tests (=npm run test:e2e=) on desktop Chromium and mobile WebKit (iPhone 13) that exercise the Game Night rendering fix against a real browser with mocked =/api/*=
+
 ** 0.1.11
 
 - Nested org checklists render with hierarchy (indentation per nesting level)

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import type { OrgTask, AgendaEntry, TodoKeywords } from '../types';
+import type { OrgTask, AgendaEntry, OrgTimestamp, TodoKeywords } from '../types';
 import { updateTodoState, updatePriority, updateScheduled, updateDeadline, updateTitle, fetchRefileTargets, refileTask, fetchNotes, saveNotes, clockIn, clockOutApi, type ClockStatus, type RefileTarget } from '../api/tasks';
 
 function useLongPress(callback: (e: React.TouchEvent) => void, ms = 500) {
@@ -80,6 +80,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
   const [updating, setUpdating] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [notes, setNotes] = useState<string | null>(null);
+  const [notesTimestamps, setNotesTimestamps] = useState<OrgTimestamp[]>([]);
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState('');
@@ -143,10 +144,12 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
     if (notes === null && task.file && task.pos) {
       setLoadingNotes(true);
       try {
-        const n = await fetchNotes(task.file, task.pos);
-        setNotes(n);
+        const { notes: body, activeTimestamps } = await fetchNotes(task.file, task.pos);
+        setNotes(body);
+        setNotesTimestamps(activeTimestamps);
       } catch {
         setNotes('');
+        setNotesTimestamps([]);
       } finally {
         setLoadingNotes(false);
       }
@@ -368,6 +371,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
                 <div className="mb-2">
                   <NotesRenderer
                     content={notes}
+                    timestamps={notesTimestamps}
                     onToggleCheck={async (index) => {
                       if (!notes) return;
                       // Find the Nth checklist item and cycle: [ ] -> [-] -> [X] -> [ ]

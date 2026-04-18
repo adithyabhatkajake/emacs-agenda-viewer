@@ -1,6 +1,20 @@
+export interface OrgTimestampComponent {
+  year: number;
+  month: number;
+  day: number;
+  hour?: number;
+  minute?: number;
+}
+
 export interface OrgTimestamp {
   raw: string;
   date: string;
+  /** active | inactive | active-range | inactive-range | diary */
+  type?: string;
+  /** daterange | timerange — only set when this is a real range */
+  rangeType?: string;
+  start?: OrgTimestampComponent;
+  end?: OrgTimestampComponent;
   repeater?: {
     type: string; // ".+" | "++" | "+"
     value: number;

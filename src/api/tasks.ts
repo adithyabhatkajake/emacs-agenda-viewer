@@ -1,4 +1,4 @@
-import type { OrgTask, AgendaEntry, AgendaFile, TodoKeywords, OrgConfig, CaptureTemplate } from '../types';
+import type { OrgTask, OrgTimestamp, AgendaEntry, AgendaFile, TodoKeywords, OrgConfig, CaptureTemplate } from '../types';
 
 const BASE = '/api';
 
@@ -38,11 +38,16 @@ export async function fetchAgendaRange(start: string, end: string): Promise<Agen
   return res.json();
 }
 
-export async function fetchNotes(file: string, pos: number): Promise<string> {
+export interface HeadingNotes {
+  notes: string;
+  activeTimestamps: OrgTimestamp[];
+}
+
+export async function fetchNotes(file: string, pos: number): Promise<HeadingNotes> {
   const res = await fetch(`${BASE}/notes?file=${encodeURIComponent(file)}&pos=${pos}`);
   if (!res.ok) throw new Error('Failed to fetch notes');
   const data = await res.json();
-  return data.notes;
+  return { notes: data.notes ?? '', activeTimestamps: data.activeTimestamps ?? [] };
 }
 
 export interface ClockStatus {

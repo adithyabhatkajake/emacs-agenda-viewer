@@ -2,3 +2,7 @@ node_modules/
 dist/
 *.js.map
 .DS_Store
+test-results/
+playwright-report/
+*.elc
+*.tsbuildinfo

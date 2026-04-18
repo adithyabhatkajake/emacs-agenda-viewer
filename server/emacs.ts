@@ -51,9 +51,21 @@ async function eavCall<T>(expr: string): Promise<T> {
   }
 }
 
+export interface OrgTimestampComponent {
+  year: number;
+  month: number;
+  day: number;
+  hour?: number;
+  minute?: number;
+}
+
 export interface OrgTimestamp {
   raw: string;
   date: string;
+  type?: string;
+  rangeType?: string;
+  start?: OrgTimestampComponent;
+  end?: OrgTimestampComponent;
   repeater?: {
     type: string;
     value: number;
@@ -165,9 +177,14 @@ export async function clockOut(): Promise<void> {
   await emacsEval('(eav-clock-out)');
 }
 
-export async function getHeadingNotes(file: string, pos: number): Promise<string> {
-  const result = await eavCall<{ notes: string }>(`(eav-get-heading-notes "${file}" ${pos})`);
-  return result.notes;
+export interface HeadingNotes {
+  notes: string;
+  activeTimestamps: OrgTimestamp[];
+}
+
+export async function getHeadingNotes(file: string, pos: number): Promise<HeadingNotes> {
+  const result = await eavCall<HeadingNotes>(`(eav-get-heading-notes "${file}" ${pos})`);
+  return { notes: result.notes ?? '', activeTimestamps: result.activeTimestamps ?? [] };
 }
 
 export async function setHeadingNotes(file: string, pos: number, notes: string): Promise<string> {
