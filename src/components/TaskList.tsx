@@ -393,7 +393,11 @@ export function TaskList({
     return { topLevel: top, children: childMap };
   }, [items, filter.type]);
 
-  // Upcoming: group by date
+  // Upcoming: group by date. The entries come in already sorted by the
+  // user's chosen sortKey (priority/category/etc.), which scrambles the
+  // date-grouping order because a Map preserves insertion order. Sort the
+  // grouped pairs chronologically on the YYYY-MM-DD key before rendering —
+  // `Unknown' entries sink to the end.
   const dateGroups = useMemo(() => {
     if (filter.type !== 'upcoming') return null;
     const groups = new Map<string, AgendaEntry[]>();
@@ -403,7 +407,11 @@ export function TaskList({
       existing.push(entry);
       groups.set(date, existing);
     }
-    return groups;
+    return [...groups.entries()].sort(([a], [b]) => {
+      if (a === 'Unknown') return 1;
+      if (b === 'Unknown') return -1;
+      return a.localeCompare(b);
+    });
   }, [items, filter.type]);
 
   const totalCount = filter.type === 'today'
@@ -550,7 +558,7 @@ export function TaskList({
 
         ) : dateGroups ? (
           /* ========== UPCOMING VIEW ========== */
-          Array.from(dateGroups.entries()).map(([date, entries]) => {
+          dateGroups.map(([date, entries]) => {
             const { dayNum, weekday, month, isToday, isTomorrow } = formatDateHeader(date);
 
             // Always split out events as banners

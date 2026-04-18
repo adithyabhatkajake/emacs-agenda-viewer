@@ -1,5 +1,10 @@
 #+title: Changelog
 
+** 0.1.14
+
+- Upcoming view: sort date groups chronologically
+  - Date groups inherited their order from =items=, which is pre-sorted by the active sortKey (priority/category/etc.). A =Map= preserves insertion order, so a high-priority Friday entry would push Friday's group ahead of Thursday's. Fix sorts the grouped pairs by the YYYY-MM-DD key before rendering.
+
 ** 0.1.13
 
 - Classify =block= agenda entries as events, not TODOs
