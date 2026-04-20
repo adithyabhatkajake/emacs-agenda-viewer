@@ -1,0 +1,96 @@
+name: Release macOS app
+
+# Builds the SwiftUI macOS app under apps/macos/, packages it as a DMG,
+# and attaches the DMG to the GitHub Release for the pushed tag.
+#
+# Triggered by pushing a tag matching v*.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build a DMG for (e.g. v0.2.0)'
+        required: true
+
+permissions:
+  contents: write   # required to create / upload to a Release
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "ref=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: apps/macos
+        run: xcodegen generate
+
+      - name: Build Release
+        working-directory: apps/macos
+        run: |
+          xcodebuild \
+            -project EmacsAgendaViewer.xcodeproj \
+            -scheme EmacsAgendaViewerMac \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            ONLY_ACTIVE_ARCH=NO \
+            build | xcbeautify || (echo "build failed" && exit 1)
+
+      - name: Read app version
+        id: version
+        working-directory: apps/macos
+        run: |
+          APP=build/Build/Products/Release/Agenda.app
+          V=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
+          echo "marketing=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Create DMG
+        working-directory: apps/macos
+        run: |
+          STAGE=$(mktemp -d)
+          ditto build/Build/Products/Release/Agenda.app "$STAGE/Agenda.app"
+          ln -s /Applications "$STAGE/Applications"
+          DMG="Agenda-${{ steps.version.outputs.marketing }}.dmg"
+          hdiutil create \
+            -volname "Agenda ${{ steps.version.outputs.marketing }}" \
+            -srcfolder "$STAGE" \
+            -ov -format UDZO \
+            "$DMG"
+          ls -lh "$DMG"
+          mv "$DMG" "${{ github.workspace }}/$DMG"
+
+      - name: Upload DMG to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.ref }}
+          name: ${{ steps.tag.outputs.ref }}
+          generate_release_notes: true
+          files: Agenda-${{ steps.version.outputs.marketing }}.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
