@@ -191,7 +191,26 @@ Returns a list of parsed timestamp alists. Uses org's own parser so
       (when notes (push (cons 'notes notes) result))
       (when active-timestamps
         (push (cons 'activeTimestamps (vconcat active-timestamps)) result))
+      ;; Custom properties (skip the org built-ins already surfaced separately).
+      (let* ((all-props (org-entry-properties nil 'standard))
+             (skip '("CATEGORY" "ID" "EFFORT"))
+             (filtered (cl-remove-if (lambda (kv) (member (car kv) skip)) all-props)))
+        (when filtered
+          (push (cons 'properties filtered) result)))
       result)))
+
+(defun eav-set-property (file pos key value)
+  "Set custom property KEY to VALUE on the heading at POS in FILE.
+If VALUE is the empty string, the property is removed."
+  (with-current-buffer (find-file-noselect file)
+    (save-excursion
+      (goto-char pos)
+      (org-back-to-heading t)
+      (if (or (null value) (string-empty-p value))
+          (org-entry-delete nil key)
+        (org-entry-put nil key value))
+      (save-buffer)))
+  (json-encode '((success . t))))
 
 (defun eav-extract-all-tasks ()
   "Extract all tasks from agenda files as a JSON string."
@@ -459,6 +478,46 @@ Uses org-agenda's own machinery to determine which entries appear."
   (require 'org-clock)
   (when (org-clocking-p)
     (org-clock-out))
+  (json-encode '((success . t))))
+
+(defun eav--format-clock-stamp (epoch)
+  "Format EPOCH (integer seconds) as an inactive org timestamp string."
+  (format-time-string "[%Y-%m-%d %a %H:%M]" (seconds-to-time epoch)))
+
+(defun eav-add-clock-entry (file pos start-epoch end-epoch)
+  "Append a CLOCK line to the LOGBOOK drawer of the heading at POS in FILE.
+START-EPOCH and END-EPOCH are integer Unix timestamps (seconds).
+Mirrors the format `org-clock-out' produces: `CLOCK: [start]--[end] =>  H:MM'."
+  (require 'org-clock)
+  (with-current-buffer (find-file-noselect file)
+    (save-excursion
+      (goto-char pos)
+      (org-back-to-heading t)
+      (let* ((start (eav--format-clock-stamp start-epoch))
+             (end   (eav--format-clock-stamp end-epoch))
+             (secs  (max 0 (- end-epoch start-epoch)))
+             (mins  (/ secs 60))
+             (h     (/ mins 60))
+             (m     (mod mins 60))
+             (line  (format "CLOCK: %s--%s =>  %d:%02d" start end h m)))
+        ;; Find or create LOGBOOK drawer; insert as the first entry inside it.
+        (let* ((element (org-element-at-point))
+               (end-of-meta (save-excursion
+                              (org-end-of-meta-data t)
+                              (point))))
+          (goto-char end-of-meta)
+          (if (save-excursion
+                (goto-char (org-entry-beginning-position))
+                (re-search-forward "^[ \t]*:LOGBOOK:[ \t]*$"
+                                   (save-excursion (outline-next-heading) (point))
+                                   t))
+              ;; Drawer exists — insert line right after :LOGBOOK:
+              (progn
+                (forward-line 1)
+                (insert "  " line "\n"))
+            ;; No drawer — create one
+            (insert ":LOGBOOK:\n  " line "\n:END:\n"))))
+      (save-buffer)))
   (json-encode '((success . t))))
 
 (defun eav--propagate-checkbox-parents (beg end)

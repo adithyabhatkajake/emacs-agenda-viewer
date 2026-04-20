@@ -1,0 +1,163 @@
+import Foundation
+
+enum SortKey: String, CaseIterable, Identifiable, Sendable {
+    case `default`, priority, state, deadline, category
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .default:  return "Default"
+        case .priority: return "Priority"
+        case .state:    return "State"
+        case .deadline: return "Deadline"
+        case .category: return "Category"
+        }
+    }
+
+    /// Allowed options for agenda views (Today / Upcoming).
+    static let agendaOptions: [SortKey] = [.default, .priority, .category]
+
+    /// Allowed options for list views (All Tasks). No "default" — there's no
+    /// inherent server order to preserve once we filter.
+    static let listOptions: [SortKey] = [.priority, .deadline, .state, .category]
+}
+
+private func priorityOrd(_ p: String?) -> Int {
+    switch p?.uppercased() {
+    case "A": return 0
+    case "B": return 1
+    case "C": return 2
+    case "D": return 3
+    default: return 4
+    }
+}
+
+private func extractDateMs(_ raw: String?) -> Double {
+    guard let raw else { return .infinity }
+    // Org timestamp form: "<2026-04-19 Sun .+1d -0d>"
+    let pattern = #"(\d{4})-(\d{2})-(\d{2})"#
+    guard let range = raw.range(of: pattern, options: .regularExpression) else { return .infinity }
+    let s = raw[range]
+    let parts = s.split(separator: "-").compactMap { Int($0) }
+    guard parts.count == 3 else { return .infinity }
+    var dc = DateComponents()
+    dc.year = parts[0]; dc.month = parts[1]; dc.day = parts[2]
+    return Calendar.current.date(from: dc).map { $0.timeIntervalSince1970 * 1000 } ?? .infinity
+}
+
+private func extractTimeMinutes(_ item: any TaskDisplayable) -> Int {
+    if let entry = item as? AgendaEntry, let t = entry.timeOfDay {
+        if let m = t.range(of: #"(\d{1,2}):(\d{2})"#, options: .regularExpression) {
+            let parts = t[m].split(separator: ":").compactMap { Int($0) }
+            if parts.count == 2 { return parts[0] * 60 + parts[1] }
+        }
+    }
+    let raw = item.scheduled?.raw ?? item.deadline?.raw ?? ""
+    if let m = raw.range(of: #"(\d{1,2}):(\d{2})"#, options: .regularExpression) {
+        let parts = raw[m].split(separator: ":").compactMap { Int($0) }
+        if parts.count == 2 { return parts[0] * 60 + parts[1] }
+    }
+    return Int.max
+}
+
+enum GroupKey: String, CaseIterable, Identifiable, Sendable {
+    case none, category, priority, state, file, tag
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .none:     return "None"
+        case .category: return "Category"
+        case .priority: return "Priority"
+        case .state:    return "State"
+        case .file:     return "File"
+        case .tag:      return "Tag"
+        }
+    }
+
+    static let all: [GroupKey] = [.none, .category, .priority, .state, .tag, .file]
+}
+
+struct TaskGroup<T: TaskDisplayable & Identifiable>: Identifiable {
+    let id: String
+    let label: String
+    let items: [T]
+}
+
+func groupTasks<T: TaskDisplayable & Identifiable>(_ items: [T], by key: GroupKey) -> [TaskGroup<T>] {
+    if key == .none {
+        return [TaskGroup(id: "_all", label: "", items: items)]
+    }
+    var buckets: [String: [T]] = [:]
+    var order: [String] = []
+
+    func push(_ key: String, _ item: T) {
+        if buckets[key] == nil { buckets[key] = []; order.append(key) }
+        buckets[key]?.append(item)
+    }
+
+    for item in items {
+        switch key {
+        case .category:
+            push(item.category.isEmpty ? "Uncategorized" : item.category, item)
+        case .priority:
+            push(item.priority?.isEmpty == false ? "Priority \(item.priority!.uppercased())" : "No Priority", item)
+        case .state:
+            push((item.todoState?.isEmpty == false ? item.todoState! : "—").uppercased(), item)
+        case .file:
+            let name = (item.file as NSString).lastPathComponent
+            push(name.isEmpty ? "Unknown file" : name, item)
+        case .tag:
+            let combined = item.tags + item.inheritedTags.filter { !item.tags.contains($0) }
+            if combined.isEmpty {
+                push("Untagged", item)
+            } else {
+                for tag in combined { push(tag, item) }
+            }
+        case .none:
+            break
+        }
+    }
+
+    let sortedKeys: [String]
+    switch key {
+    case .priority:
+        sortedKeys = order.sorted { lhs, rhs in
+            if lhs == "No Priority" { return false }
+            if rhs == "No Priority" { return true }
+            return lhs < rhs
+        }
+    default:
+        sortedKeys = order.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+    return sortedKeys.map { TaskGroup(id: $0, label: $0, items: buckets[$0] ?? []) }
+}
+
+func sortTasks<T: TaskDisplayable>(_ items: [T], by key: SortKey) -> [T] {
+    if key == .default { return items }
+    return items.sorted { a, b in
+        var cmp = 0
+        switch key {
+        case .priority:
+            cmp = priorityOrd(a.priority) - priorityOrd(b.priority)
+        case .state:
+            cmp = (a.todoState ?? "").localizedCompare(b.todoState ?? "").rawValue
+        case .deadline:
+            let ad = extractDateMs(a.deadline?.raw).isFinite ? extractDateMs(a.deadline?.raw) : extractDateMs(a.scheduled?.raw)
+            let bd = extractDateMs(b.deadline?.raw).isFinite ? extractDateMs(b.deadline?.raw) : extractDateMs(b.scheduled?.raw)
+            cmp = ad < bd ? -1 : (ad > bd ? 1 : 0)
+        case .category:
+            cmp = a.category.localizedCompare(b.category).rawValue
+        case .default:
+            cmp = 0
+        }
+        if cmp == 0 {
+            let at = extractTimeMinutes(a)
+            let bt = extractTimeMinutes(b)
+            cmp = at - bt
+        }
+        return cmp < 0
+    }
+}

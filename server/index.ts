@@ -18,12 +18,14 @@ import {
   setTags,
   setScheduled,
   setDeadline,
+  setProperty,
   refileTask,
   getHeadingNotes,
   setHeadingNotes,
   getClockStatus,
   clockIn,
   clockOut,
+  addClockEntry,
   getCaptureTemplates,
   executeCapture,
 } from './emacs.js';
@@ -113,6 +115,22 @@ app.post('/api/clock/in', async (req, res) => {
   } catch (err) {
     console.error('Failed to clock in:', err);
     res.status(500).json({ error: 'Failed to clock in' });
+  }
+});
+
+// POST /api/clock/log - append a completed clock entry to a task's LOGBOOK
+app.post('/api/clock/log', async (req, res) => {
+  try {
+    const { file, pos, start, end } = req.body;
+    if (!file || pos === undefined || !start || !end) {
+      res.status(400).json({ error: 'file, pos, start, end (epoch seconds) required' });
+      return;
+    }
+    await addClockEntry(file, pos, Number(start), Number(end));
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to log clock entry:', err);
+    res.status(500).json({ error: 'Failed to log clock entry' });
   }
 });
 
@@ -254,6 +272,22 @@ app.patch('/api/tasks/:id/scheduled', async (req, res) => {
   } catch (err) {
     console.error('Failed to set scheduled:', err);
     res.status(500).json({ error: 'Failed to set scheduled date' });
+  }
+});
+
+// PATCH /api/tasks/:id/property - set/clear a custom org property
+app.patch('/api/tasks/:id/property', async (req, res) => {
+  try {
+    const { file, pos, key, value } = req.body;
+    if (!file || pos === undefined || !key) {
+      res.status(400).json({ error: 'file, pos, key required' });
+      return;
+    }
+    await setProperty(file, pos, key, value || '');
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to set property:', err);
+    res.status(500).json({ error: 'Failed to set property' });
   }
 });
 

@@ -1,5 +1,23 @@
 #+title: Changelog
 
+** 0.2.0
+
+- Native macOS / iOS app (=apps/macos/=, SwiftUI, two targets sharing one codebase)
+  - Things 3-style NavigationSplitView with sidebar, content list, and resizable inspector
+  - Today / Upcoming / All Tasks / Calendar views with sort, group, search, and collapsible group sections
+  - Calendar grid (Day/Week, 0-24h with half-hour markers), lane layout for overlapping events, drag-to-reschedule with live snap preview, drag-to-resize that writes single-day time-range timestamps =<2026-04-21 Tue 14:00-15:30>=
+  - Scheduling tray bound to the calendar's anchor day, with range picker (Day / 7 Days / Month), "include deadlines" + "exclude scheduled" toggles, search, and a bottom-half inspector for the selected task
+  - Multi-clock dock: run several clocks simultaneously; stop pushes a =CLOCK: [start]--[end] => H:MM= line into the task's =LOGBOOK= drawer; sessions persist across app restarts via UserDefaults
+  - EventKit two-way sync: "Add to Calendar" on an org task creates an =EKEvent= and stores its external id in a =:GCAL_EVENT_ID:= property; changes pushed via =EKEventStoreChanged= notifications. Inline event creation (⌘N or double-click empty slot) and unified rendering of org tasks + EKEvents on the calendar grid
+  - Per-server category color overrides (Settings → Category Colors); auto-assigned palette via stable string hash for unset categories
+  - Light / Dark / System theme, persisted; per-view sort/group defaults
+- Backend additions to support the apps
+  - =POST /api/clock/log= + elisp =eav-add-clock-entry= insert a completed =CLOCK= line into a task's =LOGBOOK= drawer (multi-clock support without disturbing the active org clock)
+  - =PATCH /api/tasks/:id/property= + elisp =eav-set-property= write arbitrary org properties (used for =GCAL_EVENT_ID=)
+  - Task extraction now exposes the heading's =properties= alist
+- Mutation reliability
+  - Express server auto-recovers after =eav.el= is reloaded — =withReloadRetry= in =server/emacs.ts= detects "Symbol's function definition is void" errors, re-loads =eav.el=, and retries once
+
 ** 0.1.14
 
 - Upcoming view: sort date groups chronologically

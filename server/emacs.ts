@@ -36,19 +36,42 @@ export async function emacsEval(expr: string): Promise<string> {
  * Writes JSON to a temp file to avoid control character issues
  * with emacsclient's stdout quoting.
  */
+function isVoidFunctionError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /void-function|Symbol.s function definition is void/i.test(msg);
+}
+
 async function eavCall<T>(expr: string): Promise<T> {
-  await ensureLoaded();
-  const tmpFile = path.join(tmpdir(), `eav-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
-  // Have Emacs write JSON directly to a temp file
-  await emacsEval(
-    `(let ((json-str ${expr})) (with-temp-file "${tmpFile}" (insert json-str)) nil)`
-  );
+  return withReloadRetry(async () => {
+    await ensureLoaded();
+    const tmpFile = path.join(tmpdir(), `eav-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+    await emacsEval(
+      `(let ((json-str ${expr})) (with-temp-file "${tmpFile}" (insert json-str)) nil)`
+    );
+    try {
+      const content = await readFile(tmpFile, 'utf-8');
+      return JSON.parse(content) as T;
+    } finally {
+      unlink(tmpFile).catch(() => {});
+    }
+  });
+}
+
+export async function withReloadRetry<T>(fn: () => Promise<T>): Promise<T> {
   try {
-    const content = await readFile(tmpFile, 'utf-8');
-    return JSON.parse(content) as T;
-  } finally {
-    unlink(tmpFile).catch(() => {});
+    return await fn();
+  } catch (err) {
+    if (!isVoidFunctionError(err)) throw err;
+    loaded = false;
+    return fn();
   }
+}
+
+async function eavExec(expr: string): Promise<void> {
+  await withReloadRetry(async () => {
+    await ensureLoaded();
+    await emacsEval(expr);
+  });
 }
 
 export interface OrgTimestampComponent {
@@ -95,6 +118,7 @@ export interface OrgTask {
   effort?: string;
   notes?: string;
   activeTimestamps?: OrgTimestamp[];
+  properties?: Record<string, string>;
 }
 
 export interface AgendaEntry {
@@ -168,13 +192,19 @@ export async function getClockStatus(): Promise<ClockStatus> {
 }
 
 export async function clockIn(file: string, pos: number): Promise<void> {
-  await ensureLoaded();
-  await emacsEval(`(eav-clock-in "${file}" ${pos})`);
+  await eavExec(`(eav-clock-in "${file}" ${pos})`);
 }
 
 export async function clockOut(): Promise<void> {
-  await ensureLoaded();
-  await emacsEval('(eav-clock-out)');
+  await eavExec('(eav-clock-out)');
+}
+
+export async function addClockEntry(
+  file: string, pos: number, startEpoch: number, endEpoch: number,
+): Promise<void> {
+  await eavExec(
+    `(eav-add-clock-entry "${file}" ${pos} ${Math.floor(startEpoch)} ${Math.floor(endEpoch)})`
+  );
 }
 
 export interface HeadingNotes {
@@ -188,8 +218,6 @@ export async function getHeadingNotes(file: string, pos: number): Promise<Headin
 }
 
 export async function setHeadingNotes(file: string, pos: number, notes: string): Promise<string> {
-  await ensureLoaded();
-  // Escape the notes for elisp string
   const escaped = notes.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const result = await eavCall<{ success: boolean; notes: string }>(
     `(eav-set-heading-notes "${file}" ${pos} "${escaped}")`
@@ -218,41 +246,40 @@ export async function getRefileTargets(): Promise<RefileTarget[]> {
 export async function refileToTarget(
   sourceFile: string, sourcePos: number, targetFile: string, targetPos: number,
 ): Promise<void> {
-  await ensureLoaded();
-  await emacsEval(`(eav-refile-to-target "${sourceFile}" ${sourcePos} "${targetFile}" ${targetPos})`);
+  await eavExec(`(eav-refile-to-target "${sourceFile}" ${sourcePos} "${targetFile}" ${targetPos})`);
 }
 
 export async function setTitle(file: string, pos: number, title: string): Promise<void> {
-  await ensureLoaded();
   const escaped = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  await emacsEval(`(eav-set-title "${file}" ${pos} "${escaped}")`);
+  await eavExec(`(eav-set-title "${file}" ${pos} "${escaped}")`);
 }
 
 export async function setTodoState(file: string, pos: number, state: string): Promise<void> {
-  await ensureLoaded();
   const escaped = state.replace(/"/g, '\\"');
-  await emacsEval(`(eav-set-todo-state "${file}" ${pos} "${escaped}")`);
+  await eavExec(`(eav-set-todo-state "${file}" ${pos} "${escaped}")`);
 }
 
 export async function setPriority(file: string, pos: number, priority: string): Promise<void> {
-  await ensureLoaded();
-  await emacsEval(`(eav-set-priority "${file}" ${pos} "${priority}")`);
+  await eavExec(`(eav-set-priority "${file}" ${pos} "${priority}")`);
 }
 
 export async function setTags(file: string, pos: number, tags: string[]): Promise<void> {
-  await ensureLoaded();
   const tagList = tags.map(t => `"${t}"`).join(' ');
-  await emacsEval(`(eav-set-tags "${file}" ${pos} (list ${tagList}))`);
+  await eavExec(`(eav-set-tags "${file}" ${pos} (list ${tagList}))`);
 }
 
 export async function setScheduled(file: string, pos: number, timestamp: string): Promise<void> {
-  await ensureLoaded();
-  await emacsEval(`(eav-set-scheduled "${file}" ${pos} "${timestamp}")`);
+  await eavExec(`(eav-set-scheduled "${file}" ${pos} "${timestamp}")`);
 }
 
 export async function setDeadline(file: string, pos: number, timestamp: string): Promise<void> {
-  await ensureLoaded();
-  await emacsEval(`(eav-set-deadline "${file}" ${pos} "${timestamp}")`);
+  await eavExec(`(eav-set-deadline "${file}" ${pos} "${timestamp}")`);
+}
+
+export async function setProperty(file: string, pos: number, key: string, value: string): Promise<void> {
+  // Escape double quotes in value/key
+  const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  await eavExec(`(eav-set-property "${file}" ${pos} "${esc(key)}" "${esc(value)}")`);
 }
 
 export async function refileTask(
@@ -261,8 +288,7 @@ export async function refileTask(
   targetFile: string,
   targetPos: number
 ): Promise<void> {
-  await ensureLoaded();
-  await emacsEval(
+  await eavExec(
     `(eav-refile-task "${sourceFile}" ${sourcePos} "${targetFile}" ${targetPos})`
   );
 }
@@ -300,10 +326,9 @@ export async function executeCapture(
   scheduled?: string,
   deadline?: string,
 ): Promise<void> {
-  await ensureLoaded();
   const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const priArg = priority ? `"${esc(priority)}"` : 'nil';
   const schArg = scheduled ? `"${esc(scheduled)}"` : 'nil';
   const dlArg = deadline ? `"${esc(deadline)}"` : 'nil';
-  await emacsEval(`(eav-capture "${esc(templateKey)}" "${esc(title)}" ${priArg} ${schArg} ${dlArg})`);
+  await eavExec(`(eav-capture "${esc(templateKey)}" "${esc(title)}" ${priArg} ${schArg} ${dlArg})`);
 }

@@ -122,6 +122,37 @@ The server binds to =0.0.0.0:3001=, so it's accessible over Tailscale or any loc
 
 The UI is fully responsive -- use it from your phone's browser. If you run Tailscale, just visit =http://<your-tailscale-ip>:3001=.
 
+*** Native macOS / iOS app
+
+Source lives under =apps/macos/= -- a SwiftUI app that talks to the same Express server. Two targets share one codebase: =EmacsAgendaViewerMac= (macOS, NavigationSplitView, drag-and-drop calendar, EventKit sync) and =EmacsAgendaViewer= (iOS, list-style UI). XcodeGen drives the project from =project.yml= so the =.xcodeproj= isn't tracked.
+
+#+begin_src shell
+cd apps/macos
+brew install xcodegen   # one-time
+xcodegen generate
+open EmacsAgendaViewer.xcodeproj
+# Run the EmacsAgendaViewerMac scheme, point Settings at http://localhost:3001
+#+end_src
+
+Highlights vs. the web UI:
+
+- Things 3-style sidebar (Today / Upcoming / All Tasks / Calendar) with NavigationSplitView and a resizable inspector
+- Calendar grid (Day/Week, hours 0-24) with snap-preview drag, lane layout for overlapping events, drag-to-reschedule, drag-to-resize (writes time-range timestamps)
+- Scheduling tray with date-range filter, "include deadlines" / "exclude scheduled" toggles, search, and a bottom-half task inspector
+- Multi-clock dock: run several clocks simultaneously; stop pushes a =CLOCK:= entry into the task's =LOGBOOK= drawer (new =POST /api/clock/log= endpoint + =eav-add-clock-entry= elisp)
+- EventKit two-way sync: link an org task to a Calendar event via =:GCAL_EVENT_ID:= property; changes flow both ways
+- Per-server category color overrides, light/dark/system theme, persistent active clocks across launches
+
+A signed-locally DMG can be produced with:
+
+#+begin_src shell
+cd apps/macos
+xcodebuild -project EmacsAgendaViewer.xcodeproj -scheme EmacsAgendaViewerMac \
+  -configuration Release -derivedDataPath build CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO
+hdiutil create -volname Agenda -srcfolder build/Build/Products/Release/Agenda.app \
+  -ov -format UDZO Agenda.dmg
+#+end_src
+
 ** Testing
 
 Two suites — both exercise real code paths, no mocks at the parsing or business-logic layer.
