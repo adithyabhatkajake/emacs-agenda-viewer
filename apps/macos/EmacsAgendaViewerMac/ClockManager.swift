@@ -76,13 +76,12 @@ final class ClockManager {
     /// log writes shifted the file.
     @discardableResult
     func stop(taskId: String, using client: APIClient, store: TasksStore? = nil) async -> Int? {
-        guard let idx = sessions.firstIndex(where: { $0.id == taskId }) else { return nil }
-        let s = sessions[idx]
+        guard let s = sessions.first(where: { $0.id == taskId }) else { return nil }
         let end = Date()
         let startEpoch = Int(s.startedAt.timeIntervalSince1970)
         let endEpoch = Int(end.timeIntervalSince1970)
         guard endEpoch > startEpoch else {
-            sessions.remove(at: idx)
+            sessions.removeAll(where: { $0.id == taskId })
             return 0
         }
 
@@ -93,6 +92,8 @@ final class ClockManager {
         }
         let pos = currentPos(for: s, store: store) ?? s.pos
 
+        // Re-resolve the index after the await — the array may have mutated during suspension.
+        guard let idx = sessions.firstIndex(where: { $0.id == taskId }) else { return nil }
         // Optimistically remove from the dock; reinsert on failure so the user can retry.
         sessions.remove(at: idx)
         do {
@@ -104,7 +105,8 @@ final class ClockManager {
         } catch {
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             lastStopError = "Couldn't log clock for \(s.title): \(msg)"
-            sessions.insert(s, at: idx)
+            let safeIdx = min(idx, sessions.count)
+            sessions.insert(s, at: safeIdx)
             return nil
         }
     }

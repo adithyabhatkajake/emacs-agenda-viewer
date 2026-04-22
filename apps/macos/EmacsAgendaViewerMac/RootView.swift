@@ -28,7 +28,6 @@ enum SidebarItem: String, CaseIterable, Identifiable {
 @Observable
 final class Selection {
     var taskId: String?
-    var inspectorVisible: Bool = true
 }
 
 struct RootView: View {
@@ -42,28 +41,10 @@ struct RootView: View {
     @State private var calendarSync: CalendarSync?
 
     var body: some View {
-        @Bindable var sel = taskSelection
         NavigationSplitView {
             sidebar
-        } content: {
-            VStack(spacing: 0) {
-                MacClockDock(store: store)
-                detailContent
-            }
-            .background(Theme.background)
         } detail: {
-            detailColumn
-        }
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    taskSelection.inspectorVisible.toggle()
-                } label: {
-                    Image(systemName: "sidebar.right")
-                }
-                .help("Toggle Inspector")
-                .keyboardShortcut("i", modifiers: [.command, .option])
-            }
+            detailArea
         }
         .environment(taskSelection)
         .environment(clocks)
@@ -76,6 +57,32 @@ struct RootView: View {
         }
     }
 
+    @ViewBuilder
+    private var detailArea: some View {
+        if selection == .calendar {
+            HSplitView {
+                mainPane
+                    .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+                    .layoutPriority(1)
+                MacScheduleTray(store: store)
+                    .frame(minWidth: 280, idealWidth: 360, maxWidth: 560)
+                    .background(Theme.surface)
+            }
+        } else {
+            mainPane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var mainPane: some View {
+        VStack(spacing: 0) {
+            MacClockDock(store: store)
+            detailContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Theme.background)
+    }
+
     private var sidebar: some View {
         List(SidebarItem.allCases, selection: $selection) { item in
             NavigationLink(value: item) {
@@ -85,25 +92,6 @@ struct RootView: View {
         }
         .listStyle(.sidebar)
         .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
-    }
-
-    @ViewBuilder
-    private var detailColumn: some View {
-        if selection == .calendar {
-            MacScheduleTray(store: store)
-                .background(Theme.surface)
-                .frame(minWidth: 320, idealWidth: 360, maxWidth: 520)
-        } else if taskSelection.inspectorVisible {
-            MacInspectorView(
-                store: store,
-                selectedTask: currentSelectedTask,
-                onClose: { taskSelection.taskId = nil }
-            )
-            .background(Theme.surface)
-            .frame(minWidth: 320, idealWidth: 360)
-        } else {
-            Color.clear.frame(width: 0)
-        }
     }
 
     @ViewBuilder
@@ -120,20 +108,5 @@ struct RootView: View {
         let s = CalendarSync(store: store, settings: settings, ek: eventKit)
         calendarSync = s
         return s
-    }
-
-    private var currentSelectedTask: (any TaskDisplayable)? {
-        guard let id = taskSelection.taskId else { return nil }
-        // Try OrgTask first
-        if let tasks = store.allTasks.value, let t = tasks.first(where: { $0.id == id }) {
-            return t
-        }
-        if let entries = store.today.value, let e = entries.first(where: { $0.id == id }) {
-            return e
-        }
-        if let entries = store.upcoming.value, let e = entries.first(where: { $0.id == id }) {
-            return e
-        }
-        return nil
     }
 }

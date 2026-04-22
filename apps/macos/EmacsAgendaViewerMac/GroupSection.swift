@@ -6,6 +6,7 @@ struct GroupSection<T: TaskDisplayable & Identifiable>: View where T.ID == Strin
     let doneStates: Set<String>
     let factory: RowActionFactory
     let selection: Selection
+    let store: TasksStore
     /// Set of group labels currently collapsed. Sections without a label are
     /// never collapsible (no header is shown).
     @Binding var collapsed: Set<String>
@@ -42,13 +43,22 @@ struct GroupSection<T: TaskDisplayable & Identifiable>: View where T.ID == Strin
             if !isCollapsed {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
+                        let rowActions = factory.make(for: item)
                         MacTaskRow(
                             task: item,
                             isClocked: factory.isClocked(item),
                             isSelected: selection.taskId == item.id,
                             doneStates: doneStates,
-                            actions: factory.make(for: item)
+                            actions: rowActions
                         )
+                        if selection.taskId == item.id {
+                            TaskExpandedCard(
+                                store: store,
+                                task: item,
+                                actions: rowActions
+                            )
+                            .id(item.id)
+                        }
                         if idx < items.count - 1 {
                             Divider()
                                 .background(Theme.borderSubtle)

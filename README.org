@@ -136,10 +136,10 @@ open EmacsAgendaViewer.xcodeproj
 
 Highlights vs. the web UI:
 
-- Things 3-style sidebar (Today / Upcoming / All Tasks / Calendar) with NavigationSplitView and a resizable inspector
-- Calendar grid (Day/Week, hours 0-24) with snap-preview drag, lane layout for overlapping events, drag-to-reschedule, drag-to-resize (writes time-range timestamps)
-- Scheduling tray with date-range filter, "include deadlines" / "exclude scheduled" toggles, search, and a bottom-half task inspector
-- Multi-clock dock: run several clocks simultaneously; stop pushes a =CLOCK:= entry into the task's =LOGBOOK= drawer (new =POST /api/clock/log= endpoint + =eav-add-clock-entry= elisp)
+- Things 3-style sidebar (Today / Upcoming / All Tasks / Calendar) with inline task expansion (click a row to expand notes, checklists, scheduling/deadline pickers, priority/state controls, and clock actions in-place)
+- Calendar grid (Day/Week, hours 0-24) with inline header bar, day-header row with circled-today styling, column separators, snap-preview drag, lane layout for overlapping events, drag-to-reschedule, drag-to-resize (writes time-range timestamps)
+- Scheduling tray docked alongside the calendar via =HSplitView=, with date-range filter, "include deadlines" / "exclude scheduled" toggles, search, and inline task expansion
+- Multi-clock dock: run several clocks simultaneously; stop pushes a =CLOCK:= entry into the task's =LOGBOOK= drawer (=POST /api/clock/log= endpoint + =eav-add-clock-entry= elisp). Completing a task auto-stops and logs its clock
 - EventKit two-way sync: link an org task to a Calendar event via =:GCAL_EVENT_ID:= property; changes flow both ways
 - Per-server category color overrides, light/dark/system theme, persistent active clocks across launches
 

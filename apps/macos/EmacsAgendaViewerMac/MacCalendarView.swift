@@ -15,11 +15,27 @@ struct MacCalendarView: View {
     private let hourHeight: CGFloat = 64
     private let startHour = 0
     private let endHour = 24
+    /// Height reserved for the per-column day header so the hours gutter can
+    /// match it and keep the HH:00 labels aligned with their hour rules.
+    private var dayHeaderHeight: CGFloat { range == .day ? 34 : 34 }
 
     var body: some View {
-        @Bindable var bindable = cal
+        calendarPane
+            .sheet(item: $createDraft) { draft in
+                CreateEventSheet(draft: draft)
+                    .environment(ek)
+            }
+            .task(id: settings.serverURLString) { await load() }
+            .onChange(of: cal.anchor) { _, _ in Task { await load() } }
+            .onChange(of: cal.range)  { _, _ in Task { await load() } }
+    }
+
+    @ViewBuilder
+    private var calendarPane: some View {
         VStack(spacing: 0) {
-            header
+            calendarHeader
+            Divider().background(Theme.borderSubtle)
+            daysHeaderRow
             Divider().background(Theme.borderSubtle)
             allDayStrip
             Divider().background(Theme.borderSubtle)
@@ -28,59 +44,96 @@ struct MacCalendarView: View {
                     gridContent
                 }
                 .background(Theme.background)
-                .onAppear {
-                    let h = max(startHour, min(endHour - 1, Calendar.current.component(.hour, from: Date()) - 1))
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        withAnimation(.none) { proxy.scrollTo("hour-\(h)", anchor: .top) }
-                    }
+                .task {
+                    try? await Task.sleep(nanoseconds: 350_000_000)
+                    // Scroll so that the current hour sits roughly a third
+                    // from the top — two hours of past context above, then the
+                    // rest of the day below. Anchoring on (h-2) with .top also
+                    // avoids the scroll being clamped to the content end when
+                    // h is near midnight.
+                    let now = Calendar.current.component(.hour, from: Date())
+                    let target = max(startHour, min(endHour - 1, now - 2))
+                    withAnimation(.none) { proxy.scrollTo("hour-\(target)", anchor: .top) }
                 }
             }
         }
         .background(Theme.background)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("", selection: $bindable.range) {
-                    ForEach(CalendarRange.allCases) { r in Text(r.label).tag(r) }
+    }
+
+    @ViewBuilder
+    private var calendarHeader: some View {
+        @Bindable var bindable = cal
+        HStack(spacing: 12) {
+            Text(headerTitle)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+
+            Spacer(minLength: 12)
+
+            HStack(spacing: 2) {
+                Button { shift(-1) } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 22, height: 22)
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 140)
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button { shift(-1) } label: { Image(systemName: "chevron.left") }
-            }
-            ToolbarItem(placement: .primaryAction) {
+                .buttonStyle(.plain)
+                .help("Previous")
+
                 Button("Today") { cal.anchor = Date() }
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button { shift(1) } label: { Image(systemName: "chevron.right") }
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    let now = Date()
-                    let snappedStart = snap(now)
-                    createDraft = CreateEventDraft(
-                        start: snappedStart,
-                        end: snappedStart.addingTimeInterval(60 * 60),
-                        calendarId: settings.eventKitCalendarIdentifier
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .strokeBorder(Theme.borderSubtle, lineWidth: 1)
                     )
-                } label: {
-                    Label("New Event", systemImage: "plus")
+
+                Button { shift(1) } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 22, height: 22)
                 }
-                .keyboardShortcut("n", modifiers: .command)
-                .disabled(!ek.hasAccess)
-                .help(ek.hasAccess ? "Create calendar event (⌘N)" : "Grant Calendar access in Settings to create events")
+                .buttonStyle(.plain)
+                .help("Next")
             }
-            ToolbarItem(placement: .primaryAction) {
-                ReloadButton(action: { Task { await load() } }, disabled: !settings.isConfigured)
+
+            Picker("", selection: $bindable.range) {
+                ForEach(CalendarRange.allCases) { r in Text(r.label).tag(r) }
             }
+            .pickerStyle(.segmented)
+            .frame(width: 120)
+            .labelsHidden()
+
+            Button {
+                let now = Date()
+                let snappedStart = snap(now)
+                createDraft = CreateEventDraft(
+                    start: snappedStart,
+                    end: snappedStart.addingTimeInterval(60 * 60),
+                    calendarId: settings.eventKitCalendarIdentifier
+                )
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 24, height: 22)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("n", modifiers: .command)
+            .disabled(!ek.hasAccess)
+            .help(ek.hasAccess ? "Create event (⌘N)" : "Grant Calendar access in Settings")
+
+            Button { Task { await load() } } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .disabled(!settings.isConfigured)
+            .help("Reload")
         }
-        .sheet(item: $createDraft) { draft in
-            CreateEventSheet(draft: draft)
-                .environment(ek)
-        }
-        .task(id: settings.serverURLString) { await load() }
-        .onChange(of: cal.anchor) { _, _ in Task { await load() } }
-        .onChange(of: cal.range)  { _, _ in Task { await load() } }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Data
@@ -179,36 +232,34 @@ struct MacCalendarView: View {
 
     // MARK: - Layout
 
-    @ViewBuilder
-    private var header: some View {
-        HStack {
-            Text(headerTitle)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            Spacer()
-        }
-        .padding(.horizontal, 20).padding(.vertical, 10)
-    }
-
     @State private var allDayExpanded = false
-    private let allDayCollapsedRows = 3
+    private let allDayCollapsedRows = 2
+    private let allDayExpandedRows = 12
+
+    /// Row height used to size the all-day strip deterministically. Chip is
+    /// ~13pt tall; add a bit of breathing room.
+    private let allDayRowHeight: CGFloat = 16
 
     @ViewBuilder
     private var allDayStrip: some View {
         let maxCount = days.map { allDayItems(items(for: $0)).count }.max() ?? 0
-        let visibleRows = allDayExpanded ? maxCount : min(maxCount, allDayCollapsedRows)
-        let stripHeight: CGFloat = max(20, CGFloat(visibleRows) * 18 + 4)
+        let limit = allDayExpanded
+            ? min(maxCount, allDayExpandedRows)
+            : min(maxCount, allDayCollapsedRows)
+        // Number of rows of chrome we need room for per column. When there's
+        // overflow in collapsed mode, the "+N more" button is an extra row.
+        let overflowRows = (!allDayExpanded && maxCount > allDayCollapsedRows) ? 1 : 0
+        let visualRows = max(1, limit) + overflowRows
+        let stripHeight = CGFloat(visualRows) * allDayRowHeight + 8 // content + vertical padding
 
         HStack(alignment: .top, spacing: 0) {
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: 2) {
                 Text("all-day")
                     .font(.system(size: 9, weight: .semibold))
                     .tracking(0.5)
                     .foregroundStyle(Theme.textTertiary)
                 if maxCount > allDayCollapsedRows {
-                    Button {
-                        allDayExpanded.toggle()
-                    } label: {
+                    Button { allDayExpanded.toggle() } label: {
                         Image(systemName: allDayExpanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 9))
                             .foregroundStyle(Theme.textTertiary)
@@ -219,35 +270,50 @@ struct MacCalendarView: View {
             }
             .frame(width: 44, alignment: .trailing)
             .padding(.trailing, 6)
+            .padding(.top, 2)
 
-            HStack(spacing: 1) {
-                ForEach(days, id: \.self) { day in
-                    dayAllDayColumn(day, height: stripHeight)
+            HStack(alignment: .top, spacing: 0) {
+                ForEach(Array(days.enumerated()), id: \.element) { idx, day in
+                    if idx > 0 {
+                        Rectangle()
+                            .fill(Theme.borderSubtle)
+                            .frame(width: 1, height: stripHeight)
+                    }
+                    dayAllDayColumn(day, limit: limit)
                 }
             }
         }
-        .padding(.vertical, 4)
+        .frame(height: stripHeight)
+        .padding(.vertical, 2)
         .background(Theme.background)
     }
 
     @ViewBuilder
-    private func dayAllDayColumn(_ day: Date, height: CGFloat) -> some View {
+    private func dayAllDayColumn(_ day: Date, limit: Int) -> some View {
         let allDay = allDayItems(items(for: day))
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(allDay) { item in
-                    let color = item.resolvedColor(using: settings)
-                    AllDayChip(item: item, color: color)
-                        .onTapGesture { handleItemTap(item) }
-                        .draggable(item.id) {
-                            AllDayChip(item: item, color: color).frame(width: 180)
-                        }
-                }
+        let visible = Array(allDay.prefix(limit))
+        let overflow = allDay.count - visible.count
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(visible) { item in
+                let color = item.resolvedColor(using: settings)
+                AllDayChip(item: item, color: color)
+                    .onTapGesture { handleItemTap(item) }
+                    .draggable(item.id) {
+                        AllDayChip(item: item, color: color).frame(width: 180)
+                    }
             }
-            .padding(.horizontal, 4)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            if overflow > 0 {
+                Button { allDayExpanded = true } label: {
+                    Text("+\(overflow) more")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
         }
-        .frame(height: height, alignment: .top)
+        .padding(.horizontal, 4).padding(.vertical, 2)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .contentShape(Rectangle())
         .dropDestination(for: String.self) { ids, _ in
             guard let id = ids.first else { return false }
@@ -298,41 +364,63 @@ struct MacCalendarView: View {
     }
 
     @ViewBuilder
+    private var daysHeaderRow: some View {
+        HStack(spacing: 0) {
+            Color.clear.frame(width: hourGutterWidth, height: dayHeaderHeight)
+            ForEach(Array(days.enumerated()), id: \.element) { idx, day in
+                if idx > 0 {
+                    Rectangle().fill(Theme.borderSubtle).frame(width: 1, height: dayHeaderHeight)
+                }
+                dayHeader(day: day, isToday: Calendar.current.isDateInToday(day))
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .frame(height: dayHeaderHeight)
+    }
+
+    @ViewBuilder
     private var gridContent: some View {
         HStack(alignment: .top, spacing: 0) {
-            // Hours column
-            VStack(spacing: 0) {
-                ForEach(startHour..<endHour, id: \.self) { h in
-                    Text(String(format: "%02d:00", h))
-                        .font(.system(size: 9))
-                        .foregroundStyle(Theme.textTertiary)
-                        .frame(width: 44, height: hourHeight, alignment: .topTrailing)
-                        .padding(.trailing, 6)
-                        .id("hour-\(h)")
+            hoursGutter
+            ForEach(Array(days.enumerated()), id: \.element) { idx, day in
+                if idx > 0 {
+                    Rectangle().fill(Theme.borderSubtle).frame(width: 1)
                 }
-            }
-            // Day columns
-            HStack(spacing: 1) {
-                ForEach(days, id: \.self) { day in
-                    dayColumn(day)
-                }
+                dayColumnBody(day)
             }
         }
         .padding(.bottom, 24)
     }
 
+    private let hourGutterWidth: CGFloat = 50
+
     @ViewBuilder
-    private func dayColumn(_ day: Date) -> some View {
+    private var hoursGutter: some View {
+        // Each hour is its own VStack row of `hourHeight` so ScrollViewReader
+        // can target it by id. The label sits at the top-right of the row with
+        // a small negative offset so it straddles the hour rule drawn in DayGrid.
+        VStack(spacing: 0) {
+            ForEach(startHour..<endHour, id: \.self) { h in
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    Text(String(format: "%02d:00", h))
+                        .font(.system(size: 9))
+                        .foregroundStyle(Theme.textTertiary)
+                        .padding(.trailing, 6)
+                        .offset(y: -5)
+                }
+                .frame(width: hourGutterWidth, height: hourHeight, alignment: .top)
+                .id("hour-\(h)")
+            }
+        }
+        .frame(width: hourGutterWidth)
+    }
+
+    @ViewBuilder
+    private func dayColumnBody(_ day: Date) -> some View {
         let isToday = Calendar.current.isDateInToday(day)
         let placed = placeItems(timedItems(items(for: day)), on: day)
         VStack(spacing: 0) {
-            HStack {
-                Text(dayHeaderText(day))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(isToday ? Theme.accent : Theme.textSecondary)
-                Spacer()
-            }
-            .padding(.bottom, 4)
             DayGrid(
                 day: day,
                 isToday: isToday,
@@ -416,6 +504,44 @@ struct MacCalendarView: View {
     private func dayHeaderText(_ d: Date) -> String {
         let f = DateFormatter(); f.dateFormat = range == .day ? "EEEE, MMM d" : "EEE d"
         return f.string(from: d)
+    }
+
+    private static let weekdayShortFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEE"; return f
+    }()
+
+    @ViewBuilder
+    private func dayHeader(day: Date, isToday: Bool) -> some View {
+        let dayNum = Calendar.current.component(.day, from: day)
+        if range == .day {
+            HStack(spacing: 6) {
+                Text(dayHeaderText(day))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isToday ? Theme.accent : Theme.textPrimary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .background(isToday ? Theme.accent.opacity(0.06) : Color.clear)
+        } else {
+            VStack(spacing: 1) {
+                Text(Self.weekdayShortFmt.string(from: day).uppercased())
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(0.5)
+                    .foregroundStyle(isToday ? Theme.accent : Theme.textTertiary)
+                    .lineLimit(1)
+                Text("\(dayNum)")
+                    .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(isToday ? .white : Theme.textPrimary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 0.5)
+                    .background(
+                        Capsule().fill(isToday ? Theme.accent : Color.clear)
+                    )
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(isToday ? Theme.accent.opacity(0.06) : Color.clear)
+        }
     }
 
     /// Public alias so private helper structs in this file can reference EventLayout.
@@ -668,20 +794,22 @@ private struct AllDayChip: View {
     let color: Color
 
     var body: some View {
-        HStack(spacing: 5) {
-            Rectangle().fill(color).frame(width: 2, height: 12)
+        HStack(spacing: 3) {
+            Rectangle().fill(color).frame(width: 2, height: 10)
             Text(item.title)
-                .font(.system(size: 11))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
+                .truncationMode(.tail)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 4).padding(.vertical, 1)
+        .padding(.horizontal, 3).padding(.vertical, 1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 3, style: .continuous)
                 .fill(color.opacity(0.14))
         )
+        .help(item.title)
     }
 }
 

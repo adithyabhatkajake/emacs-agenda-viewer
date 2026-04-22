@@ -3,8 +3,11 @@ import SwiftUI
 struct TaskRowActions {
     var toggleDone: () -> Void = {}
     var setPriority: (String) -> Void = { _ in }
+    var setState: (String) -> Void = { _ in }
     var schedule: (Date?) -> Void = { _ in }
     var setDeadline: (Date?) -> Void = { _ in }
+    var scheduleAt: (Date?, Bool) -> Void = { _, _ in }
+    var setDeadlineAt: (Date?, Bool) -> Void = { _, _ in }
     var clockIn: () -> Void = {}
     var clockOut: () -> Void = {}
     var openInspector: () -> Void = {}
@@ -226,16 +229,12 @@ struct MacTaskRow: View {
             Button("Tomorrow") { actions.schedule(Calendar.current.date(byAdding: .day, value: 1, to: Date())) }
             Button("Next Week") { actions.schedule(Calendar.current.date(byAdding: .day, value: 7, to: Date())) }
             Divider()
-            Button("Pick Date…") { actions.openInspector() }
-            Divider()
             Button("Clear") { actions.schedule(nil) }
         }
         Menu("Deadline") {
             Button("Today") { actions.setDeadline(Date()) }
             Button("Tomorrow") { actions.setDeadline(Calendar.current.date(byAdding: .day, value: 1, to: Date())) }
             Button("Next Week") { actions.setDeadline(Calendar.current.date(byAdding: .day, value: 7, to: Date())) }
-            Divider()
-            Button("Pick Date…") { actions.openInspector() }
             Divider()
             Button("Clear") { actions.setDeadline(nil) }
         }
@@ -245,7 +244,5 @@ struct MacTaskRow: View {
         } else {
             Button("Clock In") { actions.clockIn() }
         }
-        Divider()
-        Button("Edit in Inspector") { actions.openInspector() }
     }
 }

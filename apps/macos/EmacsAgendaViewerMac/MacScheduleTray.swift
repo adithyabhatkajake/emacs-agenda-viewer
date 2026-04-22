@@ -24,6 +24,8 @@ struct MacScheduleTray: View {
     @Environment(AppSettings.self) private var settings
     @Environment(CalendarState.self) private var cal
     @Environment(Selection.self) private var selection
+    @Environment(ClockManager.self) private var clocks
+    @Environment(CalendarSync.self) private var sync
     let store: TasksStore
 
     @State private var range: TrayRange = .day
@@ -32,60 +34,17 @@ struct MacScheduleTray: View {
     @State private var query: String = ""
 
     var body: some View {
-        VSplitView {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                controls
-                searchField
-                Divider().background(Theme.borderSubtle)
-                list
-            }
-            .frame(minHeight: 200)
-
-            if selection.taskId != nil, let task = selectedTask {
-                inspectorPane(task: task)
-                    .frame(minHeight: 240)
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            controls
+            searchField
+            Divider().background(Theme.borderSubtle)
+            listAndInspector
         }
         .background(Theme.surface)
         .task(id: settings.serverURLString) { await loadIfNeeded() }
     }
 
-    private var selectedTask: (any TaskDisplayable)? {
-        guard let id = selection.taskId else { return nil }
-        if let t = store.allTasks.value?.first(where: { $0.id == id }) { return t }
-        if let t = store.today.value?.first(where: { $0.id == id })   { return t }
-        if let t = store.upcoming.value?.first(where: { $0.id == id }) { return t }
-        return nil
-    }
-
-    @ViewBuilder
-    private func inspectorPane(task: any TaskDisplayable) -> some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("INSPECTOR")
-                    .font(.system(size: 9, weight: .bold)).tracking(0.6)
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                Button {
-                    selection.taskId = nil
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textTertiary)
-                }
-                .buttonStyle(.plain)
-                .help("Close inspector (drag the divider to resize)")
-            }
-            .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 4)
-            Divider().background(Theme.borderSubtle)
-            MacInspectorView(
-                store: store,
-                selectedTask: task,
-                onClose: { selection.taskId = nil }
-            )
-        }
-    }
 
     // MARK: - Header
 
@@ -165,11 +124,23 @@ struct MacScheduleTray: View {
 
     // MARK: - List
 
-    private var list: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 1) {
+    private var listAndInspector: some View {
+        let factory = RowActionFactory(
+            store: store, settings: settings,
+            selection: selection, clocks: clocks, sync: sync
+        )
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 1) {
                 ForEach(filtered) { task in
                     TrayRow(task: task, anchor: rangeStart)
+                    if selection.taskId == task.id {
+                        TaskExpandedCard(
+                            store: store,
+                            task: task,
+                            actions: factory.make(for: task)
+                        )
+                        .id(task.id)
+                    }
                 }
                 if filtered.isEmpty {
                     Text(query.isEmpty ? "Nothing in this range" : "No matches")
@@ -292,6 +263,7 @@ private struct TrayRow: View {
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
+                .truncationMode(.tail)
 
             Spacer(minLength: 6)
 
@@ -299,6 +271,7 @@ private struct TrayRow: View {
                 Text(label)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(dateColor)
+                    .fixedSize()
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 5)
@@ -308,7 +281,9 @@ private struct TrayRow: View {
         )
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
-        .onTapGesture { selection.taskId = task.id }
+        .onTapGesture {
+            selection.taskId = (selection.taskId == task.id) ? nil : task.id
+        }
         .help(helpText)
         .draggable(task.id) {
             Text(task.title)

@@ -1,5 +1,25 @@
 #+title: Changelog
 
+** 0.2.1
+
+- macOS app: replace three-column inspector layout with inline task expansion
+  - =TaskExpandedCard= renders notes, checklists, TODO state/priority pickers, scheduling/deadline date pickers with time toggle, and clock controls directly below the selected row
+  - =NotesRenderer= parses org notes into blocks (checklists, bullets, paragraphs), skips =:PROPERTIES:=/=:LOGBOOK:= drawers, renders inline org markup (bold, italic, code, links)
+  - =RootView= drops the three-column =NavigationSplitView= (sidebar/content/inspector) in favour of a two-column layout; calendar view uses =HSplitView= to dock the schedule tray alongside the grid
+  - =MacScheduleTray= removes the =VSplitView= inspector pane; tapping a row toggles an inline =TaskExpandedCard= instead
+  - =GroupSection= renders =TaskExpandedCard= inline below the selected row in Today/Upcoming/All Tasks views
+  - Context menus simplified: removed "Pick Date…" and "Edit in Inspector" items that relied on the inspector panel
+- macOS app: calendar grid visual overhaul
+  - Navigation controls moved from toolbar to an inline header bar with compact segmented range picker
+  - Dedicated day-header row with weekday abbreviation + circled day number (accent capsule for today)
+  - Column separators (vertical rules) between days in both the all-day strip and timed grid
+  - All-day strip uses deterministic row height, limits visible rows, shows "+N more" overflow button
+  - Hours gutter refactored for correct label alignment with hour rules
+  - Initial scroll shows two hours of past context instead of landing on the current hour
+- macOS app: clock-done integration — completing a task (via =toggleDone= or =setState=) automatically stops and logs any running clock for that task
+- macOS app: =ClockManager= fixes race condition on =stop()= — re-resolves array index after =await= to prevent out-of-bounds crash from concurrent mutations
+- macOS app: list views (Today/Upcoming/All Tasks) use full available width instead of capping at 880px
+
 ** 0.2.0
 
 - Native macOS / iOS app (=apps/macos/=, SwiftUI, two targets sharing one codebase)

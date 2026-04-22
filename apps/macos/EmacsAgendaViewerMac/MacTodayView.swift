@@ -90,13 +90,13 @@ struct MacTodayView: View {
                         doneStates: doneStates,
                         factory: factory,
                         selection: selection,
+                        store: store,
                         collapsed: $collapsedGroups
                     )
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .frame(maxWidth: 880, alignment: .leading)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Theme.background)
