@@ -49,6 +49,20 @@ jobs:
         working-directory: apps/macos
         run: xcodegen generate
 
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run elisp tests
+        run: |
+          emacs -batch -l ert -l elisp/eav-tests.el -f ert-run-tests-batch-and-exit
+
+      - name: Run web unit tests
+        run: npx vitest run
+
+      - name: Run Swift tests
+        working-directory: apps/macos
+        run: swift test
+
       - name: Build Release
         working-directory: apps/macos
         run: |

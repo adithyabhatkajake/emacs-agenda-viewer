@@ -1,5 +1,99 @@
 #+title: Changelog
 
+** 0.3.0
+
+Major macOS design refresh based on a Sonoma-vibrancy mockup from claude.ai/design,
+plus several reliability fixes uncovered along the way.
+
+*** macOS task row layout
+
+- Single-line row: =[State] [Priority] Title [📅 Scheduled] [⚑ Deadline] [⏱ Clocked] —spacer— [#tag #tag] [CATEGORY]=
+- =PriorityBadge= — solid 16×16 colored square with white mono letter (A red · B orange · C blue · D gray); replaces the old flag-and-letter badge
+- =DateBadge= — scheduled is a blue tinted pill with calendar icon; deadline is =flag.fill= with severity-tinted bg + border (overdue red, soon orange, normal gray)
+- Tags render as outlined mono =#tag= chips (right-aligned) and the category renders as a solid uppercase pill
+- TODO state pills use per-state hues parsed from =org-todo-keywords= (TODO blue, NEXT green, PROJ purple, ACTV orange, WAIT/KILL gray)
+- Removed inter-row dividers; all-day events use a quieter single-line banner with leading color bar, monospaced time, and lowercase calendar tag
+
+*** macOS Today view
+
+- New day-head: =TODAY= overline + 22pt bold day label + =N tasks · M events= subtitle
+- =SCHEDULE= section interleaves timed events and timed tasks chronologically by minute-of-day; previously they were lumped into a separate top block, breaking time order
+- All-day events surface above the schedule under an =ALL DAY= label
+- Untimed tasks group below by category as before
+
+*** macOS task inspector (=TaskExpandedCard=)
+
+Replaces the row when selected — clean Things-3-style card, no surrounding border, soft 14pt shadow:
+
+- Title is always editable (commits on Enter / blur via =saveTitle=)
+- TODO state pill, priority box, scheduled chip, and deadline chip in the title row are all clickable; each opens a Button-driven popover (not a =Menu= — =.menuStyle(.borderlessButton)= was overriding the white text in the priority box label)
+- Notes render by default with interactive checkboxes; tapping anywhere in the notes area enters raw-text edit mode (=TextEditor= focuses automatically); blur saves and switches back
+- Footer row: =[★ Scheduled] —spacer— [▶ clock] [# tags] [≡ state/priority] [⚑ deadline] [📥 refile]=
+- Tags editor — popover with comma-separated text field, inherited tags listed read-only
+- Refile triggers the existing =RefileSheet=
+- Clock toggle: =play.circle= / =stop.circle.fill= (replaces the old separate clock chip that disappeared in the row redesign)
+- Dismiss via Esc, the × in the top-right, or clicking anywhere outside the card
+- Checklist progress visible as a 3pt strip on the top edge of the card (faint gray base, green for done, muted orange for ongoing)
+
+*** Things-3-style date picker (=DatePickerPopover=)
+
+- Dark compact popover replaces the heavy =.graphical= =DatePicker=
+- =When= text field at top — type =today=, =tomorrow=, =next week= + Enter to jump
+- Quick rows: =★ Today=, =🌙 This Evening= (today @ 18:00), =📥 Someday= (clears)
+- Compact month grid with prev/next chevrons; today is a gold star, the selected day fills a colored circle in the chip's tint
+- Inline =🕒 Time= row with =Add time= → embedded =HH:MM= picker; =×= removes the time. Time edits commit immediately and keep the popover open so you can keep tweaking; day clicks commit and dismiss
+- =Clear= strip at the bottom
+
+*** Multi-clock dock (=MacClockDock=)
+
+- Each running session as its own row: =⏱ [Priority] Title —spacer— [CATEGORY] [elapsed] [stop] [×]=
+- Per-row priority badge looked up from =store.allTasks/today/upcoming= so it matches the row palette
+- Pulsing 3pt orange edge bar (=Theme.priorityB=) via =TimelineView=, plus a faint orange→clear horizontal gradient over the dock surface
+- Removed the =CLOCKED IN= header pill (the orange tint already conveys that state)
+
+*** Row highlight + checklist progress settings
+
+Three new settings (Settings → Row Highlight, Settings → Checklist Progress):
+
+- *Highlight by* — =Off=, =Priority=, or =TODO State= — colors come from =settings.resolvedPriorityColor/resolvedTodoStateColor= so user-customized hexes flow through automatically
+- *Highlight style* — =Edge bar= (3pt left strip) or =Background tint= (subtle row fill)
+- *Progress style* — =Top line= (2pt strip), =Circle= (donut at row end), =Background fill= (left-to-right green for done, muted orange for in-progress, clipped to the row's rounded corners)
+
+*** Notes parsing + clock data
+
+- =NotesParser= already skipped =:LOGBOOK:= drawers; the inspector hides them too
+- Fixed bug in =eav-add-clock-entry=: when a =:LOGBOOK:= drawer existed, the new CLOCK line was being inserted *after* =:END:= instead of inside the drawer (cause: =org-end-of-meta-data= jumps past the drawer; the old code did =forward-line 1= from there). New behavior: jump to the =:LOGBOOK:= header, =forward-line 1=, insert.
+- =eav-clock-in= / =eav-clock-out= bind =org-clock-into-drawer "LOGBOOK"= so their CLOCK lines always land inside the drawer regardless of the user's personal config
+- New =eav-tidy-clocks= elisp + =POST /api/clock/tidy= server route + =store.tidyClocks= → folds any pre-existing loose =CLOCK:= lines under a heading into a =:LOGBOOK:= drawer
+- =eav--collect-loose-clock-lines= helper sweeps loose lines while preserving entry-end positioning via a marker
+- Inspector shows an orange =N loose CLOCK entries outside :LOGBOOK:= banner with a =Tidy= button when legacy loose entries are detected
+
+*** =org-todo-list=-correct task filtering
+
+- =eav-extract-all-tasks= was passing =nil= as the match argument to =org-map-entries=, walking every heading. Fixed: only headings with =(org-get-todo-state)= are included.
+- =eav-extract-active-tasks= had a similar bug — and was using a hardcoded =("DONE" "KILL" "[X]")= list. Now uses a new =eav--done-keywords= helper that parses =org-todo-keywords= (everything after the =|= per sequence, stripping =(c)= shortcut hints), making it correct for arbitrary user TODO sequences.
+- =eav-extract-tasks-for-file= gets the same TODO-state guard.
+
+*** Live progress + observation
+
+- =TasksStore.prefetchNotes= now always re-fetches on row appearance (only the in-flight de-dup set short-circuits) so the row's progress reflects live state even when notes are edited out-of-band in Emacs
+- =TasksStore.notesCacheRevision= bumps on every cache mutation; =RowActionFactory.progress(for:)= reads it explicitly so the @Observable framework reliably tracks dictionary mutations through the helper-closure boundary
+
+*** Click-outside / dismiss UX
+
+- Escape key, the × in the inspector top-right, and clicks anywhere outside the card all dismiss the inspector
+- Dismiss handler moved from the =ScrollView=' s =.background= (which doesn't extend into scrollable content) to the =LazyVStack=' s background with =minHeight: 600=, so empty space inside the scroll content also dismisses
+- Wired in Today / Upcoming / All Tasks / Eisenhower
+
+*** Calendar sidebar regression fix
+
+- Switching to the Calendar view dropped the sidebar's icons + Filters section + footer because the =RootView=' s =HSplitView { mainPane | MacScheduleTray }= nested badly inside the outer =NavigationSplitView=. Moved the schedule-tray split inside =MacCalendarView= as an =HStack { calendarPane | MacScheduleTray }= with a fixed 340pt tray. The detail area is now a single column for every view.
+
+*** Tags edit + APIs
+
+- =APIClient.setTags= + =store.setTags= + =MacRowActionsBuilder.setTags= wired through to the existing =PATCH /api/tasks/:id/tags= endpoint
+- =DatePickerPopover= callback signature changed from =(Date, Bool) -> Void= to =(Date, Bool, _ closing: Bool) -> Void= so callers can keep the popover open while inline-editing the time
+
 ** 0.2.1
 
 - macOS app: replace three-column inspector layout with inline task expansion

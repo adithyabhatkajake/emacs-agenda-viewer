@@ -6,3 +6,4 @@ test-results/
 playwright-report/
 *.elc
 *.tsbuildinfo
+productivity/

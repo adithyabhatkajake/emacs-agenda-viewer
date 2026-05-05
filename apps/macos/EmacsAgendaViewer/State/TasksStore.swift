@@ -31,13 +31,26 @@ final class TasksStore {
     var allTasks: LoadState<[OrgTask]> = .idle
     var files: [AgendaFile] = []
     var keywords: TodoKeywords?
+    var priorities: OrgPriorities?
+    var listConfig: OrgListConfig?
     var clock: ClockStatus?
 
     /// Last server-side error from a mutation, if any. Surfaced by views.
     var lastMutationError: String?
 
     /// Notes cache keyed by "file::pos".
-    var notesCache: [String: String] = [:]
+    var notesCache: [String: String] = [:] {
+        didSet { notesCacheRevision &+= 1 }
+    }
+    /// Bumped on every `notesCache` mutation. Views can read this in their
+    /// body so the Observation framework tracks the dependency reliably even
+    /// when the cache lookup happens through a helper closure.
+    var notesCacheRevision: UInt = 0
+
+    var refileTargets: [RefileTarget] = []
+    var refileTargetsLoaded = false
+
+    var initialized = false
 
     private let upcomingDays = 14
 
@@ -75,13 +88,27 @@ final class TasksStore {
         }
     }
 
-    func loadMetadata(using client: APIClient) async {
+    func loadMetadata(using client: APIClient, settings: AppSettings? = nil) async {
         async let filesResult = try? client.fetchFiles()
         async let keywordsResult = try? client.fetchKeywords()
+        async let prioritiesResult = try? client.fetchPriorities()
+        async let listConfigResult = try? client.fetchListConfig()
         async let clockResult = try? client.fetchClockStatus()
         self.files = (await filesResult) ?? []
         self.keywords = await keywordsResult
+        self.priorities = await prioritiesResult
+        self.listConfig = await listConfigResult
         self.clock = await clockResult
+        if let settings, let kw = self.keywords,
+           let pr = self.priorities {
+            _ = settings.syncFromServer(keywords: kw, priorities: pr)
+            initialized = true
+        }
+    }
+
+    func ensureInitialized(using client: APIClient, settings: AppSettings) async {
+        guard !initialized else { return }
+        await loadMetadata(using: client, settings: settings)
     }
 
     func refreshClock(using client: APIClient) async {
@@ -136,6 +163,24 @@ final class TasksStore {
         }
     }
 
+    func setTags(taskId: String, file: String, pos: Int, tags: [String], using client: APIClient) async {
+        await runMutation(client: client) {
+            try await client.setTags(taskId: taskId, file: file, pos: pos, tags: tags)
+        }
+    }
+
+    func tidyClocks(file: String, pos: Int, using client: APIClient) async {
+        do {
+            try await client.tidyClocks(file: file, pos: pos)
+            // Invalidate the cached notes so the rendered/raw views show the
+            // freshly-folded LOGBOOK drawer.
+            notesCache.removeValue(forKey: "\(file)::\(pos)")
+            await refreshLoaded(using: client)
+        } catch {
+            // Silent fail; the user can retry.
+        }
+    }
+
     func setScheduled(taskId: String, file: String, pos: Int, timestamp: String, using client: APIClient) async {
         await runMutation(client: client) {
             try await client.setScheduled(taskId: taskId, file: file, pos: pos, timestamp: timestamp)
@@ -166,6 +211,22 @@ final class TasksStore {
         }
     }
 
+    func loadRefileTargets(using client: APIClient) async {
+        do {
+            refileTargets = try await client.fetchRefileTargets()
+            refileTargetsLoaded = true
+        } catch {
+            lastMutationError = error.message
+        }
+    }
+
+    func refile(sourceFile: String, sourcePos: Int, target: RefileTarget, using client: APIClient) async {
+        await runMutation(client: client) {
+            try await client.refileTask(sourceFile: sourceFile, sourcePos: sourcePos,
+                                        targetFile: target.file, targetPos: target.pos)
+        }
+    }
+
     func loadNotes(file: String, pos: Int, using client: APIClient) async -> String {
         let key = "\(file)::\(pos)"
         if let cached = notesCache[key] { return cached }
@@ -175,6 +236,34 @@ final class TasksStore {
             return notes
         } catch {
             return ""
+        }
+    }
+
+    /// Synchronous lookup for cached notes — used by views that want to render
+    /// at-a-glance progress without triggering a network round-trip per row.
+    func cachedNotes(file: String, pos: Int) -> String? {
+        notesCache["\(file)::\(pos)"]
+    }
+
+    /// Background refresh for a task's notes. Always re-fetches so that views
+    /// reflect the live state even when the cache is stale (e.g., after an
+    /// out-of-band edit in Emacs). De-dupes overlapping requests via an
+    /// in-flight set so scrolling doesn't spam the server.
+    private var notesInFlight: Set<String> = []
+    func prefetchNotes(file: String, pos: Int, using client: APIClient) {
+        let key = "\(file)::\(pos)"
+        if notesInFlight.contains(key) { return }
+        notesInFlight.insert(key)
+        Task { [weak self] in
+            do {
+                let notes = try await client.fetchNotes(file: file, pos: pos)
+                await MainActor.run {
+                    self?.notesCache[key] = notes
+                    self?.notesInFlight.remove(key)
+                }
+            } catch {
+                await MainActor.run { self?.notesInFlight.remove(key) }
+            }
         }
     }
 

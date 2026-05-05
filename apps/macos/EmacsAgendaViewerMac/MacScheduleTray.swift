@@ -131,13 +131,15 @@ struct MacScheduleTray: View {
         )
         return ScrollView {
             VStack(alignment: .leading, spacing: 1) {
+                let doneStates = Set((store.keywords?.allDone ?? []).map { $0.uppercased() })
                 ForEach(filtered) { task in
                     TrayRow(task: task, anchor: rangeStart)
                     if selection.taskId == task.id {
                         TaskExpandedCard(
                             store: store,
                             task: task,
-                            actions: factory.make(for: task)
+                            actions: factory.make(for: task),
+                            doneStates: doneStates
                         )
                         .id(task.id)
                     }
@@ -285,7 +287,7 @@ private struct TrayRow: View {
             selection.taskId = (selection.taskId == task.id) ? nil : task.id
         }
         .help(helpText)
-        .draggable(task.id) {
+        .draggable(task.dragPayload) {
             Text(task.title)
                 .font(.system(size: 12))
                 .padding(8)

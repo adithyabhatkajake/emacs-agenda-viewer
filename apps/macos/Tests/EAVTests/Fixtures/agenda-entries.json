@@ -1,0 +1,79 @@
+[
+  {
+    "id": "/home/user/org/work.org::Standup",
+    "title": "Standup",
+    "agendaType": "scheduled",
+    "todoState": "TODO",
+    "priority": "B",
+    "tags": ["meeting"],
+    "inheritedTags": ["work"],
+    "scheduled": {
+      "raw": "<2026-04-18 Sat 09:30>",
+      "date": "2026-04-18",
+      "start": { "year": 2026, "month": 4, "day": 18, "hour": 9, "minute": 30 },
+      "type": "active"
+    },
+    "deadline": null,
+    "category": "Work",
+    "level": 2,
+    "file": "/home/user/org/work.org",
+    "pos": 500,
+    "effort": "0:30",
+    "timeOfDay": " 9:30",
+    "displayDate": "2026-04-18"
+  },
+  {
+    "id": "/home/user/org/work.org::Code review",
+    "title": "Code review",
+    "agendaType": "deadline",
+    "todoState": "NEXT",
+    "priority": "A",
+    "tags": [],
+    "inheritedTags": [],
+    "deadline": {
+      "raw": "<2026-04-18 Sat 17:00>",
+      "date": "2026-04-18",
+      "start": { "year": 2026, "month": 4, "day": 18, "hour": 17, "minute": 0 },
+      "type": "active"
+    },
+    "category": "Work",
+    "level": 2,
+    "file": "/home/user/org/work.org",
+    "pos": 600,
+    "timeOfDay": "17:00",
+    "displayDate": "2026-04-18"
+  },
+  {
+    "id": "/home/user/org/habits.org::Exercise",
+    "title": "Exercise",
+    "agendaType": "scheduled",
+    "todoState": "TODO",
+    "priority": null,
+    "tags": ["habit"],
+    "inheritedTags": [],
+    "scheduled": {
+      "raw": "<2026-04-18 Sat .+1d>",
+      "date": "2026-04-18",
+      "start": { "year": 2026, "month": 4, "day": 18 },
+      "type": "active",
+      "repeater": { "type": ".+", "value": 1, "unit": "d" }
+    },
+    "category": "Habits",
+    "level": 1,
+    "file": "/home/user/org/habits.org",
+    "pos": 10,
+    "displayDate": "2026-04-18"
+  },
+  {
+    "id": "/home/user/org/work.org::Team sync",
+    "title": "Team sync",
+    "agendaType": "timestamp",
+    "tags": [],
+    "inheritedTags": [],
+    "category": "Work",
+    "level": "  ",
+    "file": "/home/user/org/work.org",
+    "pos": 800,
+    "tsDate": "2026-04-19"
+  }
+]

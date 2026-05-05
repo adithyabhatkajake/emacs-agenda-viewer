@@ -136,10 +136,13 @@ open EmacsAgendaViewer.xcodeproj
 
 Highlights vs. the web UI:
 
-- Things 3-style sidebar (Today / Upcoming / All Tasks / Calendar) with inline task expansion (click a row to expand notes, checklists, scheduling/deadline pickers, priority/state controls, and clock actions in-place)
-- Calendar grid (Day/Week, hours 0-24) with inline header bar, day-header row with circled-today styling, column separators, snap-preview drag, lane layout for overlapping events, drag-to-reschedule, drag-to-resize (writes time-range timestamps)
-- Scheduling tray docked alongside the calendar via =HSplitView=, with date-range filter, "include deadlines" / "exclude scheduled" toggles, search, and inline task expansion
-- Multi-clock dock: run several clocks simultaneously; stop pushes a =CLOCK:= entry into the task's =LOGBOOK= drawer (=POST /api/clock/log= endpoint + =eav-add-clock-entry= elisp). Completing a task auto-stops and logs its clock
+- Sonoma-vibrancy design adapted from a claude.ai/design mockup — single-line task rows with inline state pill, solid colored priority box, scheduled/deadline chips, tag chips, and a category pill on the right
+- Today view interleaves timed events and timed tasks chronologically in a =SCHEDULE= section; all-day events surface above; untimed tasks group by category below
+- Things 3-style inline inspector: clicking a task swaps the row for an editable card with title field, interactive checklist notes (click to toggle, click empty area to enter raw-text edit), state/priority/scheduled/deadline pickers all click-to-edit, footer row with clock toggle, tags editor, refile, and a top-edge progress strip
+- Compact dark Things-3 date picker (Today, This Evening, month grid, inline =HH:MM= time row, Someday, natural-language =When= field)
+- Settings: highlight rows by priority or TODO state (edge bar or background tint); checklist progress style (top line / circle / background fill)
+- Calendar grid (Day/Week, hours 0-24) with inline header bar, day-header row with circled-today styling, column separators, snap-preview drag, lane layout for overlapping events, drag-to-reschedule, drag-to-resize (writes time-range timestamps); schedule tray docks beside the grid
+- Multi-clock dock: run several clocks simultaneously; stop pushes a =CLOCK:= entry into the task's =LOGBOOK= drawer (=POST /api/clock/log= endpoint + =eav-add-clock-entry= elisp). Completing a task auto-stops and logs its clock. Loose CLOCK lines from prior org configs can be folded into a =:LOGBOOK:= drawer via =POST /api/clock/tidy= (one-click "Tidy" banner in the inspector when detected)
 - EventKit two-way sync: link an org task to a Calendar event via =:GCAL_EVENT_ID:= property; changes flow both ways
 - Per-server category color overrides, light/dark/system theme, persistent active clocks across launches
 

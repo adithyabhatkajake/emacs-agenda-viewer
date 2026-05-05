@@ -8,6 +8,29 @@ struct RowActionFactory {
     let clocks: ClockManager
     let sync: CalendarSync?
 
+    /// Compute checklist progress for a task using cached notes only.
+    /// Returns nil when notes aren't cached yet or contain no checklist.
+    /// Reads `notesCacheRevision` so the @Observable framework tracks
+    /// dictionary mutations through the parent view's body.
+    func progress(for task: any TaskDisplayable) -> (done: Int, ongoing: Int, total: Int)? {
+        _ = store.notesCacheRevision
+        guard let notes = store.cachedNotes(file: task.file, pos: task.pos) else { return nil }
+        return ChecklistProgress.compute(from: notes)
+    }
+
+    /// Prefetch closure to wire as `MacTaskRow.onAppear`. Idempotent — does
+    /// nothing if already cached or already in flight.
+    func prefetch(for task: any TaskDisplayable) -> () -> Void {
+        let store = self.store
+        let client = self.settings.apiClient
+        let file = task.file
+        let pos = task.pos
+        return {
+            guard let client else { return }
+            store.prefetchNotes(file: file, pos: pos, using: client)
+        }
+    }
+
     func make(for task: any TaskDisplayable) -> TaskRowActions {
         let id = task.id
         let file = task.file
@@ -92,6 +115,27 @@ struct RowActionFactory {
                     selection.taskId = nil
                 } else {
                     selection.taskId = id
+                }
+            },
+            refile: {
+                selection.refileTask = snapshot
+            },
+            setTags: { newTags in
+                Task { @MainActor in
+                    guard let client = settings.apiClient else { return }
+                    await store.setTags(taskId: id, file: file, pos: pos, tags: newTags, using: client)
+                }
+            },
+            saveTitle: { newTitle in
+                let trimmed = newTitle.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty, trimmed != snapshot.title else {
+                    selection.editingTaskId = nil
+                    return
+                }
+                Task { @MainActor in
+                    guard let client = settings.apiClient else { return }
+                    await store.setTitle(taskId: id, file: file, pos: pos, title: trimmed, using: client)
+                    selection.editingTaskId = nil
                 }
             }
         )

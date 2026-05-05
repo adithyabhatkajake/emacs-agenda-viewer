@@ -8,11 +8,14 @@ final class EventKitService {
     let store = EKEventStore()
     var hasAccess: Bool = false
     var calendars: [EKCalendar] = []
+    var allCalendars: [EKCalendar] = []
     var lastError: String?
-    /// Bumped whenever EventKit notifies us of changes. Views observing this
-    /// will re-fetch their events automatically.
-    var changeToken: Int = 0
-    private var observer: NSObjectProtocol?
+    /// Events for the currently visible date range. Views read this property
+    /// (which SwiftUI tracks via @Observable) instead of querying EKEventStore
+    /// directly. Mutations call `refetchEvents()` to update it.
+    var visibleEvents: [EKEvent] = []
+    var hiddenCalendarIds: Set<String> = []
+    private var visibleInterval: DateInterval?
 
     init() {
         let status = EKEventStore.authorizationStatus(for: .event)
@@ -20,22 +23,45 @@ final class EventKitService {
             hasAccess = true
             reloadCalendars()
         }
-        observer = NotificationCenter.default.addObserver(
-            forName: .EKEventStoreChanged,
-            object: store,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.changeToken &+= 1 }
+    }
+
+    /// Start listening for external calendar changes. Call from `.task {}`.
+    func listenForChanges() async {
+        let notifications = NotificationCenter.default.notifications(
+            named: .EKEventStoreChanged, object: store
+        )
+        for await _ in notifications {
+            reloadCalendars()
+            refetchEvents()
         }
     }
 
-    /// Fetch events overlapping the given interval. Returns empty array if no access.
-    func events(in interval: DateInterval) -> [EKEvent] {
-        guard hasAccess else { return [] }
+    /// Query EventKit for events in the given interval and store them.
+    func fetchEvents(in interval: DateInterval) {
+        visibleInterval = interval
+        refetchEvents()
+    }
+
+    /// Re-query EventKit using the last requested interval.
+    func refetchEvents() {
+        guard hasAccess, let interval = visibleInterval else { return }
         let predicate = store.predicateForEvents(
             withStart: interval.start, end: interval.end, calendars: nil
         )
-        return store.events(matching: predicate)
+        let all = store.events(matching: predicate)
+        if hiddenCalendarIds.isEmpty {
+            visibleEvents = all
+        } else {
+            visibleEvents = all.filter { !hiddenCalendarIds.contains($0.calendar.calendarIdentifier) }
+        }
+    }
+
+    /// Events from `visibleEvents` that overlap a specific day.
+    func events(for day: Date) -> [EKEvent] {
+        let cal = Calendar.current
+        let dayStart = cal.startOfDay(for: day)
+        let dayEnd = cal.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
+        return visibleEvents.filter { $0.startDate < dayEnd && $0.endDate > dayStart }
     }
 
     func requestAccess() async {
@@ -47,19 +73,38 @@ final class EventKitService {
                 granted = try await store.requestAccess(to: .event)
             }
             hasAccess = granted
-            if granted { reloadCalendars() }
+            if granted {
+                reloadCalendars()
+                refetchEvents()
+            }
         } catch {
             hasAccess = false
             lastError = error.localizedDescription
         }
     }
 
+    /// Re-check authorization and reload calendars if access was granted
+    /// externally (e.g. via System Settings).
+    func refreshAccessIfNeeded() {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        let granted = status == .fullAccess || status == .authorized
+        if granted && !hasAccess {
+            hasAccess = true
+            reloadCalendars()
+            refetchEvents()
+        } else if granted && calendars.isEmpty {
+            reloadCalendars()
+        }
+    }
+
     func reloadCalendars() {
-        calendars = store.calendars(for: .event).filter { $0.allowsContentModifications }
+        allCalendars = store.calendars(for: .event)
+        calendars = allCalendars.filter { $0.allowsContentModifications }
     }
 
     /// Create a new event. Returns the calendarItemExternalIdentifier (stable for synced calendars).
     func createEvent(title: String, start: Date, end: Date, calendarId: String?) -> String? {
+        refreshAccessIfNeeded()
         guard let cal = pickCalendar(id: calendarId) else { return nil }
         let event = EKEvent(eventStore: store)
         event.calendar = cal
@@ -68,6 +113,7 @@ final class EventKitService {
         event.endDate = end
         do {
             try store.save(event, span: .thisEvent, commit: true)
+            refetchEvents()
             return event.calendarItemExternalIdentifier
         } catch {
             lastError = error.localizedDescription
@@ -83,6 +129,7 @@ final class EventKitService {
         event.endDate = end
         do {
             try store.save(event, span: .thisEvent, commit: true)
+            refetchEvents()
             return true
         } catch {
             lastError = error.localizedDescription
@@ -95,6 +142,7 @@ final class EventKitService {
         guard let event = findEvent(externalId: externalId) else { return false }
         do {
             try store.remove(event, span: .thisEvent, commit: true)
+            refetchEvents()
             return true
         } catch {
             lastError = error.localizedDescription
@@ -123,6 +171,7 @@ final class EventKitService {
         event.endDate = end
         do {
             try store.save(event, span: .thisEvent, commit: true)
+            refetchEvents()
             return true
         } catch {
             lastError = error.localizedDescription
@@ -135,6 +184,7 @@ final class EventKitService {
         guard let event = findEvent(stableId: stableId) else { return false }
         do {
             try store.remove(event, span: .thisEvent, commit: true)
+            refetchEvents()
             return true
         } catch {
             lastError = error.localizedDescription

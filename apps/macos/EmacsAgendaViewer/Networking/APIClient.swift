@@ -109,6 +109,14 @@ struct APIClient {
         try await get("/api/config")
     }
 
+    func fetchPriorities() async throws -> OrgPriorities {
+        try await get("/api/priorities")
+    }
+
+    func fetchListConfig() async throws -> OrgListConfig {
+        try await get("/api/list-config")
+    }
+
     func fetchAgendaDay(_ date: String) async throws -> [AgendaEntry] {
         try await get("/api/agenda/day/\(date)")
     }
@@ -203,6 +211,58 @@ struct APIClient {
     func logClockEntry(file: String, pos: Int, start: Int, end: Int) async throws {
         struct Body: Encodable { let file: String; let pos: Int; let start: Int; let end: Int }
         try await send("POST", "/api/clock/log", body: Body(file: file, pos: pos, start: start, end: end))
+    }
+
+    /// Sweep loose CLOCK: lines under a heading into a :LOGBOOK: drawer.
+    func tidyClocks(file: String, pos: Int) async throws {
+        struct Body: Encodable { let file: String; let pos: Int }
+        try await send("POST", "/api/clock/tidy", body: Body(file: file, pos: pos))
+    }
+
+    func fetchRefileTargets() async throws -> [RefileTarget] {
+        try await get("/api/refile/targets")
+    }
+
+    func refileTask(sourceFile: String, sourcePos: Int,
+                    targetFile: String, targetPos: Int) async throws {
+        struct Body: Encodable {
+            let sourceFile: String; let sourcePos: Int
+            let targetFile: String; let targetPos: Int
+        }
+        try await send("POST", "/api/refile",
+                       body: Body(sourceFile: sourceFile, sourcePos: sourcePos,
+                                  targetFile: targetFile, targetPos: targetPos))
+    }
+
+    func fetchCaptureTemplates() async throws -> [CaptureTemplate] {
+        try await get("/api/capture/templates")
+    }
+
+    func insertEntry(file: String, targetType: String, entryText: String,
+                     headline: String? = nil, olp: [String]? = nil,
+                     prepend: Bool = false) async throws {
+        struct Body: Encodable {
+            let file: String; let targetType: String; let entryText: String
+            let headline: String?; let olp: [String]?; let prepend: Bool?
+        }
+        try await send("POST", "/api/insert-entry",
+                       body: Body(file: file, targetType: targetType, entryText: entryText,
+                                  headline: headline, olp: olp,
+                                  prepend: prepend ? true : nil))
+    }
+
+    func captureTask(templateKey: String, title: String, priority: String?,
+                     scheduled: String?, deadline: String?,
+                     promptAnswers: [String]?) async throws {
+        struct Body: Encodable {
+            let templateKey: String; let title: String
+            let priority: String?; let scheduled: String?; let deadline: String?
+            let promptAnswers: [String]?
+        }
+        try await send("POST", "/api/capture",
+                       body: Body(templateKey: templateKey, title: title,
+                                  priority: priority, scheduled: scheduled,
+                                  deadline: deadline, promptAnswers: promptAnswers))
     }
 
     func setNotes(file: String, pos: Int, notes: String) async throws -> String {

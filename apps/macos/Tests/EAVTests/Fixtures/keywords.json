@@ -1,0 +1,6 @@
+{
+  "sequences": [
+    { "active": ["TODO", "NEXT", "ACTV"], "done": ["DONE", "CANCELLED"] },
+    { "active": ["WAIT"], "done": ["SMDY"] }
+  ]
+}

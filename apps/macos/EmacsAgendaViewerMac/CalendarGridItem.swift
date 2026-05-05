@@ -1,6 +1,24 @@
 import SwiftUI
 import EventKit
 
+struct CalendarDragPayload: Codable {
+    enum Kind: String, Codable { case org, ek }
+    let kind: Kind
+    let id: String
+    let file: String
+    let pos: Int
+
+    var encoded: String {
+        let data = try! JSONEncoder().encode(self)
+        return String(data: data, encoding: .utf8)!
+    }
+
+    static func decode(from string: String) -> CalendarDragPayload? {
+        guard let data = string.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(CalendarDragPayload.self, from: data)
+    }
+}
+
 /// Unified abstraction for items rendered on the calendar grid: org tasks
 /// (from agenda data) and EventKit events.
 enum CalendarGridItem: Identifiable {
@@ -18,6 +36,15 @@ enum CalendarGridItem: Identifiable {
         switch self {
         case .org(let e): return e.title
         case .ek(let e):  return e.title ?? "(no title)"
+        }
+    }
+
+    var isDeadlineOnly: Bool {
+        switch self {
+        case .org(let e):
+            return e.scheduled == nil && e.deadline != nil
+        case .ek:
+            return false
         }
     }
 
@@ -99,6 +126,15 @@ enum CalendarGridItem: Identifiable {
         event.calendarItemExternalIdentifier ?? event.eventIdentifier ?? UUID().uuidString
     }
 
+    var dragPayload: String {
+        switch self {
+        case .org(let e):
+            return CalendarDragPayload(kind: .org, id: e.id, file: e.file, pos: e.pos).encoded
+        case .ek(let e):
+            return CalendarDragPayload(kind: .ek, id: Self.stableId(of: e), file: "", pos: 0).encoded
+        }
+    }
+
     private static func orgEnd(_ e: AgendaEntry) -> Date? {
         guard let ts = e.scheduled ?? e.deadline,
               let s = ts.start, let sh = s.hour,
@@ -112,5 +148,11 @@ enum CalendarGridItem: Identifiable {
         dc.year = end.year; dc.month = end.month; dc.day = end.day
         dc.hour = eh; dc.minute = end.minute ?? 0
         return Calendar.current.date(from: dc)
+    }
+}
+
+extension OrgTask {
+    var dragPayload: String {
+        CalendarDragPayload(kind: .org, id: id, file: file, pos: pos).encoded
     }
 }

@@ -20,14 +20,25 @@ struct MacCalendarView: View {
     private var dayHeaderHeight: CGFloat { range == .day ? 34 : 34 }
 
     var body: some View {
-        calendarPane
-            .sheet(item: $createDraft) { draft in
-                CreateEventSheet(draft: draft)
-                    .environment(ek)
-            }
-            .task(id: settings.serverURLString) { await load() }
-            .onChange(of: cal.anchor) { _, _ in Task { await load() } }
-            .onChange(of: cal.range)  { _, _ in Task { await load() } }
+        HStack(spacing: 0) {
+            calendarPane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+            MacScheduleTray(store: store)
+                .frame(width: 340)
+                .background(Theme.surface)
+        }
+        .sheet(item: $createDraft) { draft in
+            CreateEventSheet(draft: draft)
+                .environment(ek)
+        }
+        .task(id: settings.serverURLString) { await load() }
+        .task { await ek.listenForChanges() }
+        .onChange(of: ek.hasAccess) { _, granted in
+            if granted { Task { await load() } }
+        }
+        .onChange(of: cal.anchor) { _, _ in Task { await load() } }
+        .onChange(of: cal.range)  { _, _ in Task { await load() } }
     }
 
     @ViewBuilder
@@ -161,19 +172,9 @@ struct MacCalendarView: View {
     private func orgEntries(for day: Date) -> [AgendaEntry] {
         let key = DateQuery.string(from: day)
         let pool = (store.today.value ?? []) + (store.upcoming.value ?? [])
+        let deduped = dedupeAgendaEntries(pool)
 
-        var seen: [String: AgendaEntry] = [:]
-        for entry in pool {
-            let hasTime = (entry.scheduled?.hasTime ?? false) || (entry.deadline?.hasTime ?? false)
-            if let existing = seen[entry.id] {
-                let existingHasTime = (existing.scheduled?.hasTime ?? false) || (existing.deadline?.hasTime ?? false)
-                if hasTime && !existingHasTime { seen[entry.id] = entry }
-            } else {
-                seen[entry.id] = entry
-            }
-        }
-
-        return seen.values.filter { entry in
+        return deduped.filter { entry in
             let d = entry.scheduled?.start ?? entry.deadline?.start
             guard let comp = d else { return false }
             var dc = DateComponents(); dc.year = comp.year; dc.month = comp.month; dc.day = comp.day
@@ -183,17 +184,8 @@ struct MacCalendarView: View {
 
     /// Combined org + EventKit items for a day.
     private func items(for day: Date) -> [CalendarGridItem] {
-        // Subscribe to EventKit changes so this view re-renders on EK updates.
-        _ = ek.changeToken
-
-        let cal = Calendar.current
-        let dayStart = cal.startOfDay(for: day)
-        let dayEnd = cal.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
-
         var result: [CalendarGridItem] = orgEntries(for: day).map { .org($0) }
-        if ek.hasAccess {
-            result += ek.events(in: DateInterval(start: dayStart, end: dayEnd)).map { .ek($0) }
-        }
+        result += ek.events(for: day).map { .ek($0) }
         return result
     }
 
@@ -205,21 +197,13 @@ struct MacCalendarView: View {
         items.filter { !$0.isTimed }
     }
 
-    private func findTask(id: String) -> (any TaskDisplayable)? {
-        if let t = store.today.value?.first(where: { $0.id == id }) { return t }
-        if let t = store.upcoming.value?.first(where: { $0.id == id }) { return t }
-        if let t = store.allTasks.value?.first(where: { $0.id == id }) { return t }
-        return nil
-    }
-
-    private func schedule(taskId: String, on day: Date, hour: Int?, minute: Int?, durationMinutes: Int? = nil) async {
-        guard let client = settings.apiClient,
-              let task = findTask(id: taskId) else { return }
+    private func schedule(taskId: String, file: String, pos: Int, on day: Date, hour: Int?, minute: Int?, durationMinutes: Int? = nil) async {
+        guard let client = settings.apiClient else { return }
         var dc = Calendar.current.dateComponents([.year, .month, .day], from: day)
         if let h = hour { dc.hour = h; dc.minute = minute ?? 0 }
         guard let date = Calendar.current.date(from: dc) else { return }
         let ts = OrgTimestampFormat.string(date: date, includeTime: hour != nil, durationMinutes: durationMinutes)
-        await store.setScheduled(taskId: taskId, file: task.file, pos: task.pos, timestamp: ts, using: client)
+        await store.setScheduled(taskId: taskId, file: file, pos: pos, timestamp: ts, using: client)
     }
 
     /// Convert a y-offset within the time grid into snapped (hour, minute).
@@ -298,7 +282,7 @@ struct MacCalendarView: View {
                 let color = item.resolvedColor(using: settings)
                 AllDayChip(item: item, color: color)
                     .onTapGesture { handleItemTap(item) }
-                    .draggable(item.id) {
+                    .draggable(item.dragPayload) {
                         AllDayChip(item: item, color: color).frame(width: 180)
                     }
             }
@@ -317,7 +301,7 @@ struct MacCalendarView: View {
         .contentShape(Rectangle())
         .dropDestination(for: String.self) { ids, _ in
             guard let id = ids.first else { return false }
-            handleDrop(id: id, on: day, hour: nil, minute: nil)
+            handleDrop(payloadString: id, on: day, hour: nil, minute: nil)
             return true
         }
     }
@@ -330,18 +314,29 @@ struct MacCalendarView: View {
     }
 
     /// Routes a drag-drop. Org task → reschedule via server. EK event → move via EventKit.
-    private func handleDrop(id: String, on day: Date, hour: Int?, minute: Int?) {
-        if id.hasPrefix("ek:") {
-            let stableId = String(id.dropFirst(3))
-            guard let event = ek.findEvent(stableId: stableId) else { return }
+    private func handleDrop(payloadString: String, on day: Date, hour: Int?, minute: Int?) {
+        guard let payload = CalendarDragPayload.decode(from: payloadString) else { return }
+        switch payload.kind {
+        case .ek:
+            guard let event = ek.findEvent(stableId: payload.id) else { return }
             var dc = Calendar.current.dateComponents([.year, .month, .day], from: day)
             dc.hour = hour ?? 0; dc.minute = minute ?? 0
             guard let newStart = Calendar.current.date(from: dc) else { return }
             let duration = event.endDate.timeIntervalSince(event.startDate)
             let newEnd = newStart.addingTimeInterval(duration)
-            ek.updateEvent(stableId: stableId, title: event.title ?? "", start: newStart, end: newEnd)
-        } else {
-            Task { await schedule(taskId: id, on: day, hour: hour, minute: minute) }
+            ek.updateEvent(stableId: payload.id, title: event.title ?? "", start: newStart, end: newEnd)
+        case .org:
+            let pool = (store.today.value ?? []) + (store.upcoming.value ?? [])
+            let entry = pool.first(where: { $0.id == payload.id })
+            let dur: Int? = {
+                guard let ts = entry?.scheduled ?? entry?.deadline,
+                      let s = ts.start, let sh = s.hour,
+                      let e = ts.end, let eh = e.hour else { return nil }
+                let startMin = sh * 60 + (s.minute ?? 0)
+                let endMin = eh * 60 + (e.minute ?? 0)
+                return endMin > startMin ? endMin - startMin : nil
+            }()
+            Task { await schedule(taskId: payload.id, file: payload.file, pos: payload.pos, on: day, hour: hour, minute: minute, durationMinutes: dur) }
         }
     }
 
@@ -351,7 +346,8 @@ struct MacCalendarView: View {
             Task {
                 let comp = (entry.scheduled ?? entry.deadline)?.start
                 await schedule(
-                    taskId: entry.id, on: day,
+                    taskId: entry.id, file: entry.file, pos: entry.pos,
+                    on: day,
                     hour: comp?.hour, minute: comp?.minute,
                     durationMinutes: durationMinutes
                 )
@@ -430,9 +426,9 @@ struct MacCalendarView: View {
                 endHour: endHour,
                 onTapItem: { handleItemTap($0) },
                 onResize: { item, newDur in handleResize(item, on: day, durationMinutes: newDur) },
-                onDrop: { id, y in
+                onDrop: { payloadString, y in
                     let (h, m) = snappedTime(yPx: y)
-                    handleDrop(id: id, on: day, hour: h, minute: m)
+                    handleDrop(payloadString: payloadString, on: day, hour: h, minute: m)
                 },
                 onCreateAt: { y in
                     let (h, m) = snappedTime(yPx: y)
@@ -445,6 +441,26 @@ struct MacCalendarView: View {
                             calendarId: settings.eventKitCalendarIdentifier
                         )
                     }
+                },
+                onCreateRange: { startY, endY in
+                    let topY = min(startY, endY)
+                    let botY = max(startY, endY)
+                    let (sh, sm) = snappedTime(yPx: topY)
+                    let (eh, em) = snappedTime(yPx: botY)
+                    var startDC = Calendar.current.dateComponents([.year, .month, .day], from: day)
+                    startDC.hour = sh; startDC.minute = sm
+                    guard let startDate = Calendar.current.date(from: startDC) else { return }
+                    var endDC = Calendar.current.dateComponents([.year, .month, .day], from: day)
+                    endDC.hour = eh; endDC.minute = em
+                    guard var endDate = Calendar.current.date(from: endDC) else { return }
+                    if endDate <= startDate {
+                        endDate = startDate.addingTimeInterval(30 * 60)
+                    }
+                    createDraft = CreateEventDraft(
+                        start: startDate,
+                        end: endDate,
+                        calendarId: settings.eventKitCalendarIdentifier
+                    )
                 },
                 snapTime: { snappedTime(yPx: $0) }
             )
@@ -557,6 +573,10 @@ struct MacCalendarView: View {
         let startMin = Int(startSec / 60) - startHour * 60
         let y = CGFloat(startMin) / 60.0 * hourHeight
 
+        if item.isDeadlineOnly {
+            return EventLayout(y: max(0, y), height: 18, durationMinutes: 0)
+        }
+
         var duration = 60
         if let e = item.endDate, e > s {
             let mins = Int(e.timeIntervalSince(s) / 60)
@@ -599,13 +619,19 @@ struct MacCalendarView: View {
     }
 
     private func load() async {
-        guard let client = settings.apiClient else { return }
+        ek.refreshAccessIfNeeded()
+        ek.hiddenCalendarIds = settings.hiddenCalendarIds
         let cal = Calendar.current
         let first = days.first ?? anchor
         let last = days.last ?? anchor
-        let start = DateQuery.string(from: cal.startOfDay(for: first))
+
+        let dayStart = cal.startOfDay(for: first)
+        let dayEnd = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: last)) ?? dayStart
+        ek.fetchEvents(in: DateInterval(start: dayStart, end: dayEnd))
+
+        guard let client = settings.apiClient else { return }
+        let start = DateQuery.string(from: dayStart)
         let end = DateQuery.string(from: cal.startOfDay(for: last))
-        // Fetch agenda range; reuse upcoming bucket
         do {
             let entries = try await client.fetchAgendaRange(start: start, end: end)
             store.upcoming = .loaded(entries)
@@ -627,9 +653,12 @@ private struct DayGrid: View {
     let onResize: (CalendarGridItem, Int) -> Void
     let onDrop: (String, CGFloat) -> Void
     let onCreateAt: (CGFloat) -> Void
+    let onCreateRange: (CGFloat, CGFloat) -> Void
     let snapTime: (CGFloat) -> (Int, Int)
 
     @State private var hoverY: CGFloat?
+    @State private var createDragStart: CGFloat?
+    @State private var createDragEnd: CGFloat?
 
     var body: some View {
         GeometryReader { geo in
@@ -658,28 +687,51 @@ private struct DayGrid: View {
                 .background(isToday ? Theme.accent.opacity(0.04) : Color.clear)
                 .allowsHitTesting(false)
 
-                // Tap-to-create layer (double-click on empty space).
                 Color.clear
                     .contentShape(Rectangle())
                     .gesture(SpatialTapGesture(count: 2).onEnded { value in
                         onCreateAt(value.location.y)
                     })
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 8)
+                            .onChanged { value in
+                                createDragStart = value.startLocation.y
+                                createDragEnd = value.location.y
+                            }
+                            .onEnded { value in
+                                let startY = value.startLocation.y
+                                let endY = value.location.y
+                                createDragStart = nil
+                                createDragEnd = nil
+                                onCreateRange(startY, endY)
+                            }
+                    )
 
                 ForEach(placed, id: \.item.id) { p in
                     let laneWidth = max(20, geo.size.width / CGFloat(p.groupSize))
                     let color = p.item.resolvedColor(using: settings)
-                    ResizableEvent(
-                        item: p.item,
-                        color: color,
-                        layout: p.layout,
-                        hourHeight: hourHeight,
-                        onTap: { onTapItem(p.item) },
-                        onResize: { dur in onResize(p.item, dur) }
-                    )
-                    .frame(width: laneWidth - 2, alignment: .top)
-                    .offset(x: 1 + laneWidth * CGFloat(p.lane), y: p.layout.y)
-                    .draggable(p.item.id) {
-                        EventChip(item: p.item, color: color, compact: false).frame(width: 200, height: 40)
+                    if p.item.isDeadlineOnly {
+                        DeadlineMarker(item: p.item, color: color)
+                            .frame(width: geo.size.width - 4, height: 18)
+                            .offset(x: 2, y: p.layout.y)
+                            .onTapGesture { onTapItem(p.item) }
+                            .draggable(p.item.dragPayload) {
+                                DeadlineMarker(item: p.item, color: color).frame(width: 200, height: 18)
+                            }
+                    } else {
+                        ResizableEvent(
+                            item: p.item,
+                            color: color,
+                            layout: p.layout,
+                            hourHeight: hourHeight,
+                            onTap: { onTapItem(p.item) },
+                            onResize: { dur in onResize(p.item, dur) }
+                        )
+                        .frame(width: laneWidth - 2, alignment: .top)
+                        .offset(x: 1 + laneWidth * CGFloat(p.lane), y: p.layout.y)
+                        .draggable(p.item.dragPayload) {
+                            EventChip(item: p.item, color: color, compact: false).frame(width: 200, height: 40)
+                        }
                     }
                 }
 
@@ -689,6 +741,11 @@ private struct DayGrid: View {
 
                 if let y = hoverY {
                     snapPreview(at: y, gridWidth: geo.size.width)
+                        .allowsHitTesting(false)
+                }
+
+                if let start = createDragStart, let end = createDragEnd {
+                    createRangePreview(from: start, to: end, gridWidth: geo.size.width)
                         .allowsHitTesting(false)
                 }
             }
@@ -733,6 +790,37 @@ private struct DayGrid: View {
                 .offset(x: 4, y: -10)
         }
         .offset(y: snappedY - 1)
+    }
+
+    @ViewBuilder
+    private func createRangePreview(from startY: CGFloat, to endY: CGFloat, gridWidth: CGFloat) -> some View {
+        let (sh, sm) = snapTime(min(startY, endY))
+        let (eh, em) = snapTime(max(startY, endY))
+        let topPx = CGFloat((sh - startHour) * 60 + sm) / 60.0 * hourHeight
+        let botPx = CGFloat((eh - startHour) * 60 + em) / 60.0 * hourHeight
+        let height = max(hourHeight / 2, botPx - topPx)
+
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Theme.accent.opacity(0.12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .strokeBorder(Theme.accent.opacity(0.5), lineWidth: 1.5)
+                )
+                .frame(width: gridWidth - 4, height: height)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(String(format: "%02d:%02d", sh, sm))
+                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .foregroundStyle(Theme.accent)
+                Spacer(minLength: 0)
+                Text(String(format: "%02d:%02d", eh, em))
+                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .foregroundStyle(Theme.accent)
+            }
+            .padding(6)
+            .frame(height: height)
+        }
+        .offset(x: 2, y: topPx)
     }
 }
 
@@ -786,6 +874,35 @@ private struct ResizeHandle: View {
             )
             .contentShape(Rectangle())
             .help("Drag to resize")
+    }
+}
+
+private struct DeadlineMarker: View {
+    let item: CalendarGridItem
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Rectangle()
+                .fill(color)
+                .frame(height: 1.5)
+                .frame(maxWidth: 6)
+            Text(item.title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.horizontal, 4)
+            Rectangle()
+                .fill(color.opacity(0.4))
+                .frame(height: 1)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help("Deadline: \(item.title)")
     }
 }
 

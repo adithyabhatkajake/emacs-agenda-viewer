@@ -2,6 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ========== Local Inter (variable) ========== */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/InterVariable.woff2') format('woff2-variations'),
+       url('/fonts/InterVariable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/InterVariable-Italic.woff2') format('woff2-variations'),
+       url('/fonts/InterVariable-Italic.woff2') format('woff2');
+}
+
 /* ========== Light theme (default) ========== */
 :root {
   --things-bg: 255 255 255;
@@ -110,4 +128,19 @@ button, [role="button"] {
 ::selection {
   background: rgba(var(--accent), 0.3);
   color: rgb(var(--text-primary));
+}
+
+/* ========== Task card grouping (per design) ========== */
+.task-card {
+  background: rgb(var(--things-bg));
+  border: 1px solid rgb(var(--things-border-subtle));
+  border-radius: 12px;
+  overflow: hidden;
+  margin: 6px 12px 14px;
+}
+@media (min-width: 768px) {
+  .task-card { margin: 6px 16px 14px; }
+}
+.task-card > div:last-child > .group:last-child {
+  border-bottom: 0;
 }

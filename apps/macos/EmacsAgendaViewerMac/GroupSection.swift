@@ -1,5 +1,82 @@
 import SwiftUI
 
+struct GroupedTaskList<T: TaskDisplayable & Identifiable>: View where T.ID == String {
+    let groups: [TaskGroup<T>]
+    let secondaryKey: GroupKey
+    let eisenhower: EisenhowerGroupContext?
+    let doneStates: Set<String>
+    let factory: RowActionFactory
+    let selection: Selection
+    let store: TasksStore
+    @Binding var collapsed: Set<String>
+
+    var body: some View {
+        ForEach(groups) { group in
+            if secondaryKey == .none {
+                GroupSection(
+                    label: group.label,
+                    items: group.items,
+                    doneStates: doneStates,
+                    factory: factory,
+                    selection: selection,
+                    store: store,
+                    collapsed: $collapsed
+                )
+            } else {
+                primarySection(group)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func primarySection(_ group: TaskGroup<T>) -> some View {
+        let isCollapsed = group.label.isEmpty ? false : collapsed.contains("p:\(group.label)")
+        VStack(alignment: .leading, spacing: 8) {
+            if !group.label.isEmpty {
+                Button {
+                    let key = "p:\(group.label)"
+                    if collapsed.contains(key) { collapsed.remove(key) }
+                    else { collapsed.insert(key) }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Theme.textTertiary)
+                        Text(group.label)
+                            .font(.system(size: 12, weight: .bold))
+                            .tracking(0.6)
+                            .textCase(.uppercase)
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("\(group.items.count)")
+                            .font(.system(size: 10).monospacedDigit())
+                            .foregroundStyle(Theme.textTertiary)
+                        Spacer()
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 8)
+            }
+            if !isCollapsed {
+                let subgroups = groupTasks(group.items, by: secondaryKey, eisenhower: eisenhower)
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(subgroups) { sub in
+                        GroupSection(
+                            label: sub.label,
+                            items: sub.items,
+                            doneStates: doneStates,
+                            factory: factory,
+                            selection: selection,
+                            store: store,
+                            collapsed: $collapsed
+                        )
+                        .padding(.leading, group.label.isEmpty ? 0 : 8)
+                    }
+                }
+            }
+        }
+    }
+}
+
 struct GroupSection<T: TaskDisplayable & Identifiable>: View where T.ID == String {
     let label: String
     let items: [T]
@@ -42,27 +119,26 @@ struct GroupSection<T: TaskDisplayable & Identifiable>: View where T.ID == Strin
             }
             if !isCollapsed {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
+                    ForEach(items, id: \.id) { item in
                         let rowActions = factory.make(for: item)
-                        MacTaskRow(
-                            task: item,
-                            isClocked: factory.isClocked(item),
-                            isSelected: selection.taskId == item.id,
-                            doneStates: doneStates,
-                            actions: rowActions
-                        )
                         if selection.taskId == item.id {
                             TaskExpandedCard(
                                 store: store,
                                 task: item,
-                                actions: rowActions
+                                actions: rowActions,
+                                doneStates: doneStates
                             )
                             .id(item.id)
-                        }
-                        if idx < items.count - 1 {
-                            Divider()
-                                .background(Theme.borderSubtle)
-                                .padding(.leading, 42)
+                        } else {
+                            MacTaskRow(
+                                task: item,
+                                isClocked: factory.isClocked(item),
+                                isSelected: false,
+                                doneStates: doneStates,
+                                actions: rowActions,
+                                progress: factory.progress(for: item),
+                                onAppear: factory.prefetch(for: item)
+                            )
                         }
                     }
                 }

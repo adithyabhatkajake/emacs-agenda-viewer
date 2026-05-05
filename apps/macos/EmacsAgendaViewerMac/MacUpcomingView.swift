@@ -46,7 +46,7 @@ struct MacUpcomingView: View {
         // remaining tasks render as rows below. Dedupe per-day so scheduled +
         // deadline on the same day collapse to one row.
         let groups = Self.groupByDay(entries).map { g in
-            DayGroup(key: g.key, label: g.label, items: Self.dedupe(g.items))
+            DayGroup(key: g.key, label: g.label, items: dedupeAgendaEntries(g.items))
         }
         let doneStates = Set((store.keywords?.allDone ?? []).map { $0.uppercased() })
         let factory = RowActionFactory(store: store, settings: settings, selection: selection, clocks: clocks, sync: sync)
@@ -58,7 +58,13 @@ struct MacUpcomingView: View {
             }
             .padding(.horizontal, 32)
             .padding(.vertical, 20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 600, alignment: .leading)
+            .background(
+                Rectangle()
+                    .fill(Theme.background)
+                    .contentShape(Rectangle())
+                    .onTapGesture { selection.taskId = nil }
+            )
         }
         .background(Theme.background)
     }
@@ -83,18 +89,26 @@ struct MacUpcomingView: View {
 
             if !tasks.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(tasks.enumerated()), id: \.element.id) { idx, entry in
-                        MacTaskRow(
-                            task: entry,
-                            isClocked: factory.isClocked(entry),
-                            isSelected: selection.taskId == entry.id,
-                            doneStates: doneStates,
-                            actions: factory.make(for: entry)
-                        )
-                        if idx < tasks.count - 1 {
-                            Divider()
-                                .background(Theme.borderSubtle)
-                                .padding(.leading, 42)
+                    ForEach(tasks, id: \.id) { entry in
+                        let rowActions = factory.make(for: entry)
+                        if selection.taskId == entry.id {
+                            TaskExpandedCard(
+                                store: store,
+                                task: entry,
+                                actions: rowActions,
+                                doneStates: doneStates
+                            )
+                            .id(entry.id)
+                        } else {
+                            MacTaskRow(
+                                task: entry,
+                                isClocked: factory.isClocked(entry),
+                                isSelected: false,
+                                doneStates: doneStates,
+                                actions: rowActions,
+                                progress: factory.progress(for: entry),
+                                onAppear: factory.prefetch(for: entry)
+                            )
                         }
                     }
                 }
@@ -133,24 +147,9 @@ struct MacUpcomingView: View {
         }
     }
 
-    private static func dedupe(_ entries: [AgendaEntry]) -> [AgendaEntry] {
-        var seen: [String: AgendaEntry] = [:]
-        var order: [String] = []
-        for e in entries {
-            let hasTime = (e.scheduled?.hasTime ?? false) || (e.deadline?.hasTime ?? false)
-            if let existing = seen[e.id] {
-                let existingHasTime = (existing.scheduled?.hasTime ?? false) || (existing.deadline?.hasTime ?? false)
-                if hasTime && !existingHasTime { seen[e.id] = e }
-            } else {
-                seen[e.id] = e
-                order.append(e.id)
-            }
-        }
-        return order.compactMap { seen[$0] }
-    }
-
     private func load() async {
         guard let client = settings.apiClient else { return }
+        await store.ensureInitialized(using: client, settings: settings)
         await store.loadUpcoming(using: client)
     }
 

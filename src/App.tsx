@@ -136,6 +136,7 @@ export default function App() {
         clockStatus={clockStatus}
         onRefresh={refresh}
         onRefreshClock={refreshClock}
+        onCapture={() => setCaptureOpen(true)}
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen(prev => !prev)}
       />

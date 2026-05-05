@@ -9,20 +9,20 @@ interface NotesRendererProps {
   onToggleCheck?: (index: number) => void;
 }
 
-function formatComponentDate(c: OrgTimestampComponent): string {
+export function formatComponentDate(c: OrgTimestampComponent): string {
   return new Date(c.year, c.month - 1, c.day).toLocaleDateString('en-US', {
     weekday: 'short', month: 'short', day: 'numeric',
   });
 }
 
-function formatComponentTime(c: OrgTimestampComponent): string | null {
+export function formatComponentTime(c: OrgTimestampComponent): string | null {
   if (c.hour === undefined || c.minute === undefined) return null;
   return new Date(2000, 0, 1, c.hour, c.minute).toLocaleTimeString('en-US', {
     hour: 'numeric', minute: '2-digit',
   });
 }
 
-function formatTimestamp(ts: OrgTimestamp): string {
+export function formatTimestamp(ts: OrgTimestamp): string {
   if (!ts.start) return ts.raw;
   const sDate = formatComponentDate(ts.start);
   const sTime = formatComponentTime(ts.start);
@@ -91,7 +91,7 @@ function renderLineWithTimestamps(line: string, timestamps: OrgTimestamp[]): Rea
 export function renderInline(text: string): ReactNode[] {
   const parts: ReactNode[] = [];
   // Match org links [[target][label]] or [[target]], bold *text*, italic /text/, code ~text~ or =text=
-  const regex = /\[\[([^\]]+)\]\[([^\]]+)\]\]|\[\[([^\]]+)\]\]|\*([^*]+)\*|\/([^/]+)\/|~([^~]+)~|=([^=]+)=/g;
+  const regex = /\[\[([^\]]+)\]\[([^\]]+)\]\]|\[\[([^\]]+)\]\]|(?<![A-Za-z0-9])\*([^*]+)\*(?![A-Za-z0-9])|(?<![A-Za-z0-9])\/([^/]+)\/(?![A-Za-z0-9])|(?<![A-Za-z0-9])~([^~]+)~(?![A-Za-z0-9])|(?<![A-Za-z0-9])=([^=]+)=(?![A-Za-z0-9])/g;
   let lastIndex = 0;
   let match;
 
@@ -140,21 +140,16 @@ export function renderInline(text: string): ReactNode[] {
   return parts.length > 0 ? parts : [text];
 }
 
-/** Parse and render org notes content */
-export function NotesRenderer({ content, timestamps = [], onToggleCheck }: NotesRendererProps) {
+export type CheckItem = { state: string; text: string; globalIndex: number; indent: number };
+export type NoteBlock =
+  | { type: 'checklist'; items: CheckItem[] }
+  | { type: 'text'; lines: string[] }
+  | { type: 'created'; date: string };
+
+export function parseNoteBlocks(content: string): NoteBlock[] {
   const lines = content.split('\n');
-
-  // Group consecutive checklist items together, tracking global index
-  // state: ' ' = unchecked, '-' = in-progress, 'X'/'x' = checked
-  // indent: leading-whitespace column count in the org source (for nesting)
-  type CheckItem = { state: string; text: string; globalIndex: number; indent: number };
-  const blocks: Array<
-    | { type: 'checklist'; items: CheckItem[] }
-    | { type: 'text'; lines: string[] }
-    | { type: 'created'; date: string }
-  > = [];
+  const blocks: NoteBlock[] = [];
   let checklistGlobalIndex = 0;
-
   let currentChecklist: CheckItem[] | null = null;
   let currentText: string[] | null = null;
 
@@ -176,7 +171,6 @@ export function NotesRenderer({ content, timestamps = [], onToggleCheck }: Notes
     const trimmed = line.trim();
     const indent = line.length - line.trimStart().length;
 
-    // Created timestamp
     const createdMatch = trimmed.match(/^Created:\s*\[(\d{4}-\d{2}-\d{2}\s+\w+)\]$/);
     if (createdMatch) {
       flushChecklist();
@@ -185,8 +179,6 @@ export function NotesRenderer({ content, timestamps = [], onToggleCheck }: Notes
       continue;
     }
 
-    // Checklist item: [-+*] [ ] text, [-+*] [X] text, or [-+*] [-] text
-    // Also ordered: 1. [ ] text, 1) [ ] text, a. [ ] text
     const checklistMatch = trimmed.match(/^(?:[-+*]|(?:[0-9]+|[A-Za-z])[.)]) +\[([ Xx\-])\]\s+(.+)$/);
     if (checklistMatch) {
       flushText();
@@ -200,22 +192,18 @@ export function NotesRenderer({ content, timestamps = [], onToggleCheck }: Notes
       continue;
     }
 
-    // Sub-item text under a checklist item (starts with - or + but no checkbox)
-    // Append to the last checklist item's text
     if (currentChecklist && currentChecklist.length > 0) {
       const subItemMatch = trimmed.match(/^[-+*]\s+(.+)$/);
       if (subItemMatch) {
         currentChecklist[currentChecklist.length - 1].text += '\n' + subItemMatch[1];
         continue;
       }
-      // Continuation text (indented or plain text following a checklist item)
       if (trimmed.length > 0 && !trimmed.startsWith('*')) {
         currentChecklist[currentChecklist.length - 1].text += '\n' + trimmed;
         continue;
       }
     }
 
-    // Regular text line
     flushChecklist();
     if (!currentText) currentText = [];
     currentText.push(trimmed);
@@ -223,6 +211,12 @@ export function NotesRenderer({ content, timestamps = [], onToggleCheck }: Notes
 
   flushChecklist();
   flushText();
+  return blocks;
+}
+
+/** Parse and render org notes content */
+export function NotesRenderer({ content, timestamps = [], onToggleCheck }: NotesRendererProps) {
+  const blocks = parseNoteBlocks(content);
 
   // Count checklist progress
   const allCheckItems = blocks

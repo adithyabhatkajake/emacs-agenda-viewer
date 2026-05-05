@@ -2,6 +2,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import express from 'express';
 import cors from 'cors';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   getActiveTasks,
   getAllTasks,
@@ -9,7 +11,9 @@ import {
   getAgendaDay,
   getAgendaRange,
   getTodoKeywords,
+  getPriorities,
   getConfig,
+  getListConfig,
   getRefileTargets,
   refileToTarget,
   setTitle,
@@ -26,9 +30,14 @@ import {
   clockIn,
   clockOut,
   addClockEntry,
+  tidyClocks,
   getCaptureTemplates,
   executeCapture,
+  insertEntry,
+  emacsEval,
 } from './emacs.js';
+
+const execFileAsync = promisify(execFile);
 
 const app = express();
 app.use(cors());
@@ -68,6 +77,17 @@ app.get('/api/keywords', async (_req, res) => {
   }
 });
 
+// GET /api/priorities - get priority range config
+app.get('/api/priorities', async (_req, res) => {
+  try {
+    const priorities = await getPriorities();
+    res.json(priorities);
+  } catch (err) {
+    console.error('Failed to fetch priorities:', err);
+    res.status(500).json({ error: 'Failed to fetch priorities' });
+  }
+});
+
 // GET /api/config - get org configuration
 app.get('/api/config', async (_req, res) => {
   try {
@@ -76,6 +96,17 @@ app.get('/api/config', async (_req, res) => {
   } catch (err) {
     console.error('Failed to fetch config:', err);
     res.status(500).json({ error: 'Failed to fetch org config' });
+  }
+});
+
+// GET /api/list-config - get org plain-list configuration
+app.get('/api/list-config', async (_req, res) => {
+  try {
+    const config = await getListConfig();
+    res.json(config);
+  } catch (err) {
+    console.error('Failed to fetch list config:', err);
+    res.status(500).json({ error: 'Failed to fetch list config' });
   }
 });
 
@@ -131,6 +162,22 @@ app.post('/api/clock/log', async (req, res) => {
   } catch (err) {
     console.error('Failed to log clock entry:', err);
     res.status(500).json({ error: 'Failed to log clock entry' });
+  }
+});
+
+// POST /api/clock/tidy - sweep loose CLOCK lines on a heading into LOGBOOK
+app.post('/api/clock/tidy', async (req, res) => {
+  try {
+    const { file, pos } = req.body;
+    if (!file || pos === undefined) {
+      res.status(400).json({ error: 'file, pos required' });
+      return;
+    }
+    const moved = await tidyClocks(file, Number(pos));
+    res.json({ success: true, moved });
+  } catch (err) {
+    console.error('Failed to tidy clocks:', err);
+    res.status(500).json({ error: 'Failed to tidy clocks' });
   }
 });
 
@@ -329,17 +376,63 @@ app.get('/api/capture/templates', async (_req, res) => {
 // POST /api/capture - execute a capture
 app.post('/api/capture', async (req, res) => {
   try {
-    const { templateKey, title, priority, scheduled, deadline } = req.body;
+    const { templateKey, title, priority, scheduled, deadline, promptAnswers } = req.body;
     if (!templateKey || !title) {
       res.status(400).json({ error: 'templateKey and title are required' });
       return;
     }
-    await executeCapture(templateKey, title, priority, scheduled, deadline);
+    await executeCapture(templateKey, title, priority, scheduled, deadline, promptAnswers);
     res.json({ success: true });
   } catch (err) {
     console.error('Failed to capture:', err);
     res.status(500).json({ error: 'Failed to capture task' });
   }
+});
+
+// POST /api/insert-entry - insert a pre-built org entry at a target location
+app.post('/api/insert-entry', async (req, res) => {
+  try {
+    const { file, targetType, entryText, headline, olp, prepend } = req.body;
+    if (!file || !targetType || !entryText) {
+      res.status(400).json({ error: 'file, targetType, and entryText are required' });
+      return;
+    }
+    await insertEntry(file, targetType, entryText, headline, olp, prepend);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to insert entry:', err);
+    res.status(500).json({ error: 'Failed to insert entry' });
+  }
+});
+
+// GET /api/debug - system diagnostics for verifying deployment parity
+app.get('/api/debug', async (_req, res) => {
+  async function shellCmd(cmd: string, args: string[]): Promise<string> {
+    try {
+      const { stdout } = await execFileAsync(cmd, args, { timeout: 5000 });
+      return stdout.trim();
+    } catch {
+      return 'unavailable';
+    }
+  }
+
+  const [emacsVersion, emacsPlusVersion, doomCommit, nodeVersion] = await Promise.all([
+    emacsEval('(emacs-version)').catch(() => 'unavailable'),
+    shellCmd('brew', ['list', '--versions', 'emacs-plus@30']),
+    shellCmd('git', ['-C', path.join(process.env.HOME || '', '.config', 'emacs'), 'rev-parse', '--short', 'HEAD']),
+    process.version,
+  ]);
+
+  res.json({
+    emacsVersion,
+    emacsPlusVersion,
+    doomCommit,
+    nodeVersion,
+    platform: process.platform,
+    arch: process.arch,
+    pid: process.pid,
+    uptime: Math.floor(process.uptime()),
+  });
 });
 
 // Serve built frontend in production

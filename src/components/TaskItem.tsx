@@ -66,6 +66,29 @@ function formatTimestamp(ts: { raw: string; date: string; repeater?: { type: str
   return dateStr;
 }
 
+/** Deterministic category → dot color mapping using the design's palette. */
+const CATEGORY_DOT_VARS = [
+  '--dot-blue',
+  '--dot-purple',
+  '--dot-green',
+  '--dot-orange',
+  '--dot-yellow',
+  '--dot-red',
+  '--dot-gray',
+] as const;
+function categoryDotColor(category: string | undefined): string {
+  const name = (category || '').toLowerCase();
+  if (!name) return 'rgb(var(--text-tertiary))';
+  if (name === 'inbox') return 'rgb(var(--dot-blue))';
+  if (name === 'work') return 'rgb(var(--dot-purple))';
+  if (name === 'personal') return 'rgb(var(--dot-green))';
+  if (name === 'calendar') return 'rgb(var(--dot-orange))';
+  if (name === 'meta') return 'rgb(var(--dot-gray))';
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return `rgb(var(${CATEGORY_DOT_VARS[h % CATEGORY_DOT_VARS.length]}))`;
+}
+
 function isOverdue(ts: { raw: string } | undefined): boolean {
   if (!ts) return false;
   const match = ts.raw.match(/(\d{4})-(\d{2})-(\d{2})/);
@@ -215,6 +238,19 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
   const tsDate = agendaEntry?.tsDate;
   const isClocked = clockStatus.clocking && clockStatus.file === task.file && clockStatus.pos === task.pos;
 
+  const handleCheckboxToggle = async (e: React.MouseEvent | React.KeyboardEvent) => {
+    e.stopPropagation();
+    if (updating || !keywords) return;
+    const seq = keywords.sequences.find(
+      s => s.active.includes(task.todoState || '') || s.done.includes(task.todoState || '')
+    ) || keywords.sequences[0];
+    if (!seq) return;
+    const target = done
+      ? (seq.active[0] || 'TODO')
+      : (seq.done[0] || 'DONE');
+    handleStateChange(target);
+  };
+
   return (
     <div
       className={`group border-b transition-colors ${
@@ -224,6 +260,37 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
     >
       {/* Main row */}
       <div className="flex items-center gap-2 px-3 md:px-5 py-2.5 md:py-1.5">
+        {/* Checkbox */}
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={done}
+          onClick={handleCheckboxToggle}
+          disabled={updating || !task.todoState}
+          className={`relative flex-shrink-0 w-4 h-4 rounded transition-all ${
+            !task.todoState ? 'opacity-0 pointer-events-none' :
+            done
+              ? 'bg-done-green border-[1.5px] border-done-green'
+              : 'bg-transparent border-[1.5px] border-things-border hover:border-accent'
+          }`}
+          title={done ? 'Mark not done' : 'Mark done'}
+        >
+          {done && (
+            <span
+              aria-hidden
+              className="absolute"
+              style={{
+                left: 4,
+                top: 1,
+                width: 4,
+                height: 8,
+                borderRight: '1.5px solid white',
+                borderBottom: '1.5px solid white',
+                transform: 'rotate(45deg)',
+              }}
+            />
+          )}
+        </button>
         {/* State pill */}
         {task.todoState ? (
           <TodoStateMenu
@@ -246,9 +313,9 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
           disabled={updating}
         />
 
-        {/* Main content — click to expand, right-click/long-press for context menu */}
+        {/* Title — flex-1, click to expand, right-click/long-press for context menu */}
         <div
-          className="flex-1 min-w-0 cursor-pointer select-none"
+          className="flex-1 min-w-0 cursor-pointer select-none flex items-center gap-2"
           onClick={toggleExpand}
           onContextMenu={(e) => {
             e.preventDefault();
@@ -256,7 +323,6 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
           }}
           {...longPress}
         >
-          {/* Title + inline metadata */}
           {editingTitle ? (
             <input
               ref={titleInputRef}
@@ -268,36 +334,48 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
               }}
               onBlur={handleTitleSave}
               onClick={(e) => e.stopPropagation()}
-              className="w-full bg-things-bg/80 border border-accent/40 rounded px-2 py-0.5 text-[13px] text-text-primary outline-none focus:ring-1 focus:ring-accent/30"
+              className="flex-1 bg-things-bg/80 border border-accent/40 rounded px-2 py-0.5 text-[13px] text-text-primary outline-none focus:ring-1 focus:ring-accent/30"
             />
           ) : (
             <span
-              className={`text-[14px] md:text-[13px] leading-snug ${
+              className={`min-w-0 truncate text-[14px] md:text-[13px] leading-snug ${
                 done ? 'line-through text-text-tertiary' : 'text-text-primary'
               }`}
             >
               {renderInline(task.title)}
             </span>
           )}
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[11px] md:text-[10px] text-text-tertiary">
-            {isAgenda && effectiveAgendaType && (
-              <span className={
-                effectiveAgendaType === 'deadline' ? 'text-priority-a' :
-                effectiveAgendaType === 'upcoming-deadline' ? 'text-priority-b' :
-                effectiveAgendaType === 'scheduled' ? 'text-accent' :
-                ''
-              }>
-                {orgExtra || effectiveAgendaType}
-              </span>
-            )}
-            {timeOfDay && <span className="text-accent-teal">{timeOfDay}</span>}
-            {isAgenda && tsDate && <span>{(() => { const [y,m,d] = tsDate.split('-').map(Number); return new Date(y,m-1,d).toLocaleDateString('en-US',{month:'short',day:'numeric'}); })()}</span>}
-            {!isAgenda && scheduledStr && <span>{scheduledStr}</span>}
-            {!isAgenda && deadlineStr && <span className={deadlineOverdue ? 'text-priority-a' : ''}>{deadlineStr}</span>}
-            {task.effort && <span>{task.effort}</span>}
-            <span>{task.category}</span>
-          </span>
         </div>
+
+        {/* Right meta — single date/time chunk */}
+        <span className="text-[11px] md:text-[10px] text-text-tertiary tabular-nums whitespace-nowrap flex-shrink-0">
+          {(() => {
+            if (isAgenda && effectiveAgendaType === 'deadline') {
+              return <span className="text-priority-a">{orgExtra || 'deadline'}</span>;
+            }
+            if (isAgenda && effectiveAgendaType === 'upcoming-deadline') {
+              return <span className="text-priority-b">{orgExtra || effectiveAgendaType}</span>;
+            }
+            if (timeOfDay) return <span className="text-accent-teal">{timeOfDay}</span>;
+            if (!isAgenda && scheduledStr) return <span>{scheduledStr}</span>;
+            if (!isAgenda && deadlineStr) {
+              return <span className={deadlineOverdue ? 'text-priority-a' : ''}>{deadlineStr}</span>;
+            }
+            if (isAgenda && tsDate) {
+              const [y, m, d] = tsDate.split('-').map(Number);
+              return <span>{new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>;
+            }
+            return null;
+          })()}
+        </span>
+
+        {/* Category dot — far right */}
+        <span
+          aria-hidden
+          title={task.category}
+          className="flex-shrink-0 w-1.5 h-1.5 rounded-full"
+          style={{ background: categoryDotColor(task.category) }}
+        />
       </div>
 
       {/* Expanded detail panel */}

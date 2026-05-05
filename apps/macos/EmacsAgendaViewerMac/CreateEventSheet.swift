@@ -77,6 +77,7 @@ struct CreateEventSheet: View {
         }
         .padding(20)
         .frame(width: 420)
+        .onAppear { ek.reloadCalendars() }
     }
 
     private func save() {

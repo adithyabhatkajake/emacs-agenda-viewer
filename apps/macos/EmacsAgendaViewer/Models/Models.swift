@@ -172,6 +172,23 @@ struct OrgConfig: Codable, Hashable, Sendable {
     let deadlineWarningDays: Int
 }
 
+struct OrgListConfig: Codable, Hashable, Sendable {
+    let allowAlphabetical: Bool
+}
+
+struct OrgPriorities: Codable, Hashable, Sendable {
+    let highest: String
+    let lowest: String
+    let `default`: String
+
+    var all: [String] {
+        guard let h = highest.unicodeScalars.first?.value,
+              let l = lowest.unicodeScalars.first?.value,
+              h <= l else { return [] }
+        return (h...l).compactMap { UnicodeScalar($0) }.map { String($0) }
+    }
+}
+
 struct ClockStatus: Codable, Hashable, Sendable {
     let clocking: Bool
     let file: String?

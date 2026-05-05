@@ -21,7 +21,7 @@ struct MacAllTasksView: View {
                     SortMenu(options: SortKey.listOptions, selection: $bindable.listSort)
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    GroupMenu(selection: $bindable.listGroup)
+                    GroupMenu(primary: $bindable.listGroup, secondary: $bindable.listGroupSecondary)
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Toggle(isOn: $includeDone) {
@@ -78,30 +78,37 @@ struct MacAllTasksView: View {
     private func list(_ tasks: [OrgTask]) -> some View {
         let doneStates = Set((store.keywords?.allDone ?? []).map { $0.uppercased() })
         let factory = RowActionFactory(store: store, settings: settings, selection: selection, clocks: clocks, sync: sync)
-        let groups = groupTasks(tasks, by: settings.listGroup)
+        let eisCtx = EisenhowerGroupContext(urgencyDays: settings.eisenhowerUrgencyDays, priorities: store.priorities)
+        let groups = groupTasks(tasks, by: settings.listGroup, eisenhower: eisCtx)
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
-                ForEach(groups) { group in
-                    GroupSection(
-                        label: group.label,
-                        items: group.items,
-                        doneStates: doneStates,
-                        factory: factory,
-                        selection: selection,
-                        store: store,
-                        collapsed: $collapsedGroups
-                    )
-                }
+                GroupedTaskList(
+                    groups: groups,
+                    secondaryKey: settings.listGroupSecondary,
+                    eisenhower: eisCtx,
+                    doneStates: doneStates,
+                    factory: factory,
+                    selection: selection,
+                    store: store,
+                    collapsed: $collapsedGroups
+                )
             }
             .padding(.horizontal, 32)
             .padding(.vertical, 20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 600, alignment: .leading)
+            .background(
+                Rectangle()
+                    .fill(Theme.background)
+                    .contentShape(Rectangle())
+                    .onTapGesture { selection.taskId = nil }
+            )
         }
         .background(Theme.background)
     }
 
     private func load() async {
         guard let client = settings.apiClient else { return }
+        await store.ensureInitialized(using: client, settings: settings)
         await store.loadAllTasks(using: client, includeDone: includeDone)
     }
 

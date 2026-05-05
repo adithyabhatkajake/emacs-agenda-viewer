@@ -22,17 +22,11 @@ final class ClockManager {
     private(set) var sessions: [Session] = [] {
         didSet { persist() }
     }
-    /// Updated by a 1Hz ticker so views re-render elapsed labels.
-    var tick: Int = 0
-    private var timerTask: Task<Void, Never>?
-
     init() {
-        // Restore any clocks that were running when the app last quit.
         if let data = UserDefaults.standard.data(forKey: Self.storageKey),
            let restored = try? JSONDecoder().decode([Session].self, from: data) {
             sessions = restored
         }
-        startTicker()
     }
 
     private func persist() {
@@ -40,15 +34,6 @@ final class ClockManager {
             UserDefaults.standard.removeObject(forKey: Self.storageKey)
         } else if let data = try? JSONEncoder().encode(sessions) {
             UserDefaults.standard.set(data, forKey: Self.storageKey)
-        }
-    }
-
-    private func startTicker() {
-        timerTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                await MainActor.run { self?.tick &+= 1 }
-            }
         }
     }
 

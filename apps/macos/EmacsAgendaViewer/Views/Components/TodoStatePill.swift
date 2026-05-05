@@ -1,10 +1,12 @@
 import SwiftUI
 
 struct TodoStatePill: View {
+    @Environment(AppSettings.self) private var settings
     let state: String
     let isDone: Bool
 
     var body: some View {
+        let _ = settings.colorRevision
         Text(state)
             .font(.caption2.weight(.semibold))
             .tracking(0.5)
@@ -18,14 +20,7 @@ struct TodoStatePill: View {
     }
 
     private var color: Color {
-        if isDone { return Theme.doneGreen }
-        switch state.uppercased() {
-        case "TODO": return Theme.accent
-        case "NEXT", "STARTED", "DOING": return Theme.accentTeal
-        case "WAITING", "HOLD", "BLOCKED": return Theme.priorityB
-        case "CANCELLED", "CANCELED": return Theme.textTertiary
-        default: return Theme.accent
-        }
+        settings.resolvedTodoStateColor(for: state, isDone: isDone)
     }
 
     private var foreground: Color { color }

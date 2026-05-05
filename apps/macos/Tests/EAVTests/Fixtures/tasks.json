@@ -1,0 +1,66 @@
+[
+  {
+    "id": "/home/user/org/work.org::Buy groceries",
+    "title": "Buy groceries",
+    "todoState": "TODO",
+    "priority": "A",
+    "tags": ["errand"],
+    "inheritedTags": ["personal"],
+    "scheduled": {
+      "raw": "<2026-04-18 Sat 14:30>",
+      "date": "2026-04-18",
+      "start": { "year": 2026, "month": 4, "day": 18, "hour": 14, "minute": 30 },
+      "type": "active"
+    },
+    "deadline": {
+      "raw": "<2026-04-20 Mon -3d>",
+      "date": "2026-04-20",
+      "start": { "year": 2026, "month": 4, "day": 20 },
+      "type": "active",
+      "warning": { "value": 3, "unit": "d" }
+    },
+    "category": "Work",
+    "level": 2,
+    "file": "/home/user/org/work.org",
+    "pos": 1234,
+    "effort": "1:00",
+    "notes": "Don't forget milk",
+    "activeTimestamps": [],
+    "properties": { "STYLE": "habit" }
+  },
+  {
+    "id": "/home/user/org/inbox.org::Review PR",
+    "title": "Review PR",
+    "todoState": "NEXT",
+    "priority": "B",
+    "tags": [],
+    "inheritedTags": [],
+    "scheduled": null,
+    "deadline": null,
+    "category": "Inbox",
+    "level": 1,
+    "file": "/home/user/org/inbox.org",
+    "pos": 42,
+    "effort": null,
+    "notes": null,
+    "activeTimestamps": null,
+    "properties": null
+  },
+  {
+    "id": "/home/user/org/archive.org::Old task",
+    "title": "Old task",
+    "todoState": "DONE",
+    "priority": null,
+    "tags": ["archive"],
+    "inheritedTags": [],
+    "scheduled": null,
+    "deadline": null,
+    "closed": "[2026-04-10 Fri 09:00]",
+    "category": "Archive",
+    "level": 1,
+    "file": "/home/user/org/archive.org",
+    "pos": 99,
+    "effort": null,
+    "parentId": "/home/user/org/archive.org::Parent"
+  }
+]

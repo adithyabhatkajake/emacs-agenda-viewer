@@ -152,16 +152,12 @@ export function Sidebar({
           {iconItem('Upcoming', { type: 'upcoming' }, '\u{1F4C5}')}
         </div>
 
-        <div className="mx-4 border-t border-things-border my-2" />
-
         {/* Categories */}
         <SidebarSection title="Categories">
           {categories.map(cat =>
             iconItem(cat, { type: 'category', category: cat }, categoryIcon(cat))
           )}
         </SidebarSection>
-
-        <div className="mx-4 border-t border-things-border my-2" />
 
         {/* Files */}
         <SidebarSection title="Files" defaultCollapsed>
@@ -171,14 +167,11 @@ export function Sidebar({
         </SidebarSection>
 
         {allTags.length > 0 && (
-          <>
-            <div className="mx-4 border-t border-things-border my-2" />
-            <SidebarSection title="Tags" defaultCollapsed>
-              {allTags.map(tag =>
-                iconItem(tag, { type: 'tag', tag }, '\u{1F3F7}\uFE0F')
-              )}
-            </SidebarSection>
-          </>
+          <SidebarSection title="Tags" defaultCollapsed>
+            {allTags.map(tag =>
+              iconItem(tag, { type: 'tag', tag }, '\u{1F3F7}\uFE0F')
+            )}
+          </SidebarSection>
         )}
       </div>
 

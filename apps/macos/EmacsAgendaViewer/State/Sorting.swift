@@ -1,22 +1,23 @@
 import Foundation
 
 enum SortKey: String, CaseIterable, Identifiable, Sendable {
-    case `default`, priority, state, deadline, category
+    case `default`, priority, state, deadline, scheduled, category
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .default:  return "Default"
-        case .priority: return "Priority"
-        case .state:    return "State"
-        case .deadline: return "Deadline"
-        case .category: return "Category"
+        case .default:   return "Default"
+        case .priority:  return "Priority"
+        case .state:     return "State"
+        case .deadline:  return "Deadline"
+        case .scheduled: return "Scheduled"
+        case .category:  return "Category"
         }
     }
 
     /// Allowed options for agenda views (Today / Upcoming).
-    static let agendaOptions: [SortKey] = [.default, .priority, .category]
+    static let agendaOptions: [SortKey] = [.default, .priority, .scheduled, .category]
 
     /// Allowed options for list views (All Tasks). No "default" — there's no
     /// inherent server order to preserve once we filter.
@@ -62,22 +63,85 @@ private func extractTimeMinutes(_ item: any TaskDisplayable) -> Int {
 }
 
 enum GroupKey: String, CaseIterable, Identifiable, Sendable {
-    case none, category, priority, state, file, tag
+    case none, category, priority, state, file, tag, eisenhower
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .none:     return "None"
-        case .category: return "Category"
-        case .priority: return "Priority"
-        case .state:    return "State"
-        case .file:     return "File"
-        case .tag:      return "Tag"
+        case .none:        return "None"
+        case .category:    return "Category"
+        case .priority:    return "Priority"
+        case .state:       return "State"
+        case .file:        return "File"
+        case .tag:         return "Tag"
+        case .eisenhower:  return "Eisenhower"
         }
     }
 
-    static let all: [GroupKey] = [.none, .category, .priority, .state, .tag, .file]
+    static let all: [GroupKey] = [.none, .category, .priority, .state, .tag, .file, .eisenhower]
+}
+
+struct EisenhowerGroupContext: Sendable {
+    let urgencyDays: Int
+    let importantPriorities: Set<String>
+
+    init(urgencyDays: Int, priorities: OrgPriorities?) {
+        self.urgencyDays = urgencyDays
+        if let p = priorities {
+            let all = p.all
+            let count = (all.count + 1) / 2
+            self.importantPriorities = Set(all.prefix(max(count, 1)).map { $0.uppercased() })
+        } else {
+            self.importantPriorities = ["A", "B"]
+        }
+    }
+}
+
+func eisenhowerQuadrant(for task: any TaskDisplayable, context: EisenhowerGroupContext) -> String {
+    let isImportant = context.importantPriorities.contains(task.priority?.uppercased() ?? "")
+    let isUrgent: Bool
+    if let deadlineDate = task.deadline?.parsedDate {
+        let today = Calendar.current.startOfDay(for: Date())
+        let days = Calendar.current.dateComponents([.day], from: today, to: deadlineDate).day ?? Int.max
+        isUrgent = days <= context.urgencyDays
+    } else {
+        isUrgent = false
+    }
+    switch (isUrgent, isImportant) {
+    case (true, true):   return "Do First"
+    case (false, true):  return "Schedule"
+    case (true, false):  return "Delegate"
+    case (false, false): return "Eliminate"
+    }
+}
+
+enum EisenhowerSpan: String, CaseIterable, Identifiable, Sendable {
+    case today, threeDays, week, twoWeeks, month, all
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .today:     return "Today"
+        case .threeDays: return "3 Days"
+        case .week:      return "1 Week"
+        case .twoWeeks:  return "2 Weeks"
+        case .month:     return "1 Month"
+        case .all:       return "All"
+        }
+    }
+
+    var days: Int? {
+        switch self {
+        case .today:     return 0
+        case .threeDays: return 3
+        case .week:      return 7
+        case .twoWeeks:  return 14
+        case .month:     return 30
+        case .all:       return nil
+        }
+    }
 }
 
 struct TaskGroup<T: TaskDisplayable & Identifiable>: Identifiable {
@@ -86,7 +150,11 @@ struct TaskGroup<T: TaskDisplayable & Identifiable>: Identifiable {
     let items: [T]
 }
 
-func groupTasks<T: TaskDisplayable & Identifiable>(_ items: [T], by key: GroupKey) -> [TaskGroup<T>] {
+func groupTasks<T: TaskDisplayable & Identifiable>(
+    _ items: [T],
+    by key: GroupKey,
+    eisenhower: EisenhowerGroupContext? = nil
+) -> [TaskGroup<T>] {
     if key == .none {
         return [TaskGroup(id: "_all", label: "", items: items)]
     }
@@ -116,6 +184,12 @@ func groupTasks<T: TaskDisplayable & Identifiable>(_ items: [T], by key: GroupKe
             } else {
                 for tag in combined { push(tag, item) }
             }
+        case .eisenhower:
+            if let ctx = eisenhower {
+                push(eisenhowerQuadrant(for: item, context: ctx), item)
+            } else {
+                push("Uncategorized", item)
+            }
         case .none:
             break
         }
@@ -129,10 +203,33 @@ func groupTasks<T: TaskDisplayable & Identifiable>(_ items: [T], by key: GroupKe
             if rhs == "No Priority" { return true }
             return lhs < rhs
         }
+    case .eisenhower:
+        let quadrantOrder = ["Do First", "Schedule", "Delegate", "Eliminate"]
+        sortedKeys = order.sorted { lhs, rhs in
+            (quadrantOrder.firstIndex(of: lhs) ?? 99) < (quadrantOrder.firstIndex(of: rhs) ?? 99)
+        }
     default:
         sortedKeys = order.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
     return sortedKeys.map { TaskGroup(id: $0, label: $0, items: buckets[$0] ?? []) }
+}
+
+/// Collapse duplicate agenda entries by task id, preferring the entry that
+/// carries a clock time so the row keeps its scheduled hour.
+func dedupeAgendaEntries(_ entries: [AgendaEntry]) -> [AgendaEntry] {
+    var seen: [String: AgendaEntry] = [:]
+    var order: [String] = []
+    for e in entries {
+        let hasTime = (e.scheduled?.hasTime ?? false) || (e.deadline?.hasTime ?? false)
+        if let existing = seen[e.id] {
+            let existingHasTime = (existing.scheduled?.hasTime ?? false) || (existing.deadline?.hasTime ?? false)
+            if hasTime && !existingHasTime { seen[e.id] = e }
+        } else {
+            seen[e.id] = e
+            order.append(e.id)
+        }
+    }
+    return order.compactMap { seen[$0] }
 }
 
 func sortTasks<T: TaskDisplayable>(_ items: [T], by key: SortKey) -> [T] {
@@ -147,6 +244,10 @@ func sortTasks<T: TaskDisplayable>(_ items: [T], by key: SortKey) -> [T] {
         case .deadline:
             let ad = extractDateMs(a.deadline?.raw).isFinite ? extractDateMs(a.deadline?.raw) : extractDateMs(a.scheduled?.raw)
             let bd = extractDateMs(b.deadline?.raw).isFinite ? extractDateMs(b.deadline?.raw) : extractDateMs(b.scheduled?.raw)
+            cmp = ad < bd ? -1 : (ad > bd ? 1 : 0)
+        case .scheduled:
+            let ad = extractDateMs(a.scheduled?.raw)
+            let bd = extractDateMs(b.scheduled?.raw)
             cmp = ad < bd ? -1 : (ad > bd ? 1 : 0)
         case .category:
             cmp = a.category.localizedCompare(b.category).rawValue

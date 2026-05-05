@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct PriorityBadge: View {
+    @Environment(AppSettings.self) private var settings
     let priority: String
 
     var body: some View {
@@ -10,6 +11,6 @@ struct PriorityBadge: View {
             Text(priority.uppercased())
                 .font(.caption2.weight(.semibold))
         }
-        .foregroundStyle(Theme.priorityColor(priority))
+        .foregroundStyle(settings.resolvedPriorityColor(for: priority))
     }
 }

@@ -1,4 +1,5 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import type { OrgTask, AgendaEntry, ViewFilter, TodoKeywords } from '../types';
 import { TaskItem } from './TaskItem';
 import { renderInline } from './NotesRenderer';
@@ -16,6 +17,7 @@ interface TaskListProps {
   clockStatus: ClockStatus;
   onRefresh: () => void;
   onRefreshClock: () => void;
+  onCapture?: () => void;
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
 }
@@ -308,8 +310,27 @@ function formatElapsed(seconds: number): string {
 }
 
 export function TaskList({
-  tasks, todayEntries, upcomingEntries, filter, keywords, isDoneState, clockStatus, onRefresh, onRefreshClock, sidebarOpen, onToggleSidebar,
+  tasks, todayEntries, upcomingEntries, filter, keywords, isDoneState, clockStatus, onRefresh, onRefreshClock, onCapture, sidebarOpen, onToggleSidebar,
 }: TaskListProps) {
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const [controlsAnchor, setControlsAnchor] = useState<{ top: number; right: number } | null>(null);
+  const controlsBtnRef = useRef<HTMLButtonElement>(null);
+  const controlsMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!controlsOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (controlsBtnRef.current?.contains(e.target as Node)) return;
+      if (controlsMenuRef.current?.contains(e.target as Node)) return;
+      setControlsOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setControlsOpen(false); };
+    document.addEventListener('mousedown', handler);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [controlsOpen]);
   const [sortKey, setSortKey] = useState<SortKey>(() => {
     const saved = localStorage.getItem('eav-sort');
     return (saved as SortKey) || 'default';
@@ -423,90 +444,75 @@ export function TaskList({
     ? ['default', 'priority', 'category']
     : ['priority', 'deadline', 'state', 'category'];
 
+  const controlsActive = sortKey !== 'default' || activeGroups.length > 0;
+
   return (
     <main className="flex-1 flex flex-col h-full overflow-hidden bg-things-bg">
-      {/* Header */}
-      <div className="px-4 md:px-5 py-3 border-b border-things-border">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {onToggleSidebar && (
-              <button
-                onClick={onToggleSidebar}
-                className="text-text-tertiary hover:text-text-secondary transition-colors text-[14px]"
-                title={sidebarOpen ? 'Hide sidebar (\u2318\\)' : 'Show sidebar (\u2318\\)'}
-              >
-                {sidebarOpen ? '\u25E7' : '\u2630'}
-              </button>
-            )}
-            <h2 className="text-lg md:text-xl font-bold text-text-primary tracking-tight">{filterTitle(filter)}</h2>
-          </div>
-          <div className="flex items-center gap-2 md:gap-3">
+      {/* Header — single-row: title + count, controls + Capture on the right */}
+      <div className="sticky top-0 z-10 px-6 md:px-8 pt-6 pb-3.5 flex items-center justify-between gap-4 bg-things-bg/95 backdrop-blur-md">
+        <div className="flex items-baseline gap-3 min-w-0">
+          {onToggleSidebar && (
             <button
-              onClick={() => setShowDone(!showDone)}
-              className={`text-[11px] px-2 md:px-2.5 py-1 rounded-md transition-colors ${
-                showDone ? 'bg-done-green/15 text-done-green' : 'bg-things-surface text-text-secondary hover:bg-things-sidebar-hover'
-              }`}
+              onClick={onToggleSidebar}
+              className="text-text-tertiary hover:text-text-secondary transition-colors text-[14px] self-center"
+              title={sidebarOpen ? 'Hide sidebar (\u2318\\)' : 'Show sidebar (\u2318\\)'}
             >
-              {showDone ? 'Hide done' : 'Show done'}
+              {sidebarOpen ? '\u25E7' : '\u2630'}
             </button>
-            <button
-              onClick={onRefresh}
-              className="text-[11px] px-2 md:px-2.5 py-1 rounded-md bg-things-surface text-text-secondary hover:bg-things-sidebar-hover transition-colors"
-              title="Refresh from Emacs"
-            >{'\u21BB'}</button>
-            <span className="text-[11px] text-text-tertiary tabular-nums">{totalCount}</span>
-          </div>
+          )}
+          <h2 className="text-[20px] font-bold text-text-primary tracking-tight truncate">{filterTitle(filter)}</h2>
+          <span className="text-[13px] text-text-tertiary tabular-nums whitespace-nowrap">
+            {totalCount} item{totalCount === 1 ? '' : 's'}
+          </span>
+          {clockStatus.clocking && clockStatus.heading && (
+            <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] px-2 py-[3px] rounded-full bg-done-green/10 text-done-green border border-done-green/20 self-center">
+              <span className="w-1.5 h-1.5 rounded-full bg-done-green animate-pulse" />
+              <span className="max-w-[160px] truncate">{renderInline(clockStatus.heading)}</span>
+              <button
+                onClick={async () => { try { await clockOutApi(); onRefreshClock(); } catch (err) { console.error('Failed to clock out:', err); } }}
+                className="text-done-green hover:brightness-125"
+                title="Stop clock"
+              >{'\u23F9'}</button>
+            </span>
+          )}
         </div>
 
-        {/* Sort & Group controls — second row on mobile */}
-        <div className="flex flex-wrap items-center gap-2 md:gap-3 mt-2">
-          {/* Sort */}
-          <div className="flex items-center gap-1 md:gap-1.5 text-xs text-text-tertiary">
-            <span className="text-[10px] md:text-xs">Sort:</span>
-            {sortOptions.map(key => (
-              <button
-                key={key}
-                onClick={() => setSortKey(key)}
-                className={`px-2 md:px-2.5 py-1 rounded-md transition-colors capitalize text-[11px] ${
-                  sortKey === key
-                    ? 'bg-accent/20 text-accent'
-                    : 'bg-things-surface hover:bg-things-sidebar-hover text-text-secondary'
-                }`}
-              >
-                {key === 'default' ? 'agenda' : key}
-              </button>
-            ))}
-          </div>
-
-          <div className="w-px h-4 bg-things-border hidden md:block" />
-          <div className="w-full md:hidden" />
-
-          {/* Group — multi-select toggles */}
-          <div className="flex items-center gap-1 md:gap-1.5 text-xs text-text-tertiary">
-            <span className="text-[10px] md:text-xs">Group:</span>
-            {ALL_GROUP_KEYS.map(key => (
-              <button
-                key={key}
-                onClick={() => toggleGroup(key)}
-                className={`px-2 md:px-2.5 py-1 rounded-md transition-colors capitalize text-[11px] ${
-                  activeGroups.includes(key)
-                    ? 'bg-dot-purple/20 text-dot-purple'
-                    : 'bg-things-surface hover:bg-things-sidebar-hover text-text-secondary'
-                }`}
-              >
-                {key}
-              </button>
-            ))}
-            {activeGroups.length > 0 && (
-              <button
-                onClick={() => setActiveGroups([])}
-                className="px-1.5 py-1 rounded-md text-[10px] text-text-tertiary hover:text-priority-a transition-colors"
-                title="Clear all groups"
-              >
-                {'\u2715'}
-              </button>
-            )}
-          </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={() => setShowDone(!showDone)}
+            className={`text-[13px] font-medium px-3 py-1.5 rounded-lg transition-colors ${
+              showDone ? 'text-done-green bg-done-green/10' : 'text-text-secondary hover:bg-things-sidebar-hover hover:text-text-primary'
+            }`}
+          >
+            {showDone ? 'Hide done' : 'Show done'}
+          </button>
+          <button
+            onClick={onRefresh}
+            className="text-[13px] px-2.5 py-1.5 rounded-lg text-text-secondary hover:bg-things-sidebar-hover hover:text-text-primary transition-colors"
+            title="Refresh from Emacs"
+          >{'\u21BB'}</button>
+          <button
+            ref={controlsBtnRef}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setControlsAnchor({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+              setControlsOpen(o => !o);
+            }}
+            className={`text-[13px] px-2.5 py-1.5 rounded-lg transition-colors ${
+              controlsActive ? 'text-accent bg-accent/10' : 'text-text-secondary hover:bg-things-sidebar-hover hover:text-text-primary'
+            }`}
+            title="Sort & group"
+          >{'\u22EF'}</button>
+          {onCapture && (
+            <button
+              onClick={onCapture}
+              className="text-[13px] font-medium px-3 py-1.5 rounded-lg bg-things-surface text-text-primary border border-things-border hover:bg-things-sidebar-hover transition-colors flex items-center gap-2"
+              title="New task (\u2318N)"
+            >
+              Capture
+              <span className="font-mono text-[10px] px-1.5 py-[1px] bg-black/[0.06] dark:bg-white/[0.08] border border-things-border-subtle rounded text-text-tertiary">{'\u2318'}N</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -544,14 +550,16 @@ export function TaskList({
             {todaySection.length > 0 && (
               <>
                 <SectionHeader title="Today" count={todaySection.length} />
-                <RenderGroups
-                  nodes={multiGroup(todaySection, activeGroups)}
-                  keywords={keywords}
-                  isDoneState={isDoneState}
-                  clockStatus={clockStatus}
-                  onRefresh={onRefresh}
-                  onRefreshClock={onRefreshClock}
-                />
+                <div className="task-card">
+                  <RenderGroups
+                    nodes={multiGroup(todaySection, activeGroups)}
+                    keywords={keywords}
+                    isDoneState={isDoneState}
+                    clockStatus={clockStatus}
+                    onRefresh={onRefresh}
+                    onRefreshClock={onRefreshClock}
+                  />
+                </div>
               </>
             )}
           </>
@@ -580,36 +588,101 @@ export function TaskList({
                   </div>
                 </div>
                 <EventBanners events={dayEvents} />
-                <RenderGroups nodes={grouped} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
+                {dayTasks.length > 0 && (
+                  <div className="task-card">
+                    <RenderGroups nodes={grouped} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
+                  </div>
+                )}
               </div>
             );
           })
 
         ) : filter.type === 'file' ? (
           /* ========== FILE VIEW ========== */
-          topLevel.map(task => (
-            <div key={task.id}>
-              <TaskItem task={task} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
-              {children.get(task.id)?.map(child => (
-                <div key={child.id} className="pl-8">
-                  <TaskItem task={child} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
-                </div>
-              ))}
-            </div>
-          ))
+          <div className="task-card">
+            {topLevel.map(task => (
+              <div key={task.id}>
+                <TaskItem task={task} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
+                {children.get(task.id)?.map(child => (
+                  <div key={child.id} className="pl-8">
+                    <TaskItem task={child} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
 
         ) : (
           /* ========== OTHER VIEWS ========== */
-          <RenderGroups
-            nodes={multiGroup(items, activeGroups)}
-            keywords={keywords}
-            isDoneState={isDoneState}
-            clockStatus={clockStatus}
-            onRefresh={onRefresh}
-            onRefreshClock={onRefreshClock}
-          />
+          <div className="task-card">
+            <RenderGroups
+              nodes={multiGroup(items, activeGroups)}
+              keywords={keywords}
+              isDoneState={isDoneState}
+              clockStatus={clockStatus}
+              onRefresh={onRefresh}
+              onRefreshClock={onRefreshClock}
+            />
+          </div>
         )}
       </div>
+
+      {controlsOpen && controlsAnchor && createPortal(
+        <div
+          ref={controlsMenuRef}
+          role="menu"
+          className="fixed w-[220px] rounded-lg border border-things-border bg-things-bg shadow-2xl p-1 z-[9999]"
+          style={{
+            top: controlsAnchor.top,
+            right: controlsAnchor.right,
+            boxShadow: '0 12px 32px -4px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.08)',
+          }}
+        >
+          <div className="px-2.5 pt-2 pb-1 text-[9px] uppercase tracking-widest text-text-secondary font-semibold">Sort by</div>
+          {sortOptions.map(key => {
+            const sel = sortKey === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setSortKey(key)}
+                className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md text-[13px] transition-colors capitalize ${
+                  sel ? 'bg-accent/10 text-accent' : 'text-text-primary hover:bg-things-sidebar-hover'
+                }`}
+              >
+                <span>{key === 'default' ? 'Agenda' : key}</span>
+                <span className={`text-[11px] ${sel ? 'opacity-100' : 'opacity-0'}`}>{'✓'}</span>
+              </button>
+            );
+          })}
+          <div className="my-1 mx-1 border-t border-things-border" />
+          <div className="px-2.5 pt-1 pb-1 flex items-center justify-between">
+            <span className="text-[9px] uppercase tracking-widest text-text-secondary font-semibold">Group by</span>
+            {activeGroups.length > 0 && (
+              <button
+                onClick={() => setActiveGroups([])}
+                className="text-[10px] text-text-tertiary hover:text-priority-a transition-colors font-medium"
+                title="Clear all groups"
+              >Clear</button>
+            )}
+          </div>
+          {ALL_GROUP_KEYS.map(key => {
+            const sel = activeGroups.includes(key);
+            return (
+              <button
+                key={key}
+                onClick={() => toggleGroup(key)}
+                className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md text-[13px] transition-colors capitalize ${
+                  sel ? 'bg-accent/10 text-accent' : 'text-text-primary hover:bg-things-sidebar-hover'
+                }`}
+              >
+                <span>{key}</span>
+                <span className={`text-[11px] ${sel ? 'opacity-100' : 'opacity-0'}`}>{'✓'}</span>
+              </button>
+            );
+          })}
+        </div>,
+        document.body
+      )}
     </main>
   );
 }

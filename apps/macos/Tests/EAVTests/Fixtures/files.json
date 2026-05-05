@@ -1,0 +1,5 @@
+[
+  { "path": "/home/user/org/work.org", "name": "work", "category": "Work" },
+  { "path": "/home/user/org/inbox.org", "name": "inbox", "category": "Inbox" },
+  { "path": "/home/user/org/habits.org", "name": "habits", "category": "Habits" }
+]

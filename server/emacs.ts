@@ -174,8 +174,26 @@ export async function getTodoKeywords(): Promise<TodoKeywords> {
   return eavCall<TodoKeywords>('(eav-get-todo-keywords)');
 }
 
+export interface OrgPriorities {
+  highest: string;
+  lowest: string;
+  default: string;
+}
+
+export async function getPriorities(): Promise<OrgPriorities> {
+  return eavCall<OrgPriorities>('(eav-get-priorities)');
+}
+
 export async function getConfig(): Promise<OrgConfig> {
   return eavCall<OrgConfig>('(eav-get-config)');
+}
+
+export interface OrgListConfig {
+  allowAlphabetical: boolean;
+}
+
+export async function getListConfig(): Promise<OrgListConfig> {
+  return eavCall<OrgListConfig>('(eav-get-list-config)');
 }
 
 export interface ClockStatus {
@@ -205,6 +223,21 @@ export async function addClockEntry(
   await eavExec(
     `(eav-add-clock-entry "${file}" ${pos} ${Math.floor(startEpoch)} ${Math.floor(endEpoch)})`
   );
+}
+
+export async function tidyClocks(file: string, pos: number): Promise<number> {
+  let movedOut = 0;
+  await withReloadRetry(async () => {
+    await ensureLoaded();
+    const out = await emacsEval(`(eav-tidy-clocks "${file}" ${pos})`);
+    try {
+      const parsed = JSON.parse(out);
+      movedOut = Number(parsed?.moved ?? 0);
+    } catch {
+      movedOut = 0;
+    }
+  });
+  return movedOut;
 }
 
 export interface HeadingNotes {
@@ -293,6 +326,21 @@ export async function refileTask(
   );
 }
 
+export async function insertEntry(
+  file: string, targetType: string, entryText: string,
+  headline?: string, olp?: string[], prepend?: boolean,
+): Promise<void> {
+  const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const headlineArg = headline ? `"${esc(headline)}"` : 'nil';
+  const olpArg = olp && olp.length > 0
+    ? `(list ${olp.map(h => `"${esc(h)}"`).join(' ')})`
+    : 'nil';
+  const prependArg = prepend ? 't' : 'nil';
+  await eavExec(
+    `(eav-insert-entry "${esc(file)}" "${esc(targetType)}" "${esc(entryText)}" ${headlineArg} ${olpArg} ${prependArg})`
+  );
+}
+
 // ---- Capture ----
 
 export interface CapturePrompt {
@@ -325,10 +373,14 @@ export async function executeCapture(
   priority?: string,
   scheduled?: string,
   deadline?: string,
+  promptAnswers?: string[],
 ): Promise<void> {
   const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const priArg = priority ? `"${esc(priority)}"` : 'nil';
   const schArg = scheduled ? `"${esc(scheduled)}"` : 'nil';
   const dlArg = deadline ? `"${esc(deadline)}"` : 'nil';
-  await eavExec(`(eav-capture "${esc(templateKey)}" "${esc(title)}" ${priArg} ${schArg} ${dlArg})`);
+  const answersArg = promptAnswers && promptAnswers.length > 0
+    ? `(list ${promptAnswers.map(a => `"${esc(a)}"`).join(' ')})`
+    : 'nil';
+  await eavExec(`(eav-capture "${esc(templateKey)}" "${esc(title)}" ${priArg} ${schArg} ${dlArg} ${answersArg})`);
 }

@@ -56,9 +56,9 @@ enum NotesParser {
             let leading = line.prefix(while: { $0 == " " }).count
             let indent = leading / 2
 
-            // Checklist: "- [ ] ..." / "- [-] ..." / "- [X] ..." (also "+" and "*")
+            // Checklist: "- [ ] ..." / "1. [ ] ..." / "a) [ ] ..." etc.
             if let match = line.range(
-                of: #"^(\s*)([-+*])\s+\[( |X|x|-)\]\s?"#,
+                of: #"^(\s*)(?:[-+*]|(?:\d+|[a-zA-Z])[.)])\s+\[( |X|x|-)\]\s?"#,
                 options: .regularExpression
             ) {
                 let after = String(line[match.upperBound...])
@@ -77,9 +77,9 @@ enum NotesParser {
                 continue
             }
 
-            // Bullet: "- ...", "+ ...", "* ..." (but avoid treating heading-style * text)
+            // Bullet: "- ...", "+ ...", "* ...", "1. ...", "a) ..." etc.
             if let match = line.range(
-                of: #"^(\s*)([-+])\s+"#,
+                of: #"^(\s*)(?:[-+*]|(?:\d+|[a-zA-Z])[.)])\s+"#,
                 options: .regularExpression
             ) {
                 let after = String(line[match.upperBound...])
@@ -171,7 +171,7 @@ private enum OrgInline {
         }
 
         // 6. Bold: *text*
-        replace(in: base,
+        replace(in: base, skipProcessed: true,
                 pattern: #"(?<![A-Za-z0-9*])\*([^\*\n]+?)\*(?![A-Za-z0-9*])"#) { m, str in
             let inner = str.substring(with: m.range(at: 1))
             return NSAttributedString(string: inner, attributes: [
@@ -181,7 +181,7 @@ private enum OrgInline {
         }
 
         // 7. Italic: /text/
-        replace(in: base,
+        replace(in: base, skipProcessed: true,
                 pattern: #"(?<![A-Za-z0-9/])/([^/\n]+?)/(?![A-Za-z0-9/])"#) { m, str in
             let inner = str.substring(with: m.range(at: 1))
             let italic = NSFontManager.shared.convert(
@@ -195,7 +195,7 @@ private enum OrgInline {
         }
 
         // 8. Underline: _text_
-        replace(in: base,
+        replace(in: base, skipProcessed: true,
                 pattern: #"(?<![A-Za-z0-9_])_([^_\n]+?)_(?![A-Za-z0-9_])"#) { m, str in
             let inner = str.substring(with: m.range(at: 1))
             return NSAttributedString(string: inner, attributes: [
@@ -210,6 +210,7 @@ private enum OrgInline {
 
     private static func replace(
         in attr: NSMutableAttributedString,
+        skipProcessed: Bool = false,
         pattern: String,
         build: (NSTextCheckingResult, NSString) -> NSAttributedString
     ) {
@@ -218,6 +219,13 @@ private enum OrgInline {
         let matches = regex.matches(in: attr.string, range: NSRange(location: 0, length: str.length))
         // Apply in reverse so earlier ranges aren't invalidated.
         for m in matches.reversed() {
+            if skipProcessed {
+                var alreadyStyled = false
+                attr.enumerateAttribute(.backgroundColor, in: m.range) { val, _, stop in
+                    if val != nil { alreadyStyled = true; stop.pointee = true }
+                }
+                if alreadyStyled { continue }
+            }
             let replacement = build(m, str)
             attr.replaceCharacters(in: m.range, with: replacement)
         }
@@ -264,22 +272,73 @@ private enum OrgInline {
 struct NotesRenderedView: View {
     let blocks: [NoteBlock]
     let onToggleChecklist: (Int) -> Void
+    @State private var collapsed: Set<UUID> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(blocks) { block in
-                row(for: block)
+            ForEach(Array(blocks.enumerated()), id: \.element.id) { idx, block in
+                if !isHidden(idx) {
+                    row(for: block, index: idx)
+                }
             }
         }
     }
 
+    private func indentOf(_ block: NoteBlock) -> Int {
+        switch block {
+        case .checklist(_, _, _, let indent, _): return indent
+        case .bullet(_, let indent, _): return indent
+        default: return 0
+        }
+    }
+
+    private func hasChildren(_ index: Int) -> Bool {
+        guard index + 1 < blocks.count else { return false }
+        let myIndent = indentOf(blocks[index])
+        let nextIndent = indentOf(blocks[index + 1])
+        let isListItem: Bool = {
+            switch blocks[index] {
+            case .checklist, .bullet: return true
+            default: return false
+            }
+        }()
+        return isListItem && nextIndent > myIndent
+    }
+
+    private func isHidden(_ index: Int) -> Bool {
+        for i in stride(from: index - 1, through: 0, by: -1) {
+            let parentIndent = indentOf(blocks[i])
+            let myIndent = indentOf(blocks[index])
+            if parentIndent < myIndent {
+                if collapsed.contains(blocks[i].id) { return true }
+            }
+            if parentIndent == 0 { break }
+        }
+        return false
+    }
+
     @ViewBuilder
-    private func row(for block: NoteBlock) -> some View {
+    private func row(for block: NoteBlock, index: Int) -> some View {
         switch block {
         case .checklist(_, let lineIndex, let state, let indent, let inline):
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if indent > 0 {
                     Spacer().frame(width: CGFloat(indent) * 16)
+                }
+                if hasChildren(index) {
+                    Button {
+                        if collapsed.contains(block.id) {
+                            collapsed.remove(block.id)
+                        } else {
+                            collapsed.insert(block.id)
+                        }
+                    } label: {
+                        Image(systemName: collapsed.contains(block.id) ? "chevron.right" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Theme.textTertiary)
+                            .frame(width: 10)
+                    }
+                    .buttonStyle(.plain)
                 }
                 Button {
                     onToggleChecklist(lineIndex)
@@ -299,6 +358,21 @@ struct NotesRenderedView: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if indent > 0 {
                     Spacer().frame(width: CGFloat(indent) * 16)
+                }
+                if hasChildren(index) {
+                    Button {
+                        if collapsed.contains(block.id) {
+                            collapsed.remove(block.id)
+                        } else {
+                            collapsed.insert(block.id)
+                        }
+                    } label: {
+                        Image(systemName: collapsed.contains(block.id) ? "chevron.right" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Theme.textTertiary)
+                            .frame(width: 10)
+                    }
+                    .buttonStyle(.plain)
                 }
                 Text("•")
                     .font(.system(size: 13))
@@ -378,4 +452,25 @@ enum NotesMutation {
 
 func renderInline(_ raw: String) -> AttributedString {
     OrgInline.render(raw)
+}
+
+// MARK: - Checklist progress
+
+enum ChecklistProgress {
+    /// Walks the parsed blocks and counts checklist states.
+    /// Returns nil when the notes contain no checklist items.
+    static func compute(from text: String) -> (done: Int, ongoing: Int, total: Int)? {
+        var done = 0, ongoing = 0, total = 0
+        for b in NotesParser.parse(text) {
+            if case .checklist(_, _, let state, _, _) = b {
+                total += 1
+                switch state {
+                case .done: done += 1
+                case .ongoing: ongoing += 1
+                case .notStarted: break
+                }
+            }
+        }
+        return total == 0 ? nil : (done, ongoing, total)
+    }
 }

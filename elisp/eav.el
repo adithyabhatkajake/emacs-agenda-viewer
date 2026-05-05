@@ -213,39 +213,69 @@ If VALUE is the empty string, the property is removed."
   (json-encode '((success . t))))
 
 (defun eav-extract-all-tasks ()
-  "Extract all tasks from agenda files as a JSON string."
+  "Extract all tasks from agenda files as a JSON string.
+
+Matches org-agenda's notion of a \"task\": only headings that carry one of
+the configured `org-todo-keywords`. Plain headings without a TODO state
+are excluded."
   (let (results)
     (dolist (file (org-agenda-files))
       (when (file-exists-p file)
         (with-current-buffer (org-get-agenda-file-buffer file)
           (org-map-entries
            (lambda ()
-             (push (eav--extract-task-at-point) results))
+             (when (org-get-todo-state)
+               (push (eav--extract-task-at-point) results)))
            nil 'file))))
     (json-encode (vconcat (nreverse results)))))
 
+(defun eav--done-keywords ()
+  "Compute the set of done TODO keywords from `org-todo-keywords'.
+Each sequence in `org-todo-keywords' is split on the literal \"|\" element;
+keywords after the bar are the done states. Strips trailing `(c)' shortcut
+hints and uppercases for case-insensitive matching."
+  (let (done)
+    (dolist (seq org-todo-keywords)
+      (let ((past-bar nil))
+        (dolist (kw (cdr seq))
+          (cond
+           ((string= kw "|") (setq past-bar t))
+           (past-bar
+            (push (upcase (replace-regexp-in-string "(.*)" "" kw)) done))))))
+    done))
+
 (defun eav-extract-active-tasks ()
-  "Extract only non-DONE/non-KILL tasks from agenda files as JSON."
-  (let (results)
+  "Extract non-done tasks from agenda files as JSON.
+
+\"Task\" requires a TODO state per `org-todo-keywords' (matching
+`org-todo-list'). Tasks whose state is in the done half of any keyword
+sequence are excluded."
+  (let ((results nil)
+        (done-states (eav--done-keywords)))
     (dolist (file (org-agenda-files))
       (when (file-exists-p file)
         (with-current-buffer (org-get-agenda-file-buffer file)
           (org-map-entries
            (lambda ()
              (let ((state (org-get-todo-state)))
-               (unless (member state '("DONE" "KILL" "[X]"))
+               (when (and state
+                          (not (member (upcase state) done-states)))
                  (push (eav--extract-task-at-point) results))))
            nil 'file))))
     (json-encode (vconcat (nreverse results)))))
 
 (defun eav-extract-tasks-for-file (file)
-  "Extract tasks from a specific FILE as JSON."
+  "Extract tasks from a specific FILE as JSON.
+
+Only headings with a TODO state are included, matching org-agenda's
+notion of a task."
   (let (results)
     (when (file-exists-p file)
       (with-current-buffer (org-get-agenda-file-buffer file)
         (org-map-entries
          (lambda ()
-           (push (eav--extract-task-at-point) results))
+           (when (org-get-todo-state)
+             (push (eav--extract-task-at-point) results)))
          nil 'file)))
     (json-encode (vconcat (nreverse results)))))
 
@@ -283,10 +313,32 @@ If VALUE is the empty string, the property is removed."
                            (done . ,(vconcat (nreverse done))))))
                      org-todo-keywords))))))
 
+(defun eav-get-priorities ()
+  "Return configured priority range as JSON."
+  (json-encode
+   `((highest . ,(char-to-string
+                  (if (boundp 'org-priority-highest) org-priority-highest
+                    (if (boundp 'org-highest-priority) org-highest-priority ?A))))
+     (lowest . ,(char-to-string
+                 (if (boundp 'org-priority-lowest) org-priority-lowest
+                   (if (boundp 'org-lowest-priority) org-lowest-priority ?C))))
+     (default . ,(char-to-string
+                  (if (boundp 'org-priority-default) org-priority-default
+                    (if (boundp 'org-default-priority) org-default-priority ?B)))))))
+
 (defun eav-get-config ()
   "Return org configuration values as JSON."
   (json-encode
    `((deadlineWarningDays . ,org-deadline-warning-days))))
+
+(defun eav-get-list-config ()
+  "Return org plain-list configuration as JSON.
+Reports `org-list-allow-alphabetical' so the frontend knows whether
+a., a), A., A) are valid list markers."
+  (json-encode
+   `((allowAlphabetical . ,(if (and (boundp 'org-list-allow-alphabetical)
+                                     org-list-allow-alphabetical)
+                               t :json-false)))))
 
 (defun eav--agenda-entry-to-alist (entry)
   "Convert an org-agenda ENTRY string (with text properties) into an alist."
@@ -414,7 +466,11 @@ Uses org-agenda's own machinery to determine which entries appear."
                           file date
                           :timestamp :scheduled :deadline :sexp)))
             (setq all-entries (append all-entries entries))))))
-    (json-encode (vconcat (mapcar #'eav--agenda-entry-to-alist all-entries)))))
+    (json-encode (vconcat (mapcar (lambda (entry)
+                                    (let ((alist (eav--agenda-entry-to-alist entry)))
+                                      (push (cons 'displayDate date-string) alist)
+                                      alist))
+                                  all-entries)))))
 
 (defun eav-get-agenda-range (start-date end-date)
   "Get agenda entries for date range START-DATE to END-DATE (YYYY-MM-DD) as JSON."
@@ -470,53 +526,138 @@ Uses org-agenda's own machinery to determine which entries appear."
   (require 'org-clock)
   (with-current-buffer (find-file-noselect file)
     (goto-char pos)
-    (org-clock-in))
+    ;; Force LOGBOOK drawer regardless of the user's personal config so the
+    ;; web/mac UIs can reliably hide clock metadata behind a single drawer.
+    (let ((org-clock-into-drawer "LOGBOOK"))
+      (org-clock-in)))
   (json-encode '((success . t))))
 
 (defun eav-clock-out ()
   "Clock out of the current task."
   (require 'org-clock)
   (when (org-clocking-p)
-    (org-clock-out))
+    (let ((org-clock-into-drawer "LOGBOOK"))
+      (org-clock-out)))
   (json-encode '((success . t))))
 
 (defun eav--format-clock-stamp (epoch)
   "Format EPOCH (integer seconds) as an inactive org timestamp string."
   (format-time-string "[%Y-%m-%d %a %H:%M]" (seconds-to-time epoch)))
 
+(defun eav--collect-loose-clock-lines (entry-start entry-end)
+  "Return CLOCK: lines in [ENTRY-START, ENTRY-END) that are NOT inside a
+:LOGBOOK: drawer, and delete them from the buffer. ENTRY-END must be a marker
+so it tracks deletions. Returned strings are re-prefixed with two spaces for
+re-insertion inside a drawer."
+  (save-excursion
+    (let ((collected '())
+          (in-drawer nil))
+      (goto-char entry-start)
+      (while (< (point) (marker-position entry-end))
+        (let* ((line-start (line-beginning-position))
+               (line-end   (line-end-position))
+               (line (buffer-substring-no-properties line-start line-end)))
+          (cond
+           ((string-match-p "^[ \t]*:LOGBOOK:[ \t]*$" line)
+            (setq in-drawer t)
+            (forward-line 1))
+           ((string-match-p "^[ \t]*:END:[ \t]*$" line)
+            (setq in-drawer nil)
+            (forward-line 1))
+           ((and (not in-drawer)
+                 (string-match-p "^[ \t]*CLOCK:" line))
+            (push (concat "  " (string-trim line)) collected)
+            (delete-region line-start (min (point-max) (1+ line-end))))
+           (t (forward-line 1)))))
+      (nreverse collected))))
+
+(defun eav-tidy-clocks (file pos)
+  "Sweep any loose CLOCK: lines under the heading at POS in FILE into the
+:LOGBOOK: drawer. Creates the drawer if needed. Returns the count moved."
+  (require 'org-clock)
+  (let ((moved 0))
+    (with-current-buffer (find-file-noselect file)
+      (save-excursion
+        (goto-char pos)
+        (org-back-to-heading t)
+        (let* ((entry-start (point))
+               (entry-end (let ((m (make-marker)))
+                            (set-marker m (save-excursion
+                                            (outline-next-heading)
+                                            (point)))
+                            m))
+               (loose (eav--collect-loose-clock-lines entry-start entry-end)))
+          (setq moved (length loose))
+          (when (> moved 0)
+            (let ((logbook-header
+                   (save-excursion
+                     (goto-char entry-start)
+                     (when (re-search-forward "^[ \t]*:LOGBOOK:[ \t]*$"
+                                              (marker-position entry-end) t)
+                       (line-beginning-position)))))
+              (if logbook-header
+                  (progn
+                    (goto-char logbook-header)
+                    (forward-line 1)
+                    (dolist (l loose) (insert l "\n")))
+                (goto-char entry-start)
+                (org-end-of-meta-data t)
+                (insert ":LOGBOOK:\n")
+                (dolist (l loose) (insert l "\n"))
+                (insert ":END:\n")))))
+        (save-buffer)))
+    (json-encode `((success . t) (moved . ,moved)))))
+
 (defun eav-add-clock-entry (file pos start-epoch end-epoch)
   "Append a CLOCK line to the LOGBOOK drawer of the heading at POS in FILE.
 START-EPOCH and END-EPOCH are integer Unix timestamps (seconds).
-Mirrors the format `org-clock-out' produces: `CLOCK: [start]--[end] =>  H:MM'."
+Mirrors the format `org-clock-out' produces: `CLOCK: [start]--[end] =>  H:MM'.
+
+Also migrates any pre-existing loose CLOCK: lines under the heading into the
+LOGBOOK drawer so notes stay clean."
   (require 'org-clock)
   (with-current-buffer (find-file-noselect file)
     (save-excursion
       (goto-char pos)
       (org-back-to-heading t)
-      (let* ((start (eav--format-clock-stamp start-epoch))
+      (let* ((entry-start (point))
+             (entry-end   (let ((m (make-marker)))
+                            (set-marker m (save-excursion
+                                            (outline-next-heading)
+                                            (point)))
+                            m))
+             (start (eav--format-clock-stamp start-epoch))
              (end   (eav--format-clock-stamp end-epoch))
              (secs  (max 0 (- end-epoch start-epoch)))
              (mins  (/ secs 60))
              (h     (/ mins 60))
              (m     (mod mins 60))
-             (line  (format "CLOCK: %s--%s =>  %d:%02d" start end h m)))
-        ;; Find or create LOGBOOK drawer; insert as the first entry inside it.
-        (let* ((element (org-element-at-point))
-               (end-of-meta (save-excursion
-                              (org-end-of-meta-data t)
-                              (point))))
-          (goto-char end-of-meta)
-          (if (save-excursion
-                (goto-char (org-entry-beginning-position))
-                (re-search-forward "^[ \t]*:LOGBOOK:[ \t]*$"
-                                   (save-excursion (outline-next-heading) (point))
-                                   t))
-              ;; Drawer exists — insert line right after :LOGBOOK:
+             (new-line (format "  CLOCK: %s--%s =>  %d:%02d" start end h m))
+             ;; Sweep loose CLOCK lines and delete them in place. Returns the
+             ;; cleaned text fragments, ready for re-insertion in the drawer.
+             (loose (eav--collect-loose-clock-lines entry-start entry-end)))
+        ;; Find an existing :LOGBOOK: drawer header inside the entry.
+        (let ((logbook-header
+               (save-excursion
+                 (goto-char entry-start)
+                 (when (re-search-forward "^[ \t]*:LOGBOOK:[ \t]*$"
+                                          (marker-position entry-end) t)
+                   (line-beginning-position)))))
+          (if logbook-header
+              ;; Insert the new line + any swept loose lines right after the
+              ;; :LOGBOOK: header so newest entries appear at the top.
               (progn
+                (goto-char logbook-header)
                 (forward-line 1)
-                (insert "  " line "\n"))
-            ;; No drawer — create one
-            (insert ":LOGBOOK:\n  " line "\n:END:\n"))))
+                (dolist (l (cons new-line loose))
+                  (insert l "\n")))
+            ;; No drawer — create one at end-of-meta with all clock lines.
+            (goto-char entry-start)
+            (org-end-of-meta-data t)
+            (insert ":LOGBOOK:\n")
+            (insert new-line "\n")
+            (dolist (l loose) (insert l "\n"))
+            (insert ":END:\n"))))
       (save-buffer)))
   (json-encode '((success . t))))
 
@@ -844,56 +985,170 @@ Returns a vector of alists with name, type, and options."
           (push (nreverse result) results))))
     (json-encode (vconcat (nreverse results)))))
 
-(defun eav-capture (template-key title &optional priority scheduled deadline)
+(defun eav--pre-expand-prompts (template-str answers)
+  "Replace %^{...} patterns in TEMPLATE-STR with values from ANSWERS.
+ANSWERS is a list of strings, consumed in order of appearance.
+Returns (expanded-template . post-actions) where post-actions is a list
+of (action key value) tuples for properties/tags to set after capture."
+  (if (not (stringp template-str))
+      (cons template-str nil)
+    (let ((result template-str)
+          (post-actions nil)
+          (idx 0)
+          (replacements nil))
+      (while (string-match
+              "%\\^\\(?:{\\([^}]*\\)}\\)?\\([gGtTuUpCL]\\)?"
+              result)
+        (let* ((braces (match-string 1 result))
+               (type-char (match-string 2 result))
+               (answer (or (nth idx answers) ""))
+               (replacement ""))
+          (cond
+           ((member type-char '("g" "G"))
+            (push (list 'tags answer) post-actions)
+            (setq replacement ""))
+           ((equal type-char "p")
+            (let ((prop-name (car (split-string (or braces "") "|"))))
+              (push (list 'property prop-name answer) post-actions))
+            (setq replacement ""))
+           ((member type-char '("t" "T"))
+            (setq replacement (if (string-empty-p answer) ""
+                                (format "<%s>" answer))))
+           ((member type-char '("u" "U"))
+            (setq replacement (if (string-empty-p answer) ""
+                                (format "[%s]" answer))))
+           (t (setq replacement answer)))
+          (push replacement replacements)
+          (setq result (replace-match replacement t t result))
+          (setq idx (1+ idx))))
+      ;; Handle %\N back-references
+      (let ((refs (nreverse replacements)))
+        (dotimes (i (length refs))
+          (let ((pat (format "%%\\\\%d" (1+ i))))
+            (while (string-match pat result)
+              (setq result (replace-match (nth i refs) t t result))))))
+      (cons result (nreverse post-actions)))))
+
+(defun eav-capture (template-key title &optional priority scheduled deadline prompt-answers)
   "Execute org-capture non-interactively for TEMPLATE-KEY.
 TITLE is inserted where %? would be.
 PRIORITY is a single character string (\"A\", \"B\", etc.) or nil.
 SCHEDULED and DEADLINE are org timestamp strings or nil.
-
-Flow: org-capture runs its full pipeline --
-  1. `org-capture-fill-template' expands %u, %t, %<...>, %a, %i, %^{...}
-  2. `org-capture-place-entry' inserts the expanded template into the target buffer
-  3. `org-capture--position-cursor' finds %? -- we advise this to insert TITLE there
-  4. `:immediate-finish' causes `org-capture-finalize' to save and clean up
-  5. After finalize, we visit the captured entry to set priority/scheduled/deadline"
+PROMPT-ANSWERS is a list of strings for %^{...} prompts, consumed in order."
   (require 'org-capture)
   (let* ((entry (assoc template-key org-capture-templates))
          (plist (nthcdr 5 entry))
-         (had-immediate (plist-get plist :immediate-finish)))
+         (had-immediate (plist-get plist :immediate-finish))
+         (orig-template (nth 4 entry))
+         (expanded (when (and prompt-answers (stringp orig-template))
+                     (eav--pre-expand-prompts orig-template prompt-answers)))
+         (post-actions (when expanded (cdr expanded))))
     (unless entry
       (error "Unknown capture template key: %s" template-key))
     ;; Temporarily force :immediate-finish
     (unless had-immediate
       (setcdr (nthcdr 4 entry)
               (plist-put (copy-sequence plist) :immediate-finish t)))
+    ;; Temporarily swap in the pre-expanded template
+    (when expanded
+      (setcar (nthcdr 4 entry) (car expanded)))
     (unwind-protect
-        ;; Advise org-capture--position-cursor to insert TITLE at %?
-        ;; instead of just removing %? (which is the default behavior)
         (cl-letf (((symbol-function 'org-capture--position-cursor)
                    (lambda (beg end)
                      (goto-char beg)
                      (when (search-forward "%?" end t)
                        (replace-match title t t)))))
           (org-capture nil template-key))
-      ;; Restore original plist
+      ;; Restore original template and plist
+      (when expanded
+        (setcar (nthcdr 4 entry) orig-template))
       (unless had-immediate
         (setcdr (nthcdr 4 entry) plist)))
-    ;; Set priority/scheduled/deadline on the captured entry
-    (when (or priority scheduled deadline)
-      (let ((marker org-capture-last-stored-marker))
-        (when (and marker (marker-buffer marker))
-          (with-current-buffer (marker-buffer marker)
-            (save-excursion
-              (goto-char marker)
-              (org-back-to-heading t)
-              (when priority
-                (org-priority (string-to-char priority)))
-              (when scheduled
-                (org-schedule nil scheduled))
-              (when deadline
-                (org-deadline nil deadline))
-              (save-buffer))))))
+    ;; Post-capture: set priority/scheduled/deadline and prompt post-actions
+    (let ((marker org-capture-last-stored-marker))
+      (when (and marker (marker-buffer marker))
+        (with-current-buffer (marker-buffer marker)
+          (save-excursion
+            (goto-char marker)
+            (org-back-to-heading t)
+            (when priority
+              (org-priority (string-to-char priority)))
+            (when scheduled
+              (org-schedule nil scheduled))
+            (when deadline
+              (org-deadline nil deadline))
+            (dolist (action post-actions)
+              (pcase action
+                (`(property ,key ,value)
+                 (when (and key (not (string-empty-p key)))
+                   (org-set-property key value)))
+                (`(tags ,tags-str)
+                 (when (not (string-empty-p tags-str))
+                   (org-set-tags tags-str)))))
+            (save-buffer)))))
     (json-encode '((success . t)))))
+
+(defun eav-insert-entry (file target-type entry-text &optional headline olp prepend)
+  "Insert ENTRY-TEXT into FILE at location determined by TARGET-TYPE.
+TARGET-TYPE is one of: file, file+headline, file+olp, file+olp+datetree.
+HEADLINE is the heading string for file+headline targets.
+OLP is a list of heading strings for file+olp / file+olp+datetree targets.
+When PREPEND is non-nil, insert at the beginning of the section."
+  (let* ((file (expand-file-name file))
+         (buf (or (find-buffer-visiting file)
+                  (find-file-noselect file))))
+    (with-current-buffer buf
+      (org-with-wide-buffer
+       (pcase target-type
+         ("file"
+          (if prepend
+              (progn
+                (goto-char (point-min))
+                (when (re-search-forward org-outline-regexp-bol nil t)
+                  (beginning-of-line)))
+            (goto-char (point-max))))
+         ("file+headline"
+          (goto-char (point-min))
+          (if (re-search-forward
+               (format org-complex-heading-regexp-format
+                       (regexp-quote (or headline "")))
+               nil t)
+              (if prepend
+                  (progn (org-end-of-meta-data t) (forward-line 0))
+                (org-end-of-subtree t t))
+            (goto-char (point-max))))
+         ("file+olp"
+          (condition-case nil
+              (let ((pos (org-find-olp (cons file (or olp '())) nil)))
+                (goto-char pos)
+                (if prepend
+                    (progn (org-end-of-meta-data t) (forward-line 0))
+                  (org-end-of-subtree t t)))
+            (error (goto-char (point-max)))))
+         ("file+olp+datetree"
+          (require 'org-datetree)
+          (if olp
+              (condition-case nil
+                  (let ((pos (org-find-olp (cons file olp) nil)))
+                    (goto-char pos)
+                    (org-narrow-to-subtree))
+                (error nil))
+            (goto-char (point-min)))
+          (org-datetree-find-date-create (calendar-current-date))
+          (widen)
+          (org-end-of-subtree t t))
+         (_
+          (goto-char (point-max))))
+       (unless (bolp) (insert "\n"))
+       (let ((beg (point)))
+         (insert entry-text)
+         (unless (bolp) (insert "\n"))
+         ;; Re-indent the inserted entry so it nests correctly
+         (when (string-match-p "^\\*" entry-text)
+           (goto-char beg)
+           (org-back-to-heading t))))
+      (save-buffer)))
+  (json-encode '((success . t))))
 
 (provide 'eav)
 ;;; eav.el ends here

@@ -25,25 +25,50 @@ struct SortMenu: View {
 }
 
 struct GroupMenu: View {
-    @Binding var selection: GroupKey
+    @Binding var primary: GroupKey
+    @Binding var secondary: GroupKey
 
     var body: some View {
         Menu {
-            ForEach(GroupKey.all) { key in
-                Button {
-                    selection = key
-                } label: {
-                    if selection == key {
-                        Label(key.label, systemImage: "checkmark")
-                    } else {
-                        Text(key.label)
+            Section("Group by") {
+                ForEach(GroupKey.all) { key in
+                    Button {
+                        primary = key
+                        if key == .none { secondary = .none }
+                    } label: {
+                        if primary == key {
+                            Label(key.label, systemImage: "checkmark")
+                        } else {
+                            Text(key.label)
+                        }
+                    }
+                }
+            }
+            if primary != .none {
+                Section("Then by") {
+                    ForEach(GroupKey.all.filter { $0 != primary }) { key in
+                        Button {
+                            secondary = key
+                        } label: {
+                            if secondary == key {
+                                Label(key.label, systemImage: "checkmark")
+                            } else {
+                                Text(key.label)
+                            }
+                        }
                     }
                 }
             }
         } label: {
-            Label("Group: \(selection.label)", systemImage: "rectangle.3.group")
+            Label(menuLabel, systemImage: "rectangle.3.group")
         }
         .help("Group by")
+    }
+
+    private var menuLabel: String {
+        if primary == .none { return "Group: None" }
+        if secondary == .none { return "Group: \(primary.label)" }
+        return "Group: \(primary.label) / \(secondary.label)"
     }
 }
 
