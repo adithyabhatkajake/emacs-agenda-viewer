@@ -3,6 +3,34 @@
 
 *Motivation and AI disclaimer.* I have always liked Things 3 and Todoist for their ease of use. But I always found their feature set incomplete and lacking. I made peace with Emacs as it is powerful and extensible. But the org agenda interface always felt dated and clunky. So this is my vibe-coded attempt to connect a web front-end using emacs-client to the emacs backend to improve the visuals. Yes, this is vibe coded with AI, do what you want with this information. But feature requests and pull requests are welcome.
 
+** Screenshots
+
+Native macOS app, v0.3.0 — Sonoma-vibrancy design with single-line task rows, an inline inspector, and configurable progress visualisations.
+
+*** Today view, light + dark
+
+| [[file:screenshots/light-today.png]]                                                                         | [[file:screenshots/dark-today.png]]                                  |
+
+Day-head with relative label and counts, =ALL DAY= calendar events at the top, then a chronological =SCHEDULE= section that interleaves timed events with timed tasks (so an 11:00 event slots between a 09:00 task and a 13:00 task — not lumped into a separate top block).
+
+*** Inspector — rendered notes vs. raw edit
+
+| [[file:screenshots/light-notes.png]]                                                                                                                                | [[file:screenshots/light-editor.png]]                                                                              |
+
+Selecting a task swaps the row for an editable card. Notes render with interactive checkboxes by default — click a box to toggle (it writes through to org via =org-list-struct-fix-box= so parents auto-aggregate). Click anywhere else in the notes area to drop into raw =org= edit mode; blur to save and switch back.
+
+*** Configurable checklist progress
+
+| [[file:screenshots/light-checklist-progress.png]]                                                                                                       | [[file:screenshots/light-checklist-bg-progress.png]]                                                                                            |
+
+Settings → Checklist Progress lets you pick how rows surface checklist completion: a 3pt strip on the card's top edge (left), a small donut at the row end, or a left-to-right background fill (right; green for done, muted orange for in-progress).
+
+*** Calendar view
+
+[[file:screenshots/light-calendar.png]]
+
+Day / Week grid with lane-layout for overlapping events, drag-to-reschedule, drag-to-resize (writes time-range timestamps), and a docked schedule tray on the right with date-range filter, =Include deadlines= / =Exclude scheduled= toggles, and a search box.
+
 ** Architecture
 
 #+begin_example
