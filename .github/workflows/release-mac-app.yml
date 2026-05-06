@@ -20,7 +20,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macos-15 ships Xcode 16 / Swift 6, which Package.swift requires.
+    runs-on: macos-15
     timeout-minutes: 30
 
     steps:
