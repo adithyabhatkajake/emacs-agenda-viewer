@@ -6,15 +6,18 @@
 ** Architecture
 
 #+begin_example
-  Browser (React/Vite)  <--HTTP-->  Express Server  <--emacsclient-->  Emacs
-       :5173 (dev)                     :3001                         (org-mode)
+  Browser (React/Vite)
+       :5173 (dev)         \
+                            >--HTTP-->  Express Server  <--emacsclient-->  Emacs
+  SwiftUI macOS / iOS app  /                :3001                         (org-mode)
 #+end_example
 
-In production (=npm start=), the Express server serves the built frontend directly -- no Vite process needed.
+The same Express server serves the React web frontend (=npm start= bundles it on :3001 -- no Vite process needed in production) and answers JSON requests from the native SwiftUI app under =apps/macos/=. Both clients share the same elisp + REST surface; mutations land in your real org files via =emacsclient=.
 
-- =elisp/eav.el= :: Elisp helper loaded into running Emacs. Uses =org-agenda-get-day-entries= (org's own agenda machinery) for accurate filtering. Provides functions for reading/writing tasks, notes, clock, priorities, scheduling, deadlines.
-- =server/= :: Express + TypeScript backend. Calls =emacsclient --eval= to execute elisp. Writes large JSON results to temp files to avoid control character issues with stdout.
+- =elisp/eav.el= :: Elisp helper loaded into running Emacs. Uses =org-agenda-get-day-entries= (org's own agenda machinery) for accurate filtering. Provides functions for reading/writing tasks, notes, clock, priorities, scheduling, deadlines, tags, refile, and clock-line tidy.
+- =server/= :: Express + TypeScript backend. Calls =emacsclient --eval= to execute elisp. Writes large JSON results to temp files to avoid control character issues with stdout. Auto-recovers if =eav.el= is reloaded mid-session.
 - =src/= :: React + TypeScript + Tailwind CSS frontend. Things 3 dark mode design.
+- =apps/macos/= :: SwiftUI app, two targets sharing one codebase (=EmacsAgendaViewerMac= / =EmacsAgendaViewer=). Sonoma-vibrancy design refreshed in v0.3.0; see the section below.
 
 ** Setup
 
@@ -153,7 +156,13 @@ Highlights vs. the web UI:
 - EventKit two-way sync: link an org task to a Calendar event via =:GCAL_EVENT_ID:= property; changes flow both ways
 - Per-server category color overrides, light/dark/system theme, persistent active clocks across launches
 
-A signed-locally DMG can be produced with:
+Pre-built DMGs ship with each tagged release on
+[[https://github.com/adithyabhatkajake/emacs-agenda-viewer/releases][GitHub Releases]]
+(=Agenda-X.Y.Z.dmg=). The =Release macOS app= GitHub Action builds them on
+=macos-15= unsigned (=CODE_SIGN_IDENTITY=-=); on first launch you'll need to
+=Right-click → Open= once to bypass Gatekeeper.
+
+To build a DMG locally:
 
 #+begin_src shell
 cd apps/macos
@@ -179,11 +188,11 @@ Playwright specs in =tests/e2e/= run against real Chromium (desktop, 1280x800) a
 
 ** Missing features
 
-- Tag editing (backend exists but no UI yet)
 - Effort estimation editing
-- Search/filter by text
+- Search/filter by text in the web UI
 - Habit tracking visualization
 - Agenda custom commands (only the default day/week view is used)
+- Web UI doesn't have tag editing yet; the native macOS app does (Settings → Tag chip in the inspector footer)
 
 ** Tech stack
 
