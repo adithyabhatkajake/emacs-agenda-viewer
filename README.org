@@ -103,20 +103,27 @@ The app loads =elisp/eav.el= into your running Emacs on first request. All chang
 
 *** Running as a Background Service (macOS)
 
-A launchd plist is included at =~/Library/LaunchAgents/com.hermitsage.emacs-agenda-viewer.plist=.
+A launchd plist template ships at =scripts/eav.server.plist.template=. The
+=scripts/install-launchd.sh= installer renders it with paths for your machine
+(working dir, =npx= location, log path), writes it to
+=~/Library/LaunchAgents/dev.eav.server.plist=, and loads it via =launchctl=.
 
 #+begin_src shell
-# Start the service (runs on login, auto-restarts on crash)
-launchctl load ~/Library/LaunchAgents/com.hermitsage.emacs-agenda-viewer.plist
+# Install (renders the template, writes the plist, loads the service)
+./scripts/install-launchd.sh
 
-# Stop the service
-launchctl unload ~/Library/LaunchAgents/com.hermitsage.emacs-agenda-viewer.plist
+# Restart after eav.el / server changes
+launchctl kickstart -k gui/$(id -u)/dev.eav.server
 
 # View logs
-tail -f ~/Library/Logs/emacs-agenda-viewer.log
+tail -f ~/Library/Logs/eav-server.log
+
+# Uninstall (boots the service out + removes the plist)
+./scripts/install-launchd.sh --uninstall
 #+end_src
 
-The server binds to =0.0.0.0:3001=, so it's accessible over Tailscale or any local network.
+The service runs at login, auto-restarts on crash, binds to =0.0.0.0:3001=
+so it's accessible over Tailscale or any local network.
 
 *** Mobile Access
 
