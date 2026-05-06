@@ -52,6 +52,9 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Install Emacs
+        run: brew install emacs
+
       - name: Run elisp tests
         run: |
           emacs -batch -l ert -l elisp/eav-tests.el -f ert-run-tests-batch-and-exit
