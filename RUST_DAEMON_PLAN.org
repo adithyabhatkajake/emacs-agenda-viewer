@@ -1,0 +1,598 @@
+#+title: Rust Index Daemon — Implementation Plan
+#+date: 2026-05-07
+#+startup: showall
+
+This is the implementation plan for replacing the current
+Express-over-=emacsclient= bridge with a Rust /index daemon/ that owns
+reads, watches files, and forwards writes to a persistent Emacs RPC. The
+goal is Things-3-class responsiveness without losing org-mode semantics.
+
+* TL;DR
+
+| Layer            | Today                              | After                                     |
+|------------------+------------------------------------+-------------------------------------------|
+| Reads            | =emacsclient= per call (~110 ms)   | Rust in-memory index (~2 ms)              |
+| Writes           | =emacsclient= per call             | Persistent Emacs socket (~5–15 ms)        |
+| Live updates     | Manual refresh                     | SSE pushed from fsnotify + after-save-hook |
+| Cold start       | ~250 ms                            | < 50 ms (SQLite snapshot)                 |
+| Source of truth  | Org files on disk                  | Org files on disk (unchanged)             |
+| Editor of record | Emacs                              | Emacs (unchanged)                         |
+
+We keep Emacs as the writer of record because it owns the runtime
+semantics — hooks, advice, capture templates with elisp expansions,
+=org-id-locations=, =org-after-todo-state-change-hook=, ID generation,
+=before-save-hook=, etc. Rust serves the 90% of traffic that's reads.
+
+* Goals
+
+- Replace the read path so Mac app (and future web/iOS/MCP clients) get
+  near-zero-latency responses.
+- Provide a live update channel so the UI reflects org changes without
+  manual refresh.
+- Cache the index on disk so cold launch paints from local data while a
+  background reconcile runs.
+- Keep mutations correct by routing them through Emacs unchanged.
+- Coexist with the current Express server for at least one shadow-mode
+  release; revertable in <5 min.
+
+* Non-goals
+
+- Replacing org-mode. We don't reimplement =org-export=, =org-babel=,
+  =org-ref=, =org-roam=, agenda custom commands, or sexp-driven
+  (=%%(...)=) entries — these stay in Emacs.
+- Round-trip writes. The daemon never writes to org files in v1. Every
+  mutation goes through Emacs to preserve user hooks and formatting.
+- A new file format. Org stays org.
+- Replacing =eav.el='s mutation surface — only the persistent transport
+  changes.
+
+* Why this architecture
+
+The naive instincts ("rewrite org-mode in Rust", "ditch Emacs entirely")
+hit two walls hard:
+
+1. *Sexp-driven entries*. =%%(diary-anniversary 1990 1 1)= and friends
+   require an elisp interpreter to evaluate. You cannot replicate them
+   without shipping one.
+2. *User config*. Capture templates contain =%(elisp)= expansions; tag
+   inheritance can be overridden file-locally; =#+TODO:=, =#+CATEGORY:=,
+   =#+PROPERTY:= per-file overrides modify =org-todo-keywords= for that
+   file only; =org-agenda-skip-functions= run arbitrary elisp on the
+   query path.
+
+For a heavy org user (custom Doom config, 30+ agenda files, custom todo
+sequences) at least three of these are load-bearing. A pure-Rust
+replacement means perpetually chasing parity.
+
+The hybrid avoids the problem: parsing structure is fine in Rust (the
+grammar is well-defined), while semantics that depend on user config or
+elisp evaluation get delegated. Almost all reads (~95%) are
+structure-only; we proxy the rest.
+
+* Architecture
+
+#+begin_example
+  ┌──────────────┐   JSON+SSE over   ┌──────────────────────────┐
+  │   Mac app    │     UNIX sock     │     eav-indexd (Rust)    │
+  │ Web frontend │ ◄──────────────►  │                          │
+  │  MCP server  │                   │   • orgize parser        │
+  └──────────────┘                   │   • in-mem index         │
+                                     │   • SQLite snapshot      │
+                                     │   • fsnotify watch       │
+                                     │   • agenda evaluator     │
+                                     │   • emacs proxy fallback │
+                                     └──┬────────────────┬──────┘
+                                        │                │
+                              fsnotify ─┘                │ writes + sexp/diary
+                              .org files                 │ entries + capture
+                                                         ▼
+                                              ┌─────────────────────┐
+                                              │   Emacs server      │
+                                              │   eav-bridge.el     │
+                                              │   make-network-     │
+                                              │   process socket    │
+                                              └─────────┬───────────┘
+                                                        │
+                                                  Org files on disk
+                                                  (truth, single writer)
+#+end_example
+
+Three actors:
+
+1. *=eav-indexd=* (new) — Rust daemon. Reads, indexes, watches, evaluates
+   agenda queries. Holds *one* persistent connection to Emacs.
+2. *=eav-bridge.el=* (new) — In-Emacs socket server. Length-prefixed JSON
+   over a UNIX socket. Replaces the per-call =emacsclient= invocations.
+3. *=eav.el=* (existing) — Stays exactly as-is. =eav-bridge.el= just
+   exposes its functions over the socket.
+
+* Repo layout
+
+#+begin_example
+daemon/                              # new Rust workspace
+  Cargo.toml                         # workspace root
+  rust-toolchain.toml                # pin rustc
+  crates/
+    eav-core/                        # shared types (mirrors Swift Models.swift)
+      src/lib.rs
+    eav-parse/                       # orgize wrapper + tag inheritance
+      src/lib.rs
+    eav-index/                       # in-mem index + SQLite snapshot
+      src/lib.rs
+      src/snapshot.rs
+    eav-agenda/                      # agenda day/range queries
+      src/lib.rs
+      src/timestamp.rs               # repeater + warning math
+    eav-bridge/                      # tokio client for emacs socket
+      src/lib.rs
+      src/protocol.rs
+    eav-server/                      # axum HTTP + SSE
+      src/lib.rs
+      src/routes.rs
+      src/events.rs
+    eav-mcp/                         # optional: MCP server
+      src/lib.rs
+    eavd/                            # binary
+      src/main.rs
+
+elisp/
+  eav-bridge.el                      # new: socket server
+  eav.el                             # existing, unchanged
+
+apps/macos/
+  EmacsAgendaViewer/Networking/
+    APIClient.swift                  # update base URL → socket path
+    EventSubscriber.swift            # new: SSE client → store invalidation
+
+src/                                 # web frontend, similar minor edits
+
+server/                              # KEEP for shadow mode; remove in Phase 7
+
+scripts/
+  install-daemon.sh                  # cargo install + launchd plist
+#+end_example
+
+* Phase plan
+
+Each phase has an /exit criterion/. Don't move on until it's met.
+
+** Phase 0 — Skeleton & contract (3 days)
+
+- =cargo new --workspace daemon=, set up =eav-core=, =eavd=, CI lints
+- Define =eav-core= types matching Swift's =Models.swift= field-for-field
+  (=OrgTask=, =AgendaEntry=, =OrgTimestamp=, =TodoKeywords=, etc.)
+- Serde-derive with =#[serde(rename_all = "camelCase")]= so wire format
+  matches existing JSON exactly
+- GitHub Actions: =cargo build=, =cargo clippy -- -D warnings=,
+  =cargo fmt --check=
+
+*Exit*: =cargo test= passes; types serialize byte-identical to a captured
+sample of =/api/tasks= response (golden test).
+
+** Phase 1 — Parser + index (1 week)
+
+- Wrap =orgize= 0.10+, walk the document, extract =OrgTask= per heading
+  with a =:TODO:= keyword
+- Tag inheritance: collect =FILETAGS=, walk parent headings
+- File-local overrides: parse =#+TODO:=, =#+CATEGORY:=, =#+PROPERTY:=
+  in the file header; apply at index time
+- =Index= struct: =BTreeMap<TaskId, OrgTask>= + secondary indices
+  (by file, by tag, by date bucket)
+- Rebuild a single file in <20 ms; full reindex in <100 ms cold
+
+*Exit*: indexed output diffs to <5 mismatches against current
+=/api/tasks= for the user's full agenda set.
+
+** Phase 2 — File watcher + cache (3 days)
+
+- =notify= crate, watch the agenda-files set
+- Debounce 100 ms (saves come in bursts during clock-in/out)
+- Self-write detection: when the daemon proxies a write to Emacs, mark
+  the file path as "self-dirty" with a 2-second TTL so the resulting
+  fsnotify event doesn't cause a redundant re-index
+- SQLite snapshot at =$XDG_CACHE_HOME/eavd/snapshot.sqlite= written on
+  shutdown and every 5 minutes; loaded on startup
+- Cold path: load snapshot → start watcher → background full reindex →
+  diff and emit invalidations
+
+*Exit*: cold start (snapshot present) under 50 ms to first
+=/api/tasks= response; live single-file change reflected in <100 ms.
+
+** Phase 3 — Agenda evaluator (1 week)
+
+This is the only non-trivial reimplementation. Aim for parity on the
+behaviors the existing app uses:
+
+- Day query: scheduled, deadline, plain timestamp, upcoming-deadline
+  (within =org-deadline-warning-days=), repeater-advanced instances
+- Range query: same, day-by-day across the range
+- =timeOfDay= computed from =scheduled=/=deadline=/=plain timestamp=
+- Repeater advancement (=+1d=, =.+1m=, =++1y=) — the simple subset, not
+  habit-style consistency
+- Warning offset (=-2d=) interaction with =deadline-warning-days=
+- /Detect/ (don't evaluate) sexp/diary entries; mark days needing the
+  Emacs proxy
+
+Test corpus: capture current =/api/agenda/day/<date>= responses for
+30 days against the user's data; replay against eavd and diff. Lock the
+parity for known-deviation cases.
+
+*Exit*: byte-identical agenda output for ≥95% of (file, date) pairs in
+the test corpus; remaining 5% explicitly proxied through Emacs with a
+recorded reason.
+
+** Phase 4 — Emacs bridge (3 days)
+
+- =elisp/eav-bridge.el=: opens UNIX socket via =make-network-process=,
+  reads length-prefixed JSON requests, dispatches to =eav.el= functions,
+  writes length-prefixed JSON responses
+- Methods are 1:1 with current REST endpoints, see [[*Bridge protocol]]
+- Rust =eav-bridge= crate: =tokio::net::UnixStream= persistent connection
+  with reconnect-on-drop; one =Mutex<Connection>= or a =mpsc= queue
+- Health: bridge sends a periodic ping; daemon reconnects on timeout
+
+*Exit*: end-to-end mutation (set state on a task) measured at <20 ms
+median, <50 ms p99 over a 10-minute soak.
+
+** Phase 5 — HTTP server (3 days)
+
+- =axum= router mirroring the current Express surface 1:1
+- Bind to UNIX socket =$XDG_RUNTIME_DIR/eavd.sock= and (optionally)
+  127.0.0.1:3002 for browser dev clients
+- SSE endpoint =GET /api/events= streams =task-changed=, =file-changed=,
+  =clock-changed= events
+- CORS for the existing frontend on :5173 if running in dev
+
+*Exit*: =curl= against eavd returns identical JSON to =curl= against
+Express for every implemented endpoint, on the test corpus.
+
+** Phase 6 — Mac app cutover (3 days)
+
+- =APIClient.swift=: introduce a new =Transport= type
+  (=httpExpress(URL)= or =unixSocket(Path)=)
+- Add =EventSubscriber=: holds a long-lived SSE connection, decodes
+  events, calls =TasksStore.invalidate(file:)= or a more granular
+  =invalidate(taskId:)=
+- /Now that reads are cheap/, also implement the optimistic-update +
+  smarter-refresh + factory-fix work from Tier 1 of the prior audit. The
+  combination compounds: SSE keeps the cache fresh; optimistic UI hides
+  the residual ~5 ms write latency; the no-fanout refresh stops thrashing.
+- Feature flag =EAV_USE_DAEMON= in =AppSettings= (default false). Both
+  paths run side by side for a shadow week.
+
+*Exit*: dogfood for one week with =EAV_USE_DAEMON=true=, no observed
+correctness regressions vs. Express.
+
+** Phase 7 — Decommission Express (1 day)
+
+- Delete =server/index.ts=, =server/emacs.ts=
+- Update =launchd= plist to start =eavd= instead of =npx tsx server/index.ts=
+- Update =deploy.sh= and the remote sync block
+- README arch diagram update
+
+** Phase 8 — MCP server (optional, 3 days)
+
+The same in-memory index trivially exposes an MCP server:
+
+- Resources: =task://{id}=, =agenda://day/{date}=
+- Tools: =toggle-done=, =set-priority=, =set-state=, =capture=, =refile=
+- Streams: subscribe to =task-changed= so an LLM can react to org edits
+
+Wires straight into Claude Code via stdio MCP transport. Useful for
+agent-driven task management ("plan my day around these incoming
+deadlines").
+
+* Data model (=eav-core=)
+
+Mirror Swift's =Models.swift= exactly. Pseudocode:
+
+#+begin_src rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgTask {
+    pub id: String,             // org ID property, or "{file}::{pos}"
+    pub title: String,
+    pub todo_state: Option<String>,
+    pub priority: Option<String>,
+    pub tags: Vec<String>,
+    pub inherited_tags: Vec<String>,
+    pub scheduled: Option<OrgTimestamp>,
+    pub deadline: Option<OrgTimestamp>,
+    pub closed: Option<String>,
+    pub category: String,
+    pub level: u32,
+    pub file: String,
+    pub pos: u64,
+    pub parent_id: Option<String>,
+    pub effort: Option<String>,
+    pub notes: Option<String>,    // populated lazily
+    pub active_timestamps: Option<Vec<OrgTimestamp>>,
+    pub properties: Option<HashMap<String, String>>,
+}
+#+end_src
+
+Same shape for =AgendaEntry=, =OrgTimestamp=, =TodoKeywords=, etc.
+=#[serde(rename_all = "camelCase")]= keeps wire compat with the Swift
+client.
+
+* HTTP API surface
+
+Mirror the existing Express routes 1:1. JSON shapes preserved.
+
+| Method | Path                        | Source       | Notes                              |
+|--------+-----------------------------+--------------+------------------------------------|
+| GET    | =/api/tasks=                | index        | =?all=true= for include-done       |
+| GET    | =/api/agenda/day/:date=     | evaluator    | sexp days marked, proxied if any   |
+| GET    | =/api/agenda/range=         | evaluator    | same                               |
+| GET    | =/api/files=                | bridge cache | refreshed on Emacs config change   |
+| GET    | =/api/keywords=             | bridge cache |                                    |
+| GET    | =/api/priorities=           | bridge cache |                                    |
+| GET    | =/api/list-config=          | bridge cache |                                    |
+| GET    | =/api/clock=                | bridge       | live, not cached                   |
+| GET    | =/api/notes?file=&pos=      | index lazy   | falls through to bridge if missing |
+| GET    | =/api/outline?file=&pos=    | index        |                                    |
+| GET    | =/api/refile/targets=       | index        | computed from heading set          |
+| GET    | =/api/capture/templates=    | bridge cache |                                    |
+| GET    | =/api/events=               | SSE          | =text/event-stream=                |
+| PATCH  | =/api/tasks/:id/state=      | bridge       |                                    |
+| PATCH  | =/api/tasks/:id/priority=   | bridge       |                                    |
+| PATCH  | =/api/tasks/:id/title=      | bridge       |                                    |
+| PATCH  | =/api/tasks/:id/tags=       | bridge       |                                    |
+| PATCH  | =/api/tasks/:id/scheduled=  | bridge       |                                    |
+| PATCH  | =/api/tasks/:id/deadline=   | bridge       |                                    |
+| PATCH  | =/api/tasks/:id/property=   | bridge       |                                    |
+| PUT    | =/api/notes=                | bridge       |                                    |
+| POST   | =/api/clock/in=             | bridge       |                                    |
+| POST   | =/api/clock/out=            | bridge       |                                    |
+| POST   | =/api/clock/log=            | bridge       |                                    |
+| POST   | =/api/clock/tidy=           | bridge       |                                    |
+| POST   | =/api/refile=               | bridge       |                                    |
+| POST   | =/api/capture=              | bridge       |                                    |
+| POST   | =/api/insert-entry=         | bridge       |                                    |
+
+** SSE event shape
+
+#+begin_src
+event: task-changed
+data: {"id":"...", "file":"...", "pos":12345}
+
+event: file-changed
+data: {"file":"~/org/work.org"}
+
+event: clock-changed
+data: {"clocking":true, "file":"...", "pos":12345}
+
+event: config-changed
+data: {"keywords":true, "priorities":false}
+#+end_src
+
+Clients invalidate the relevant slice. Mac app's =TasksStore= maps
+=task-changed= to =refresh that single id=, =file-changed= to "any list
+containing tasks from this file gets stale-marked", etc.
+
+* Bridge protocol
+
+Length-prefixed JSON over a UNIX socket.
+
+Frame: =<u32-be length><JSON bytes>=
+
+#+begin_src json
+// request
+{"id": 42, "method": "read.notes", "params": {"file": "~/org/x.org", "pos": 1234}}
+
+// response
+{"id": 42, "ok": true, "result": {"notes": "..."}}
+
+// or error
+{"id": 42, "ok": false, "error": {"code": "not-found", "message": "..."}}
+
+// server-pushed event (no id)
+{"event": "after-save", "params": {"file": "~/org/x.org"}}
+#+end_src
+
+** Method list
+
+Reads (rare; most reads served from index, but these can't be):
+
+- =read.config= — bundled (=keywords=, =priorities=, =files=, =list-config=)
+- =read.notes(file, pos)=
+- =read.outline-path(file, pos)=
+- =read.refile-targets()=
+- =read.capture-templates()=
+- =read.sexp-entries(date)= — sexp/diary for a date
+- =read.clock-status()=
+
+Writes (proxy 1:1 from existing =eav.el=):
+
+- =write.set-state(file, pos, state)=
+- =write.set-priority(file, pos, p)=
+- =write.set-title(file, pos, t)=
+- =write.set-tags(file, pos, tags)=
+- =write.set-scheduled(file, pos, ts)=
+- =write.set-deadline(file, pos, ts)=
+- =write.set-property(file, pos, k, v)=
+- =write.set-notes(file, pos, notes)=
+- =write.refile(src-file, src-pos, tgt-file, tgt-pos)=
+- =write.capture(template-key, title, ...)=
+- =write.insert-entry(file, target-type, entry, ...)=
+- =write.clock-in(file, pos)=
+- =write.clock-out()=
+- =write.clock-log(file, pos, start, end)=
+- =write.clock-tidy(file, pos)=
+
+Subscriptions (server-pushed):
+
+- =after-save= — file written by Emacs (any reason)
+- =todo-state-changed= — heading state transitioned
+- =clock-event= — clock-in/out/cancel
+
+Why JSON not s-exp: every language has a parser; debugging via netcat is
+trivial; throughput at this scale is irrelevant; Emacs has =json-encode=
+and =json-parse-string= built in.
+
+* File watching & cache invalidation
+
+Two sources of change:
+
+1. *Emacs writes* — caught by =eav-bridge.el='s =after-save-hook=, which
+   pushes an =after-save= event up the socket. The daemon updates the
+   index for that file and emits SSE.
+2. *External writes* (other tools, Dropbox, manual edits via different
+   editor) — caught by =notify=. Daemon re-indexes and emits.
+
+Both paths trigger the same handler. The =self-write= flag mentioned in
+Phase 2 deduplicates: if Emacs just wrote because we asked it to (proxy
+mutation), the bridge marks the file path; the subsequent fsnotify event
+within 2 s is dropped. The =after-save= bridge event still triggers
+re-index — that's the canonical signal.
+
+* Agenda evaluator
+
+The hardest part. Implementation strategy:
+
+1. Parse all =SCHEDULED:= / =DEADLINE:= / plain active timestamps with
+   =eav-parse=, including repeater (=+= / =.+= / =++=) and warning
+   period (=-Nd=)
+2. For a day query, iterate the index. For each heading with a relevant
+   timestamp, compute "does it occur on this date?" via repeater
+   advancement
+3. Plain active timestamps in the body too (org's notion of "timestamp"
+   agenda type) — already extracted in =eav.el='s
+   =eav--extract-active-timestamps=
+4. Upcoming-deadline: deadlines within =deadline-warning-days= that
+   haven't passed
+5. Sexp/diary entries: detect =%%(...)= form, mark the day as
+   needs-proxy. The HTTP route then makes one bridge call to fetch the
+   sexp results for that date and merges them into the response.
+
+Don't implement: agenda custom commands, =org-agenda-skip-functions=
+(arbitrary elisp), habit tracking. These are out of scope for v1.
+
+* Mac app migration
+
+Smallest viable change:
+
+1. Add =EAV_USE_DAEMON= to =AppSettings= (default false)
+2. =APIClient= picks transport based on flag — UNIX socket via
+   =URLSession= with =URLSessionConfiguration= configured for socket, or
+   stick with HTTP on 127.0.0.1:3002 for simplicity in v1
+3. =EventSubscriber= holds an SSE client; on each event, calls into
+   =TasksStore.invalidate(...)=
+4. =TasksStore= gains =invalidate(taskId:)= and =invalidate(file:)= —
+   replaces the brute-force =refreshLoaded()= fanout
+5. Apply Tier 1 of the prior audit (optimistic mutations, factory hoist,
+   memoize NotesParser, cache parsed dates, fix UUID stability) — these
+   are independently good and compose with the daemon
+
+Shadow mode: keep =server/= alive, run both, flip the flag per-launch
+for a week of comparison.
+
+* Web frontend migration
+
+The web client lives in =src/= and hits the Express server. Same playbook:
+
+- Pick the transport by env / setting
+- Add an =EventSource= subscriber to the SSE channel
+- React-Query (or similar) cache invalidation on push events
+
+Simpler than Mac because the web client already runs on localhost; just
+point it at the daemon's port.
+
+* Testing strategy
+
+** Unit tests
+
+- =eav-parse=: corpus of org snippets covering tag inheritance,
+  file-local overrides, repeaters, warnings, active timestamps in body,
+  property drawers, edge whitespace
+- =eav-agenda=: golden tests against captured =/api/agenda/day/= output
+  for the user's full file set, day-by-day for ±60 days
+- =eav-index=: insert / update / delete / rebuild correctness; secondary
+  index integrity
+- =eav-bridge=: mock Emacs server for the test, verify protocol framing
+  and reconnect
+
+** Integration tests
+
+- Spin up =eavd= with a fake bridge in CI, run end-to-end =reqwest=
+  against the HTTP surface, diff JSON
+- Live-update test: write a file, assert SSE event arrives within 200 ms
+
+** Shadow mode
+
+- Run eavd alongside Express. Each Mac app request fires both; daemon's
+  response gets logged. Diff async, surface mismatches in a daily report
+- Aim for 7 consecutive days with zero mismatches before the cutover
+
+** Stress
+
+- Parse all agenda files 1000× in a tight loop; assert no leaks
+  (=heaptrack=)
+- 10-minute soak with 100 mutations/min via the bridge; assert p99
+  latency stays under target
+
+* Risks & mitigations
+
+| Risk                                        | Mitigation                                                     |
+|---------------------------------------------+----------------------------------------------------------------|
+| orgize disagrees with org-mode on edge case | Golden tests vs. eav.el output; document deviations            |
+| Sexp / diary entries silently dropped       | Detect at parse time, proxy through bridge with caching        |
+| Repeater math wrong                         | Extensive unit tests; pin to org manual's documented behavior  |
+| Round-trip writes corrupt files             | Don't round-trip in v1; all writes go through Emacs            |
+| File watcher misses events on iCloud        | Document; offer manual rescan endpoint and a periodic full reindex |
+| Emacs unreachable                           | Reads still work; mutations queue with retry, fail loudly      |
+| Socket path collision                       | =$XDG_RUNTIME_DIR/eavd-{user}.sock=; lock file                 |
+| Rust binary distribution                    | =cargo install --path daemon/eavd=; signed launchd plist       |
+| Regression vs. current Express              | Shadow mode + 7-day clean-diff gate before cutover             |
+| =eav-bridge.el= drift vs =eav.el=           | =eav-bridge.el= is a thin dispatcher; tests assert 1:1 mapping |
+
+* Rollout & rollback
+
+- Phase 6 ships behind a flag. Default off. Users (just you initially)
+  flip it manually.
+- Phase 7 only after 2+ weeks of clean shadow + flag-on usage.
+- Rollback: revert one commit, =launchctl kickstart= reverts to the old
+  Express start command. eavd's data is just a cache; deleting it
+  doesn't lose anything.
+
+* First-week checklist
+
+Concrete tasks for week 1:
+
+- [ ] =cargo new --workspace daemon=
+- [ ] Pin =rust-toolchain.toml= to stable
+- [ ] Set up GitHub Action: build + clippy + fmt
+- [ ] Write =eav-core= types matching =Models.swift=
+- [ ] Capture golden JSON: hit current =/api/tasks=, =/api/agenda/day/<date>=
+      for 30 days, =/api/files=, =/api/keywords=, =/api/priorities=,
+      =/api/list-config=, save to =daemon/tests/golden/=
+- [ ] Round-trip test: deserialize golden into =eav-core= types,
+      re-serialize, byte-equal check
+- [ ] Stub =eavd= main with =axum= "hello world" on UNIX socket
+- [ ] Wire one endpoint (=/api/files=) end-to-end via the bridge as a
+      proof of life
+
+If the round-trip golden test passes for tasks /and/ a single bridge
+call works, the architecture is on rails.
+
+* Open questions
+
+- Annotated vs lightweight: do we want a daemon supervisor (launchd) or
+  is on-demand-spawn fine? Probably launchd for SSE persistence.
+- One daemon per Emacs server, or one per machine? If you ever run two
+  Emacs servers, it's per-server — namespace the socket by Emacs server
+  name.
+- Does the iOS app eventually want this? The same daemon could serve
+  iOS over Tailscale. Probably yes, but Phase 6 only targets macOS.
+- Should writes optionally short-circuit to direct file edits for
+  trivial cases (priority toggle)? Don't in v1; revisit if Emacs
+  latency dominates after Phase 4.
+
+* References
+
+- =orgize= — https://crates.io/crates/orgize
+- =notify= — https://crates.io/crates/notify
+- =axum=, =tokio=, =serde= — standard
+- Org manual, "Repeated tasks" + "Deadlines and scheduling" sections
+- =org-agenda.el= — read =org-agenda-get-day-entries= and
+  =org-agenda-prepare-buffers= for the contracts to match
