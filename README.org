@@ -5,7 +5,7 @@
 
 ** Screenshots
 
-Native macOS app, v0.3.0 — Sonoma-vibrancy design with single-line task rows, an inline inspector, and configurable progress visualisations.
+Native macOS app, v0.3.1 — Sonoma-vibrancy design with single-line task rows, an inline inspector with explicit edit mode, and configurable progress visualisations.
 
 *** Today view, light + dark
 
@@ -45,7 +45,7 @@ The same Express server serves the React web frontend (=npm start= bundles it on
 - =elisp/eav.el= :: Elisp helper loaded into running Emacs. Uses =org-agenda-get-day-entries= (org's own agenda machinery) for accurate filtering. Provides functions for reading/writing tasks, notes, clock, priorities, scheduling, deadlines, tags, refile, and clock-line tidy.
 - =server/= :: Express + TypeScript backend. Calls =emacsclient --eval= to execute elisp. Writes large JSON results to temp files to avoid control character issues with stdout. Auto-recovers if =eav.el= is reloaded mid-session.
 - =src/= :: React + TypeScript + Tailwind CSS frontend. Things 3 dark mode design.
-- =apps/macos/= :: SwiftUI app, two targets sharing one codebase (=EmacsAgendaViewerMac= / =EmacsAgendaViewer=). Sonoma-vibrancy design refreshed in v0.3.0; see the section below.
+- =apps/macos/= :: SwiftUI app, two targets sharing one codebase (=EmacsAgendaViewerMac= / =EmacsAgendaViewer=). Sonoma-vibrancy design refreshed in v0.3.0, edit-mode rework + outline breadcrumb in v0.3.1; see the section below.
 
 ** Setup
 
@@ -111,7 +111,7 @@ The app loads =elisp/eav.el= into your running Emacs on first request. All chang
 - *TODO state*: Click the state pill (TODO/NEXT/WAIT/etc.) to pick any state from the sequence
 - *Priority*: Click the priority badge (A/B/C/D) to change or remove priority
 - *Scheduled/Deadline*: Click to open date+time picker with quick options (Today, Tomorrow, Next Week) and a mini calendar
-- *Notes*: Click a task title to expand, then click the pencil icon to edit notes. Org checklists (=- [ ]=) render as interactive checkboxes, with nested items indented to reflect the list hierarchy. Parent checkboxes auto-aggregate from descendants ([X] when all children done, [-] when some done or in progress) via org's native =org-list-struct-fix-box=.
+- *Notes*: Click a task to expand it; right-click the row (or the card) and pick =Edit= to drop into raw =org= edit mode. =Save= writes back, =Discard= reverts to the original. Org checklists (=- [ ]=) render as interactive checkboxes, with nested items indented to reflect the list hierarchy. Parent checkboxes auto-aggregate from descendants ([X] when all children done, [-] when some done or in progress) via org's native =org-list-struct-fix-box=.
 - *Clock*: Expand a task and click "Clock In" to start =org-clock-in=. A live timer banner appears at the top. Click "Stop" or "Stop Clock" to clock out.
 - *Edit title*: Right-click (or long-press on mobile) a task and select "Edit title"
 - *Refile*: Right-click (or long-press on mobile) a task and select "Refile" to move it to another heading

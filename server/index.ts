@@ -25,6 +25,7 @@ import {
   setProperty,
   refileTask,
   getHeadingNotes,
+  getOutlinePath,
   setHeadingNotes,
   getClockStatus,
   clockIn,
@@ -123,6 +124,22 @@ app.get('/api/notes', async (req, res) => {
   } catch (err) {
     console.error('Failed to fetch notes:', err);
     res.status(500).json({ error: 'Failed to fetch notes' });
+  }
+});
+
+// GET /api/outline - get the outline path (file + ancestor headings) for a heading
+app.get('/api/outline', async (req, res) => {
+  try {
+    const { file, pos } = req.query;
+    if (!file || !pos) {
+      res.status(400).json({ error: 'file and pos query params required' });
+      return;
+    }
+    const result = await getOutlinePath(file as string, parseInt(pos as string));
+    res.json(result);
+  } catch (err) {
+    console.error('Failed to fetch outline path:', err);
+    res.status(500).json({ error: 'Failed to fetch outline path' });
   }
 });
 

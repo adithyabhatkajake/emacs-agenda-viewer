@@ -132,6 +132,14 @@ struct RootView: View {
         }
         .listStyle(.sidebar)
         .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
+        // simultaneousGesture fires alongside the List's row-selection
+        // gesture, so clicks on empty sidebar area, on rows, or anywhere on
+        // the sidebar column all dismiss the inspector. .background or
+        // .onTapGesture alone don't reach NSTableView-backed sidebar items
+        // on macOS.
+        .simultaneousGesture(
+            TapGesture().onEnded { taskSelection.taskId = nil }
+        )
     }
 
     @ViewBuilder

@@ -256,6 +256,7 @@ struct MacEisenhowerView: View {
                                     doneStates: doneStates,
                                     actions: actions,
                                     progress: factory.progress(for: task),
+                                    keywords: store.keywords,
                                     onAppear: factory.prefetch(for: task)
                                 )
                             }

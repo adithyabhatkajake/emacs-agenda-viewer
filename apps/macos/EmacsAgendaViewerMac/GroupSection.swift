@@ -137,6 +137,7 @@ struct GroupSection<T: TaskDisplayable & Identifiable>: View where T.ID == Strin
                                 doneStates: doneStates,
                                 actions: rowActions,
                                 progress: factory.progress(for: item),
+                                keywords: store.keywords,
                                 onAppear: factory.prefetch(for: item)
                             )
                         }

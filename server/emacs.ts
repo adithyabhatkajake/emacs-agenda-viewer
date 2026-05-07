@@ -250,6 +250,16 @@ export async function getHeadingNotes(file: string, pos: number): Promise<Headin
   return { notes: result.notes ?? '', activeTimestamps: result.activeTimestamps ?? [] };
 }
 
+export interface OutlinePath {
+  file: string;
+  headings: string[];
+}
+
+export async function getOutlinePath(file: string, pos: number): Promise<OutlinePath> {
+  const result = await eavCall<OutlinePath>(`(eav-get-outline-path "${file}" ${pos})`);
+  return { file: result.file ?? '', headings: result.headings ?? [] };
+}
+
 export async function setHeadingNotes(file: string, pos: number, notes: string): Promise<string> {
   const escaped = notes.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const result = await eavCall<{ success: boolean; notes: string }>(

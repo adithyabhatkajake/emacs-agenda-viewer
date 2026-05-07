@@ -76,7 +76,7 @@ struct MacClockDock: View {
     private func sessionRow(_ session: ClockManager.Session, now: Date) -> some View {
         let priority = priorityFor(session)
         HStack(spacing: 10) {
-            Text("⏱")
+            Text("⏰")
                 .font(.system(size: 14))
                 .frame(width: 18)
             if let p = priority, !p.isEmpty {
@@ -133,16 +133,20 @@ struct MacClockDock: View {
     }
 
     private func priorityFor(_ session: ClockManager.Session) -> String? {
-        if let t = store.allTasks.value?.first(where: { $0.id == session.id }), let p = t.priority {
-            return p
+        // Match by id first, then fall back to file+title — the session's id is a
+        // file::pos snapshot from clock-in time, which goes stale once CLOCK lines
+        // shift the heading's position in the file.
+        func find<T: TaskDisplayable>(in tasks: [T]?) -> String? {
+            guard let tasks else { return nil }
+            let t = tasks.first(where: {
+                $0.id == session.id || ($0.file == session.file && $0.title == session.title)
+            })
+            if let p = t?.priority, !p.isEmpty { return p }
+            return nil
         }
-        if let t = store.today.value?.first(where: { $0.id == session.id }), let p = t.priority {
-            return p
-        }
-        if let t = store.upcoming.value?.first(where: { $0.id == session.id }), let p = t.priority {
-            return p
-        }
-        return nil
+        return find(in: store.allTasks.value)
+            ?? find(in: store.today.value)
+            ?? find(in: store.upcoming.value)
     }
 
     private func stopButton(_ session: ClockManager.Session) -> some View {

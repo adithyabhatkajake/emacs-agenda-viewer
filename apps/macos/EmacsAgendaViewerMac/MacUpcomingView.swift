@@ -76,12 +76,7 @@ struct MacUpcomingView: View {
                               by: settings.agendaSort)
 
         VStack(alignment: .leading, spacing: 8) {
-            Text(group.label)
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.6)
-                .textCase(.uppercase)
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.leading, 14)
+            dayHead(for: group, tasks: tasks.count, events: events.count)
 
             if !events.isEmpty {
                 MacEventBanners(entries: events)
@@ -107,12 +102,82 @@ struct MacUpcomingView: View {
                                 doneStates: doneStates,
                                 actions: rowActions,
                                 progress: factory.progress(for: entry),
+                                keywords: store.keywords,
                                 onAppear: factory.prefetch(for: entry)
                             )
                         }
                     }
                 }
             }
+        }
+    }
+
+    private static let isoFmt: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    private static let dayHeadFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEEE, MMM d"; return f
+    }()
+
+    private static let weekdayFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEEE"; return f
+    }()
+
+    @ViewBuilder
+    private func dayHead(for group: DayGroup, tasks: Int, events: Int) -> some View {
+        let date = MacUpcomingView.isoFmt.date(from: group.key)
+        let cal = Calendar.current
+        let todayStart = cal.startOfDay(for: Date())
+        let target = date.map { cal.startOfDay(for: $0) }
+        let days = target.flatMap { cal.dateComponents([.day], from: todayStart, to: $0).day } ?? 0
+
+        let overline: String = {
+            switch days {
+            case 0: return "TODAY"
+            case 1: return "TOMORROW"
+            case 2...6: return "IN \(days) DAYS"
+            case 7...13: return "NEXT WEEK"
+            default:
+                let weeks = days / 7
+                let months = days / 30
+                if weeks <= 4 { return "IN \(weeks) WEEKS" }
+                return months <= 1 ? "IN A MONTH" : "IN \(months) MONTHS"
+            }
+        }()
+
+        let primary = date.map { MacUpcomingView.dayHeadFmt.string(from: $0) } ?? group.label
+
+        VStack(alignment: .leading, spacing: 4) {
+            Text(overline)
+                .font(.system(size: 11, weight: .heavy))
+                .tracking(0.6)
+                .foregroundStyle(overlineColor(for: days))
+            HStack(alignment: .lastTextBaseline, spacing: 12) {
+                Text(primary)
+                    .font(.system(size: 22, weight: .bold))
+                    .tracking(-0.4)
+                    .foregroundStyle(Theme.textPrimary)
+                if tasks + events > 0 {
+                    Text("\(tasks) task\(tasks == 1 ? "" : "s") · \(events) event\(events == 1 ? "" : "s")")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 4)
+    }
+
+    private func overlineColor(for daysFromToday: Int) -> Color {
+        switch daysFromToday {
+        case 0...1: return Theme.accent
+        case 2...6: return Theme.textPrimary
+        default: return Theme.textSecondary
         }
     }
 

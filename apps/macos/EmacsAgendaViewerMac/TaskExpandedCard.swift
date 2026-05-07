@@ -10,10 +10,13 @@ struct TaskExpandedCard: View {
     var doneStates: Set<String> = []
 
     @State private var notesText: String = ""
+    @State private var originalNotes: String = ""
+    @State private var originalTitle: String = ""
     @State private var notesLoading = true
     @State private var notesEdited = false
     @State private var savingNotes = false
     @State private var titleText: String = ""
+    @State private var outline: APIClient.OutlinePathResponse?
     @FocusState private var notesFocused: Bool
     @FocusState private var titleFocused: Bool
 
@@ -48,24 +51,14 @@ struct TaskExpandedCard: View {
         }
     }
 
-    private var checklistProgress: (done: Int, ongoing: Int, total: Int)? {
-        var done = 0, ongoing = 0, total = 0
-        for b in blocks {
-            if case .checklist(_, _, let state, _, _) = b {
-                total += 1
-                switch state {
-                case .done: done += 1
-                case .ongoing: ongoing += 1
-                case .notStarted: break
-                }
-            }
-        }
-        return total == 0 ? nil : (done, ongoing, total)
+    private var checklistProgress: ChecklistProgress? {
+        ChecklistProgress.compute(from: notesText)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             topRow
+            outlineLine
             looseClocksBanner
             notesArea
             footer
@@ -76,25 +69,11 @@ struct TaskExpandedCard: View {
                 .fill(Theme.surface)
         )
         .overlay(alignment: .top) { progressLine }
-        .overlay(alignment: .topTrailing) {
-            Button {
-                dismissInspector()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Theme.textTertiary)
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Close (Esc)")
-            .padding(6)
-        }
+        .contextMenu { cardContextMenu }
         .shadow(color: .black.opacity(0.06), radius: 14, x: 0, y: 4)
         .padding(.horizontal, 2)
         .padding(.vertical, 4)
         .contentShape(Rectangle())
-        .onTapGesture { startEditing() }
         .background(
             // Invisible Escape-key handler. A focusable Button with no label
             // catches the keyboard shortcut without affecting layout.
@@ -106,21 +85,36 @@ struct TaskExpandedCard: View {
         .onAppear {
             titleText = task.title
             loadNotes()
+            loadOutline()
         }
         .onChange(of: task.id) { _, _ in
             titleText = task.title
             selection.editingTaskId = nil
             loadNotes()
+            loadOutline()
+        }
+    }
+
+    @ViewBuilder
+    private var outlineLine: some View {
+        if let o = outline, !o.file.isEmpty {
+            let parts = [o.file] + o.headings
+            Text(parts.joined(separator: " ▸ "))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .help(parts.joined(separator: " ▸ "))
         }
     }
 
     @ViewBuilder
     private var progressLine: some View {
-        if let p = checklistProgress, p.total > 0 {
+        if let p = checklistProgress {
             GeometryReader { geo in
-                let total = CGFloat(p.total)
-                let doneW = geo.size.width * CGFloat(p.done) / total
-                let ongoingW = geo.size.width * CGFloat(p.ongoing) / total
+                let doneW = geo.size.width * CGFloat(p.done)
+                let ongoingW = geo.size.width * CGFloat(p.ongoing)
                 ZStack(alignment: .leading) {
                     Rectangle()
                         .fill(Theme.textTertiary.opacity(0.18))
@@ -199,6 +193,44 @@ struct TaskExpandedCard: View {
         }
     }
 
+    @ViewBuilder
+    private var cardContextMenu: some View {
+        if !isEditing {
+            Button("Edit") { startEditing() }
+        }
+        Button(isDone ? "Mark as Not Done" : "Mark as Done") { actions.toggleDone() }
+        Divider()
+        Menu("Priority") {
+            ForEach(["A", "B", "C", "D"], id: \.self) { p in
+                Button(p) { actions.setPriority(p) }
+            }
+            Divider()
+            Button("None") { actions.setPriority("") }
+        }
+        Menu("Schedule") {
+            Button("Today") { actions.schedule(Date()) }
+            Button("Tomorrow") { actions.schedule(Calendar.current.date(byAdding: .day, value: 1, to: Date())) }
+            Button("Next Week") { actions.schedule(Calendar.current.date(byAdding: .day, value: 7, to: Date())) }
+            Divider()
+            Button("Clear") { actions.schedule(nil) }
+        }
+        Menu("Deadline") {
+            Button("Today") { actions.setDeadline(Date()) }
+            Button("Tomorrow") { actions.setDeadline(Calendar.current.date(byAdding: .day, value: 1, to: Date())) }
+            Button("Next Week") { actions.setDeadline(Calendar.current.date(byAdding: .day, value: 7, to: Date())) }
+            Divider()
+            Button("Clear") { actions.setDeadline(nil) }
+        }
+        Divider()
+        if isClocked {
+            Button("Clock Out") { actions.clockOut() }
+        } else {
+            Button("Clock In") { actions.clockIn() }
+        }
+        Divider()
+        Button("Refile…") { actions.refile() }
+    }
+
     private func dismissInspector() {
         if notesEdited && !savingNotes {
             Task { await saveNotes() }
@@ -216,15 +248,23 @@ struct TaskExpandedCard: View {
             checkbox
             statePillMenu
             priorityBoxMenu
-            TextField("Title", text: $titleText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(isDone ? Theme.textTertiary : Theme.textPrimary)
-                .focused($titleFocused)
-                .onSubmit { commitTitle() }
-                .onChange(of: titleFocused) { _, focused in
-                    if !focused { commitTitle() }
-                }
+            if isEditing {
+                TextField("Title", text: $titleText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isDone ? Theme.textTertiary : Theme.textPrimary)
+                    .focused($titleFocused)
+                    .onSubmit { commitTitle() }
+            } else {
+                Text(titleText.isEmpty ? task.title : titleText)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isDone ? Theme.textTertiary : Theme.textPrimary)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { dismissInspector() }
+                    .help("Click to close")
+            }
             if let scheduled = task.scheduled {
                 scheduledInlineButton(scheduled)
             }
@@ -574,21 +614,12 @@ struct TaskExpandedCard: View {
             rawNotesEditor
         } else if hasVisibleNotes {
             NotesRenderedView(blocks: blocks, onToggleChecklist: toggleChecklist)
-                .contentShape(Rectangle())
-                .onTapGesture { startEditing() }
         } else {
-            // Empty notes — show a placeholder that becomes the editor on click.
-            Button {
-                startEditing()
-            } label: {
-                Text("Notes")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 8)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            Text("No notes")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 8)
         }
     }
 
@@ -600,12 +631,6 @@ struct TaskExpandedCard: View {
             .focused($notesFocused)
             .onAppear { notesFocused = true }
             .onChange(of: notesText) { _, _ in notesEdited = true }
-            .onChange(of: notesFocused) { _, focused in
-                if !focused {
-                    if notesEdited && !savingNotes { Task { await saveNotes() } }
-                    selection.editingTaskId = nil
-                }
-            }
     }
 
     private func startEditing() {
@@ -617,15 +642,42 @@ struct TaskExpandedCard: View {
 
     @ViewBuilder
     private var footer: some View {
-        HStack(spacing: 10) {
-            scheduledFooterChip
-            Spacer(minLength: 8)
-            clockFooterButton
-            tagsFooterButton
-            stateFooterButton
-            deadlineFooterButton
-            refileFooterButton
+        if isEditing {
+            HStack(spacing: 8) {
+                Spacer(minLength: 8)
+                editFooterPill(text: "Discard", icon: "arrow.uturn.backward",
+                               tint: Theme.textSecondary, action: discardEdits)
+                editFooterPill(text: "Save", icon: "checkmark",
+                               tint: Theme.accent, action: commitEdits)
+                    .keyboardShortcut(.defaultAction)
+            }
+        } else {
+            HStack(spacing: 10) {
+                scheduledFooterChip
+                Spacer(minLength: 8)
+                clockFooterButton
+                tagsFooterButton
+                stateFooterButton
+                deadlineFooterButton
+                refileFooterButton
+            }
         }
+    }
+
+    private func editFooterPill(text: String, icon: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 11, weight: .semibold))
+                Text(text).font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule(style: .continuous).fill(tint.opacity(0.12))
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var clockFooterButton: some View {
@@ -825,61 +877,6 @@ struct TaskExpandedCard: View {
             .foregroundStyle(color)
             .frame(width: 26, height: 26)
             .contentShape(Rectangle())
-    }
-
-    // MARK: - Title
-
-    // MARK: - Header
-
-    private var notesHeader: some View {
-        HStack(spacing: 8) {
-            Text("NOTES")
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.7)
-                .foregroundStyle(Theme.textTertiary)
-
-            if let p = checklistProgress {
-                progressBar(done: p.done, ongoing: p.ongoing, total: p.total)
-                    .frame(maxWidth: 180)
-                Text("\(p.done)/\(p.total)")
-                    .font(.system(size: 10, weight: .medium).monospacedDigit())
-                    .foregroundStyle(Theme.textTertiary)
-            }
-
-            Spacer()
-
-            if notesEdited && !isEditing {
-                Circle().fill(Theme.priorityB).frame(width: 6, height: 6)
-                    .help("Unsaved changes")
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func progressBar(done: Int, ongoing: Int, total: Int) -> some View {
-        GeometryReader { geo in
-            let w = geo.size.width
-            let doneW = total == 0 ? 0 : w * CGFloat(done) / CGFloat(total)
-            let ongoingW = total == 0 ? 0 : w * CGFloat(ongoing) / CGFloat(total)
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(Theme.surfaceElevated)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .strokeBorder(Theme.borderSubtle, lineWidth: 0.5)
-                    )
-                HStack(spacing: 0) {
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(Theme.doneGreen)
-                        .frame(width: doneW)
-                    Rectangle()
-                        .fill(Theme.priorityB)
-                        .frame(width: ongoingW)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 2, style: .continuous))
-            }
-        }
-        .frame(height: 5)
     }
 
     // MARK: - Notes modes
@@ -1182,8 +1179,47 @@ struct TaskExpandedCard: View {
             let n = await store.loadNotes(file: task.file, pos: task.pos, using: client)
             await MainActor.run {
                 notesText = n
+                originalNotes = n
+                originalTitle = task.title
                 notesLoading = false
                 notesEdited = false
+            }
+        }
+    }
+
+    private func commitEdits() {
+        if titleText != originalTitle { commitTitle() }
+        Task {
+            if notesEdited { await saveNotes() }
+            await MainActor.run {
+                originalNotes = notesText
+                originalTitle = titleText
+                notesEdited = false
+                selection.editingTaskId = nil
+                notesFocused = false
+                titleFocused = false
+            }
+        }
+    }
+
+    private func discardEdits() {
+        notesText = originalNotes
+        titleText = originalTitle
+        notesEdited = false
+        selection.editingTaskId = nil
+        notesFocused = false
+        titleFocused = false
+    }
+
+    private func loadOutline() {
+        outline = nil
+        let file = task.file
+        let pos = task.pos
+        Task {
+            guard let client else { return }
+            let o = try? await client.fetchOutlinePath(file: file, pos: pos)
+            await MainActor.run {
+                if file == task.file && pos == task.pos { outline = o }
             }
         }
     }

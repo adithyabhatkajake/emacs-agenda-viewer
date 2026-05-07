@@ -253,6 +253,7 @@ struct MacTodayView: View {
                                 doneStates: doneStates,
                                 actions: rowActions,
                                 progress: factory.progress(for: t),
+                                keywords: store.keywords,
                                 onAppear: factory.prefetch(for: t)
                             )
                         }

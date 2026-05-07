@@ -12,7 +12,7 @@ struct RowActionFactory {
     /// Returns nil when notes aren't cached yet or contain no checklist.
     /// Reads `notesCacheRevision` so the @Observable framework tracks
     /// dictionary mutations through the parent view's body.
-    func progress(for task: any TaskDisplayable) -> (done: Int, ongoing: Int, total: Int)? {
+    func progress(for task: any TaskDisplayable) -> ChecklistProgress? {
         _ = store.notesCacheRevision
         guard let notes = store.cachedNotes(file: task.file, pos: task.pos) else { return nil }
         return ChecklistProgress.compute(from: notes)
@@ -116,6 +116,11 @@ struct RowActionFactory {
                 } else {
                     selection.taskId = id
                 }
+            },
+            editInspector: {
+                selection.taskId = id
+                selection.editingTaskId = id
+                selection.editingTitle = snapshot.title
             },
             refile: {
                 selection.refileTask = snapshot

@@ -456,21 +456,99 @@ func renderInline(_ raw: String) -> AttributedString {
 
 // MARK: - Checklist progress
 
-enum ChecklistProgress {
-    /// Walks the parsed blocks and counts checklist states.
-    /// Returns nil when the notes contain no checklist items.
-    static func compute(from text: String) -> (done: Int, ongoing: Int, total: Int)? {
-        var done = 0, ongoing = 0, total = 0
-        for b in NotesParser.parse(text) {
-            if case .checklist(_, _, let state, _, _) = b {
-                total += 1
-                switch state {
-                case .done: done += 1
-                case .ongoing: ongoing += 1
-                case .notStarted: break
+/// Hierarchically-weighted checklist completion.
+///
+/// Builds a tree from indent levels, then recursively computes done / ongoing
+/// fractions in [0, 1] where each subtree contributes its weight × the average
+/// of its children's fractions. Leaves contribute their own state directly:
+/// `[X]` → 1.0 done, `[-]` → 1.0 ongoing, `[ ]` → 0.0.
+///
+/// This avoids the double-counting that flat counting introduces for parent
+/// items that org auto-aggregates to `[-]`. For
+///
+/// ```
+/// - [X] A
+/// - [ ] B
+/// - [-] C
+///   - [X] A
+///   - [-] B
+/// ```
+///
+/// the result is `done = 1/3 + (1/2)*(1/3) = 1/2`, `ongoing = (1/2)*(1/3) = 1/6`.
+struct ChecklistProgress {
+    /// Fraction of total work that is done, in [0, 1].
+    let done: Double
+    /// Fraction of total work that is in-progress, in [0, 1].
+    /// `done + ongoing <= 1`.
+    let ongoing: Double
+    /// Total number of checklist items at every depth — for "%" text only.
+    let itemCount: Int
+
+    /// Walk the parsed blocks and weight by hierarchy. Returns nil when the
+    /// notes contain no checklist items.
+    static func compute(from text: String) -> ChecklistProgress? {
+        let checklists: [(state: ChecklistState, indent: Int)] = NotesParser.parse(text)
+            .compactMap { block in
+                if case .checklist(_, _, let state, let indent, _) = block {
+                    return (state, indent)
+                }
+                return nil
+            }
+        guard !checklists.isEmpty else { return nil }
+
+        // Build the tree: each entry whose indent strictly exceeds the previous
+        // becomes a child of the most recent shallower entry.
+        struct Node { let state: ChecklistState; let indent: Int; var children: [Int] = [] }
+        var nodes: [Node] = []
+        var roots: [Int] = []
+        var stack: [Int] = []  // indices into nodes, only ancestors of current
+
+        for c in checklists {
+            // Pop any ancestors whose indent is >= current indent — they aren't
+            // ancestors of this node.
+            while let top = stack.last, nodes[top].indent >= c.indent {
+                stack.removeLast()
+            }
+            let idx = nodes.count
+            nodes.append(Node(state: c.state, indent: c.indent))
+            if let parent = stack.last {
+                nodes[parent].children.append(idx)
+            } else {
+                roots.append(idx)
+            }
+            stack.append(idx)
+        }
+
+        func fractions(of idx: Int) -> (done: Double, ongoing: Double) {
+            let n = nodes[idx]
+            if n.children.isEmpty {
+                switch n.state {
+                case .done:       return (1, 0)
+                case .ongoing:    return (0, 1)
+                case .notStarted: return (0, 0)
                 }
             }
+            var d = 0.0, o = 0.0
+            for c in n.children {
+                let f = fractions(of: c)
+                d += f.done
+                o += f.ongoing
+            }
+            let count = Double(n.children.count)
+            return (d / count, o / count)
         }
-        return total == 0 ? nil : (done, ongoing, total)
+
+        var totalDone = 0.0, totalOngoing = 0.0
+        for r in roots {
+            let f = fractions(of: r)
+            totalDone += f.done
+            totalOngoing += f.ongoing
+        }
+        let denom = Double(roots.count)
+        return ChecklistProgress(
+            done: totalDone / denom,
+            ongoing: totalOngoing / denom,
+            itemCount: checklists.count
+        )
     }
 }

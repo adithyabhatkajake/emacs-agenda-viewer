@@ -141,6 +141,18 @@ struct APIClient {
         return r.notes
     }
 
+    struct OutlinePathResponse: Decodable, Sendable {
+        let file: String
+        let headings: [String]
+    }
+
+    func fetchOutlinePath(file: String, pos: Int) async throws -> OutlinePathResponse {
+        try await get("/api/outline", query: [
+            URLQueryItem(name: "file", value: file),
+            URLQueryItem(name: "pos", value: String(pos)),
+        ])
+    }
+
     // MARK: - Mutations
 
     /// Mirrors JS `encodeURIComponent`: alphanumerics + unreserved RFC3986 chars.

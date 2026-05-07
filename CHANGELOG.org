@@ -1,5 +1,64 @@
 #+title: Changelog
 
+** 0.3.1
+
+Polish + edit-mode rework on top of v0.3.0.
+
+*** macOS task inspector — explicit edit mode
+
+The card no longer drops you into title/notes editing on tap. Edit mode is
+opt-in via the new =Edit= action in the row or card context menu. Reading
+and editing are now separate states.
+
+- Title is read-only by default; entering edit mode shows the =TextField= and reveals a footer pair of =Discard= (revert original notes + title) and =Save= (=Enter= via =.defaultAction=)
+- =originalNotes= / =originalTitle= snapshots taken at load so =Discard= reliably reverts even after multiple in-card edits
+- Removed the implicit "tap notes to edit" gesture (=NotesRenderedView= no longer steals taps)
+- Removed the redundant =×= close button in the top-right; clicking the title, pressing =Esc=, or clicking outside still dismisses
+- Card has its own context menu mirroring the row actions (state / priority / schedule / deadline / clock / refile)
+
+*** Outline breadcrumb in the inspector
+
+A new monospaced =file ▸ Heading ▸ Heading= line under the title row shows where the heading lives. Backed by a new =GET /api/outline?file=&pos== that returns =org-get-outline-path= over the heading's ancestor chain.
+
+- =eav-get-outline-path= elisp helper visits the heading inside =org-with-wide-buffer= and abbreviates the file path (=~/= replaces =$HOME=)
+- =APIClient.fetchOutlinePath= + =OutlinePathResponse=; the inspector loads it on appear and on task switch, race-guarded against task changes mid-flight
+
+*** macOS task row — clickable state and priority
+
+The state pill and priority badge are now buttons that open menus directly on the row, no inspector required:
+
+- =stateMenu= reads =keywords= passed in from the parent view and renders =Active= / =Done= sections plus a =Clear= action; arbitrary user TODO sequences flow through unchanged
+- =priorityMenu= offers A/B/C/D and =None=
+- =keywords: TodoKeywords?= threaded through =MacTaskRow= from =MacTodayView=, =MacUpcomingView=, =MacAllTasksView=, =MacEisenhowerView=, =GroupSection=
+- Right-click on a row gains an =Edit= item that calls a new =editInspector= action — opens the card in edit mode in one click
+
+*** macOS Upcoming view — proper day head
+
+Day groups got the same treatment as Today's =dayHead=:
+
+- =TODAY= / =TOMORROW= / =IN N DAYS= / =NEXT WEEK= / =IN N WEEKS= / =IN A MONTH= / =IN N MONTHS= overline, color-graded by proximity
+- 22pt bold full date label (=EEEE, MMM d=) with a =N tasks · M events= subtitle
+
+*** Hierarchically-weighted checklist progress
+
+=ChecklistProgress.compute= now builds a tree from indent levels and computes done/ongoing as recursive averages instead of flat counts.
+
+- Avoids double-counting parent items that org auto-aggregates to =[-]=: for the canonical =- [X] A / - [ ] B / - [-] C { - [X] / - [-] }= example the result is =done = 1/2=, =ongoing = 1/6= instead of the old flat =2/5= / =2/5=
+- Return type changed from =(done: Int, ongoing: Int, total: Int)= to a =ChecklistProgress= struct with =Double= fractions in =[0, 1]= plus =itemCount= for "% complete" tooltips
+- Call sites in =MacTaskRow= and =TaskExpandedCard= use the fractions directly
+
+*** macOS clock dock — robust priority lookup
+
+=priorityFor= now matches a session by id *or* file+title:
+
+- The session id is a =file::pos= snapshot taken at clock-in; as CLOCK lines accumulate in the LOGBOOK drawer the heading's =pos= shifts and the id goes stale. Matching by =(file, title)= as a fallback survives that drift
+- Generic =find<T: TaskDisplayable>= helper folds the three identical lookups (=allTasks=, =today=, =upcoming=) into one
+- Cosmetic: =⏱= → =⏰= so the dock icon reads at the system size
+
+*** Sidebar dismisses inspector
+
+Clicks anywhere in the =NavigationSplitView= sidebar (rows or empty space) now clear =taskSelection.taskId= via =simultaneousGesture(TapGesture)=. Plain =onTapGesture= wasn't reaching the =NSTableView=-backed sidebar items on macOS.
+
 ** 0.3.0
 
 Major macOS design refresh based on a Sonoma-vibrancy mockup from claude.ai/design,

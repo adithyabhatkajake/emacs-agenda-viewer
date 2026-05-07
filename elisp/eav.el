@@ -698,6 +698,22 @@ can render them as formatted chips without re-parsing."
     (json-encode `((notes . ,(or notes ""))
                    (activeTimestamps . ,(vconcat (or timestamps [])))))))
 
+(defun eav-get-outline-path (file pos)
+  "Return JSON describing the outline path of heading at POS in FILE.
+Result: ((file . \"~/path\") (headings . [\"H1\" \"H2\" ...])).
+Headings are the ancestor chain *above* the current heading, outermost first;
+the current heading itself is not included."
+  (let ((headings nil)
+        (display-file (when file (abbreviate-file-name file))))
+    (when (and file (file-exists-p file))
+      (with-current-buffer (find-file-noselect file)
+        (org-with-wide-buffer
+         (goto-char pos)
+         (when (org-at-heading-p)
+           (setq headings (org-get-outline-path))))))
+    (json-encode `((file . ,(or display-file ""))
+                   (headings . ,(vconcat (or headings [])))))))
+
 (defun eav-set-heading-notes (file pos new-notes)
   "Set the notes/body content of heading at POS in FILE to NEW-NOTES.
 Preserves planning lines, property drawers, and logbook drawers.

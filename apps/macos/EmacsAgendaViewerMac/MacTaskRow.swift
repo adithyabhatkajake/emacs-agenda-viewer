@@ -11,6 +11,7 @@ struct TaskRowActions {
     var clockIn: () -> Void = {}
     var clockOut: () -> Void = {}
     var openInspector: () -> Void = {}
+    var editInspector: () -> Void = {}
     var refile: () -> Void = {}
     var setTags: ([String]) -> Void = { _ in }
     var saveTitle: ((String) -> Void)?
@@ -24,7 +25,8 @@ struct MacTaskRow: View {
     let isSelected: Bool
     let doneStates: Set<String>
     let actions: TaskRowActions
-    var progress: (done: Int, ongoing: Int, total: Int)? = nil
+    var progress: ChecklistProgress? = nil
+    var keywords: TodoKeywords? = nil
     var onAppear: (() -> Void)? = nil
     @State private var isHovering = false
     @FocusState private var titleFieldFocused: Bool
@@ -84,32 +86,31 @@ struct MacTaskRow: View {
 
     @ViewBuilder
     private var progressCircle: some View {
-        if let p = progress, p.total > 0 {
-            let fraction = CGFloat(p.done) / CGFloat(p.total)
-            let ongoingFrac = CGFloat(p.ongoing) / CGFloat(p.total)
+        if let p = progress {
+            let doneFrac = CGFloat(p.done)
+            let ongoingFrac = CGFloat(p.ongoing)
             ZStack {
                 Circle()
                     .stroke(Theme.textTertiary.opacity(0.25), lineWidth: 2)
                 Circle()
-                    .trim(from: 0, to: fraction + ongoingFrac)
+                    .trim(from: 0, to: doneFrac + ongoingFrac)
                     .stroke(Theme.priorityB.opacity(0.7), style: StrokeStyle(lineWidth: 2, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                 Circle()
-                    .trim(from: 0, to: fraction)
+                    .trim(from: 0, to: doneFrac)
                     .stroke(Theme.doneGreen, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
             .frame(width: 14, height: 14)
-            .help("\(p.done)/\(p.total) complete")
+            .help(String(format: "%.0f%% complete · %d items", p.done * 100, p.itemCount))
         }
     }
 
     @ViewBuilder
     private var progressBackground: some View {
-        if let p = progress, p.total > 0 {
-            let total = CGFloat(p.total)
-            let doneFrac = CGFloat(p.done) / total
-            let ongoingFrac = CGFloat(p.ongoing) / total
+        if let p = progress {
+            let doneFrac = CGFloat(p.done)
+            let ongoingFrac = CGFloat(p.ongoing)
             GeometryReader { geo in
                 HStack(spacing: 0) {
                     Rectangle()
@@ -127,11 +128,10 @@ struct MacTaskRow: View {
 
     @ViewBuilder
     private var progressLine: some View {
-        if let p = progress, p.total > 0 {
+        if let p = progress {
             GeometryReader { geo in
-                let total = CGFloat(p.total)
-                let doneW = geo.size.width * CGFloat(p.done) / total
-                let ongoingW = geo.size.width * CGFloat(p.ongoing) / total
+                let doneW = geo.size.width * CGFloat(p.done)
+                let ongoingW = geo.size.width * CGFloat(p.ongoing)
                 ZStack(alignment: .leading) {
                     Rectangle().fill(Theme.textTertiary.opacity(0.18))
                     HStack(spacing: 0) {
@@ -184,10 +184,10 @@ struct MacTaskRow: View {
     private var titleRow: some View {
         HStack(alignment: .center, spacing: 6) {
             if let state = task.todoState, !state.isEmpty {
-                statePill(state)
+                stateMenu(currentState: state)
             }
             if let priority = task.priority, !priority.isEmpty {
-                priorityBox(priority)
+                priorityMenu(currentPriority: priority)
             }
             titleContent
             if let scheduled = task.scheduled {
@@ -346,6 +346,49 @@ struct MacTaskRow: View {
     }
 
     @ViewBuilder
+    private func stateMenu(currentState: String) -> some View {
+        let active = keywords?.allActive ?? ["TODO"]
+        let done = keywords?.allDone ?? ["DONE"]
+        Menu {
+            Section("Active") {
+                ForEach(active, id: \.self) { s in
+                    Button(s) { actions.setState(s) }
+                }
+            }
+            Section("Done") {
+                ForEach(done, id: \.self) { s in
+                    Button(s) { actions.setState(s) }
+                }
+            }
+            Divider()
+            Button("Clear") { actions.setState("") }
+        } label: {
+            statePill(currentState)
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private func priorityMenu(currentPriority: String) -> some View {
+        Menu {
+            ForEach(["A", "B", "C", "D"], id: \.self) { p in
+                Button(p) { actions.setPriority(p) }
+            }
+            Divider()
+            Button("None") { actions.setPriority("") }
+        } label: {
+            priorityBox(currentPriority)
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .fixedSize()
+    }
+
+    @ViewBuilder
     private func statePill(_ state: String) -> some View {
         let _ = settings.colorRevision
         let color = settings.resolvedTodoStateColor(for: state, isDone: isDone)
@@ -415,6 +458,7 @@ struct MacTaskRow: View {
 
     @ViewBuilder
     private var contextMenuItems: some View {
+        Button("Edit") { actions.editInspector() }
         Button(isDone ? "Mark as Not Done" : "Mark as Done") { actions.toggleDone() }
         Divider()
         Menu("Priority") {
