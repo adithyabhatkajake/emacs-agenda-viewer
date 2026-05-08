@@ -6,19 +6,31 @@ enum ChecklistState {
 }
 
 enum NoteBlock: Identifiable {
-    case checklist(id: UUID, lineIndex: Int, state: ChecklistState, indent: Int, inline: AttributedString)
-    case bullet(id: UUID, indent: Int, inline: AttributedString)
-    case paragraph(id: UUID, inline: AttributedString)
-    case blank(id: UUID)
+    /// Each variant carries the source-line index of the block in the
+    /// original notes text. We use it as the SwiftUI identity, which lets
+    /// state (collapse, hover, etc.) survive re-parses triggered by a
+    /// checkbox toggle. Generating a fresh `UUID()` per parse — the previous
+    /// behaviour — re-keyed every block on every write, so for example a
+    /// collapsed section would silently expand the next time the user
+    /// toggled an unrelated checkbox elsewhere in the same notes body.
+    case checklist(id: Int, state: ChecklistState, indent: Int, inline: AttributedString)
+    case bullet(id: Int, indent: Int, inline: AttributedString)
+    case paragraph(id: Int, inline: AttributedString)
+    case blank(id: Int)
 
-    var id: UUID {
+    var id: Int {
         switch self {
-        case .checklist(let id, _, _, _, _): return id
+        case .checklist(let id, _, _, _): return id
         case .bullet(let id, _, _): return id
         case .paragraph(let id, _): return id
         case .blank(let id): return id
         }
     }
+
+    /// Source-line index in the original notes text. Equal to `id`; kept
+    /// as a separate accessor so call sites that use it for the rewrite
+    /// path (toggling the right line in the file) read clearly.
+    var lineIndex: Int { id }
 }
 
 enum NotesParser {
@@ -49,7 +61,7 @@ enum NotesParser {
             }
 
             if line.trimmingCharacters(in: .whitespaces).isEmpty {
-                blocks.append(.blank(id: UUID()))
+                blocks.append(.blank(id: idx))
                 continue
             }
 
@@ -68,8 +80,7 @@ enum NotesParser {
                     return .notStarted
                 }()
                 blocks.append(.checklist(
-                    id: UUID(),
-                    lineIndex: idx,
+                    id: idx,
                     state: state,
                     indent: indent,
                     inline: renderInline(after)
@@ -83,11 +94,11 @@ enum NotesParser {
                 options: .regularExpression
             ) {
                 let after = String(line[match.upperBound...])
-                blocks.append(.bullet(id: UUID(), indent: indent, inline: renderInline(after)))
+                blocks.append(.bullet(id: idx, indent: indent, inline: renderInline(after)))
                 continue
             }
 
-            blocks.append(.paragraph(id: UUID(), inline: renderInline(line)))
+            blocks.append(.paragraph(id: idx, inline: renderInline(line)))
         }
         return blocks
     }
@@ -310,7 +321,10 @@ enum OrgInline {
 struct NotesRenderedView: View {
     let blocks: [NoteBlock]
     let onToggleChecklist: (Int) -> Void
-    @State private var collapsed: Set<UUID> = []
+    /// Collapse state keyed by source-line index. Stable across re-parses,
+    /// so toggling a checkbox elsewhere in the body doesn't silently
+    /// expand a previously-collapsed sibling.
+    @State private var collapsed: Set<Int> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -324,7 +338,7 @@ struct NotesRenderedView: View {
 
     private func indentOf(_ block: NoteBlock) -> Int {
         switch block {
-        case .checklist(_, _, _, let indent, _): return indent
+        case .checklist(_, _, let indent, _): return indent
         case .bullet(_, let indent, _): return indent
         default: return 0
         }
@@ -358,7 +372,7 @@ struct NotesRenderedView: View {
     @ViewBuilder
     private func row(for block: NoteBlock, index: Int) -> some View {
         switch block {
-        case .checklist(_, let lineIndex, let state, let indent, let inline):
+        case .checklist(let lineIndex, let state, let indent, let inline):
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if indent > 0 {
                     Spacer().frame(width: CGFloat(indent) * 16)
@@ -527,7 +541,7 @@ struct ChecklistProgress {
     static func compute(from text: String) -> ChecklistProgress? {
         let checklists: [(state: ChecklistState, indent: Int)] = NotesParser.parse(text)
             .compactMap { block in
-                if case .checklist(_, _, let state, let indent, _) = block {
+                if case .checklist(_, let state, let indent, _) = block {
                     return (state, indent)
                 }
                 return nil

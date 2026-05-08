@@ -20,26 +20,29 @@ private func blockTypes(_ blocks: [NoteBlock]) -> [String] {
 }
 
 private func checklistState(_ block: NoteBlock) -> ChecklistState? {
-    if case .checklist(_, _, let state, _, _) = block { return state }
+    if case .checklist(_, let state, _, _) = block { return state }
     return nil
 }
 
 private func indent(_ block: NoteBlock) -> Int {
     switch block {
-    case .checklist(_, _, _, let indent, _): return indent
+    case .checklist(_, _, let indent, _): return indent
     case .bullet(_, let indent, _): return indent
     default: return 0
     }
 }
 
 private func lineIndex(_ block: NoteBlock) -> Int? {
-    if case .checklist(_, let idx, _, _, _) = block { return idx }
+    // After v0.4.1 each block's `id` *is* the source-line index, so the
+    // public accessor works for every variant. Kept on `checklist` only
+    // here because the test suite only calls this on checklist blocks.
+    if case .checklist = block { return block.id }
     return nil
 }
 
 private func inlineText(_ block: NoteBlock) -> String? {
     switch block {
-    case .checklist(_, _, _, _, let attr): return text(attr)
+    case .checklist(_, _, _, let attr): return text(attr)
     case .bullet(_, _, let attr): return text(attr)
     case .paragraph(_, let attr): return text(attr)
     case .blank: return nil
@@ -380,6 +383,38 @@ struct NotesParserLineIndexTests {
         let indices = blocks.compactMap { lineIndex($0) }
         #expect(indices == [2])
     }
+
+    /// Regression: prior to v0.4.1 each block carried a freshly-generated
+    /// UUID so re-parsing the same text returned different ids every time.
+    /// `NotesRenderedView`'s collapse set was keyed on those ids, so a
+    /// checkbox toggle (which writes to org → reloads notes → re-parses)
+    /// silently expanded every previously-collapsed sibling. Pin block ids
+    /// to the source-line index so they survive a re-parse.
+    @Test("Block IDs are stable across re-parses")
+    func blockIdsStable() {
+        let input = """
+        - [ ] Personal Laptop
+          - [X] Clear Safari Tabs
+          - [ ] Clear Safari Reading List
+        - [ ] Phone
+          - [X] Clear Safari Tabs
+          - [X] Clear Messages
+        """
+        let first = NotesParser.parse(input)
+        let again = NotesParser.parse(input)
+        #expect(first.map(\.id) == again.map(\.id))
+        // After a single-line edit the surrounding blocks should keep the
+        // same ids — only the modified line's ID still happens to be the
+        // same (its line number didn't change), but specifically the
+        // *Phone* parent and its children must keep the same identity.
+        let edited = input.replacingOccurrences(
+            of: "- [ ] Clear Safari Reading List",
+            with: "- [-] Clear Safari Reading List"
+        )
+        let third = NotesParser.parse(edited)
+        #expect(first.map(\.id) == third.map(\.id),
+                "checkbox toggle should not re-key block IDs")
+    }
 }
 
 // ============================================================================
@@ -476,10 +511,15 @@ struct InlineEmphasisTests {
         #expect(text(result) == "(bold)")
     }
 
-    @Test("Markup preceded by hyphen: -*bold*")
+    @Test("Markup preceded by hyphen: -*bold* — hyphen is NOT in the pre-set")
     func markupAfterHyphen() {
+        // Per org-emphasis-regexp-components, the pre-set is " \t('\"{"
+        // — a hyphen is allowed *after* (post-set) but not before. Org-mode
+        // itself does not render `-*bold*` as bold; the literal text wins.
+        // The previous Mac regex used `(?<![A-Za-z0-9])` and matched here,
+        // but that diverged from spec.
         let result = renderInline("-*bold*")
-        #expect(text(result) == "-bold")
+        #expect(text(result) == "-*bold*")
     }
 
     @Test("Unmatched single marker is literal: *unclosed")
