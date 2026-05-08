@@ -13,6 +13,7 @@ use eav_core::{OrgTask, TodoKeywords};
 use eav_index::{FileChange, FileWatcher, Index, Snapshot};
 use eav_parse::GlobalKeywords;
 use eav_server::{build_router, AppState, ServerEvent};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -224,13 +225,43 @@ async fn run_server(
         .collect();
     index.set_global_keywords(GlobalKeywords::from_keyword_sequences(&kw_seqs));
 
-    // Reindex all agenda files in the background so the HTTP server can
-    // bind immediately. Critical on headless deploys: launchd-Aqua processes
-    // don't have Full Disk Access by default, and blocking-mode reads on
-    // not-yet-materialized iCloud files can hang for minutes. Each file
-    // read goes through tokio's blocking pool with a per-file timeout so a
-    // single stuck path can't gate the rest.
+    // Build the canonical agenda-file allowlist. Both the watcher and the
+    // bridge's `after-save` handler use this to ignore writes to files
+    // outside the agenda set — most notably `*.org_archive` files that
+    // Emacs's `org-archive-subtree` saves alongside the original. Without
+    // the filter the daemon ended up with archived copies of every
+    // historical heading, surfacing as visible duplicates in the agenda.
     let file_paths: Vec<PathBuf> = files.iter().map(|f| PathBuf::from(&f.path)).collect();
+    let agenda_set: Arc<HashSet<PathBuf>> = Arc::new(
+        file_paths
+            .iter()
+            .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
+            .collect(),
+    );
+
+    // Drop any snapshot entries that aren't in the agenda set. Cheap, and
+    // self-heals on every restart against config changes (file removed
+    // from agenda, archive file accidentally indexed by an older build).
+    {
+        let stale: Vec<PathBuf> = index
+            .known_files()
+            .into_iter()
+            .filter(|p| {
+                let canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+                !agenda_set.contains(&canon)
+            })
+            .collect();
+        for p in &stale {
+            index.drop_file(p);
+        }
+        if !stale.is_empty() {
+            tracing::info!(
+                count = stale.len(),
+                "pruned stale (non-agenda) files from snapshot"
+            );
+        }
+    }
+
     let index_for_reindex = index.clone();
     let file_paths_for_reindex = file_paths.clone();
     tokio::spawn(async move {
@@ -264,10 +295,14 @@ async fn run_server(
     let watcher = Arc::new(watcher);
     let index_for_watcher = index.clone();
     let events_for_watcher = state.events.clone();
+    let agenda_set_for_watcher = Arc::clone(&agenda_set);
     tokio::spawn(async move {
         while let Some(change) = watcher_rx.recv().await {
             match change {
                 FileChange::Modified(p) | FileChange::Removed(p) => {
+                    if !is_agenda_file(&agenda_set_for_watcher, &p) {
+                        continue;
+                    }
                     if let Ok(text) = fs::read_to_string(&p) {
                         index_for_watcher.rebuild_file(&p, &text);
                         events_for_watcher.publish(ServerEvent::FileChanged {
@@ -284,6 +319,7 @@ async fn run_server(
     let events_for_bridge = state.events.clone();
     let index_for_bridge = index.clone();
     let watcher_for_bridge = Arc::clone(&watcher);
+    let agenda_set_for_bridge = Arc::clone(&agenda_set);
     tokio::spawn(async move {
         while let Ok(ev) = bridge_events.recv().await {
             forward_bridge_event(
@@ -291,6 +327,7 @@ async fn run_server(
                 &events_for_bridge,
                 &index_for_bridge,
                 &watcher_for_bridge,
+                &agenda_set_for_bridge,
             );
         }
     });
@@ -327,6 +364,7 @@ fn forward_bridge_event(
     events: &eav_server::EventBus,
     index: &Index,
     watcher: &FileWatcher,
+    agenda_set: &HashSet<PathBuf>,
 ) {
     match ev.event.as_str() {
         "after-save" => {
@@ -336,6 +374,12 @@ fn forward_bridge_event(
                 // suppress the matching fsnotify event to avoid a double
                 // reindex.
                 watcher.mark_self_write(p.clone());
+                // Ignore saves to files outside the agenda set
+                // (`*.org_archive`, throwaway notes, etc.) so they don't
+                // pollute the index.
+                if !is_agenda_file(agenda_set, &p) {
+                    return;
+                }
                 if let Ok(text) = std::fs::read_to_string(&p) {
                     index.rebuild_file(&p, &text);
                 }
@@ -364,6 +408,14 @@ fn forward_bridge_event(
         }
         _ => {}
     }
+}
+
+/// True if `path` (resolved through symlinks) is in the canonical agenda
+/// set. Used to gate watcher and bridge events so writes to sibling
+/// non-agenda files (`*.org_archive`, dot-files, etc.) don't get indexed.
+fn is_agenda_file(agenda_set: &HashSet<PathBuf>, path: &Path) -> bool {
+    let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    agenda_set.contains(&canon)
 }
 
 fn default_bridge_socket() -> PathBuf {
