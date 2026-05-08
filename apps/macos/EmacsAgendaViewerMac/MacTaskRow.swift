@@ -229,7 +229,10 @@ struct MacTaskRow: View {
                 .onAppear { titleFieldFocused = true }
                 .onSubmit { actions.saveTitle?(selection.editingTitle) }
         } else {
-            Text(task.title)
+            // Render org-mode emphasis (=verb=, *bold*, /italic/, _under_,
+            // +strike+, ~code~) inline in the title via the same path that
+            // notes use. `isDone` still applies its own strikethrough on top.
+            Text(renderInline(task.title))
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(isDone ? Theme.textTertiary : Theme.textPrimary)
                 .strikethrough(isDone, color: Theme.textTertiary)
@@ -240,7 +243,7 @@ struct MacTaskRow: View {
     private var dragPreview: some View {
         HStack(spacing: 6) {
             Image(systemName: "circle").foregroundStyle(Theme.textTertiary)
-            Text(task.title).lineLimit(1)
+            Text(renderInline(task.title)).lineLimit(1)
         }
         .padding(8)
         .background(Theme.surface)

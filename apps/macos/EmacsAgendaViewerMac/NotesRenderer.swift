@@ -95,9 +95,20 @@ enum NotesParser {
 
 // MARK: - Inline renderer
 
-private enum OrgInline {
+enum OrgInline {
     /// Apply org-markup styling. Patterns are applied in priority order; each pass
     /// replaces matched ranges in the `NSMutableAttributedString`.
+    ///
+    /// Boundary rules mirror Emacs's `org-emphasis-regexp-components` (org.el):
+    /// the marker char must be at start-of-string OR after one of `[\s('"{]`,
+    /// the body must start *and* end with `\S`, and the closing marker must be
+    /// at end-of-string OR before one of `[\s\-.,:;!?'")\}\[\\]`. Each body
+    /// also forbids its own marker char so the canonical pathological string
+    /// `*foo*bar*` stays unrendered (matches Emacs behaviour).
+    ///
+    /// Six markers per `org-emphasis-alist`:
+    ///   *…* bold · /…/ italic · _…_ underline
+    ///   =…= verbatim · ~…~ code · +…+ strikethrough
     static func render(_ raw: String) -> AttributedString {
         let base = NSMutableAttributedString(string: raw, attributes: [
             .font: NSFont.systemFont(ofSize: 13),
@@ -158,23 +169,24 @@ private enum OrgInline {
             return NSAttributedString(string: display, attributes: attrs)
         }
 
-        // 5. Inline code: =verbatim= and ~code~
-        replace(in: base,
-                pattern: #"(?<![A-Za-z0-9])[=~]([^=~\n]+?)[=~](?![A-Za-z0-9])"#) { m, str in
-            let inner = str.substring(with: m.range(at: 1))
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
-                .foregroundColor: NSColor(Theme.textPrimary),
-                .backgroundColor: NSColor(Theme.surfaceElevated)
-            ]
-            return NSAttributedString(string: inner, attributes: attrs)
+        // 5. Inline code: =verbatim= and ~code~. Each pattern excludes its
+        // own marker from the body, so `=foo=bar=` doesn't match.
+        let codeAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+            .foregroundColor: NSColor(Theme.textPrimary),
+            .backgroundColor: NSColor(Theme.surfaceElevated)
+        ]
+        replace(in: base, pattern: emphasisPattern("=", excluding: "=")) { m, str in
+            NSAttributedString(string: str.substring(with: m.range(at: 1)), attributes: codeAttrs)
+        }
+        replace(in: base, pattern: emphasisPattern("~", excluding: "~")) { m, str in
+            NSAttributedString(string: str.substring(with: m.range(at: 1)), attributes: codeAttrs)
         }
 
         // 6. Bold: *text*
         replace(in: base, skipProcessed: true,
-                pattern: #"(?<![A-Za-z0-9*])\*([^\*\n]+?)\*(?![A-Za-z0-9*])"#) { m, str in
-            let inner = str.substring(with: m.range(at: 1))
-            return NSAttributedString(string: inner, attributes: [
+                pattern: emphasisPattern("\\*", excluding: "*")) { m, str in
+            NSAttributedString(string: str.substring(with: m.range(at: 1)), attributes: [
                 .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
                 .foregroundColor: NSColor(Theme.textPrimary)
             ])
@@ -182,13 +194,12 @@ private enum OrgInline {
 
         // 7. Italic: /text/
         replace(in: base, skipProcessed: true,
-                pattern: #"(?<![A-Za-z0-9/])/([^/\n]+?)/(?![A-Za-z0-9/])"#) { m, str in
-            let inner = str.substring(with: m.range(at: 1))
+                pattern: emphasisPattern("/", excluding: "/")) { m, str in
             let italic = NSFontManager.shared.convert(
                 NSFont.systemFont(ofSize: 13),
                 toHaveTrait: .italicFontMask
             )
-            return NSAttributedString(string: inner, attributes: [
+            return NSAttributedString(string: str.substring(with: m.range(at: 1)), attributes: [
                 .font: italic,
                 .foregroundColor: NSColor(Theme.textPrimary)
             ])
@@ -196,16 +207,43 @@ private enum OrgInline {
 
         // 8. Underline: _text_
         replace(in: base, skipProcessed: true,
-                pattern: #"(?<![A-Za-z0-9_])_([^_\n]+?)_(?![A-Za-z0-9_])"#) { m, str in
-            let inner = str.substring(with: m.range(at: 1))
-            return NSAttributedString(string: inner, attributes: [
+                pattern: emphasisPattern("_", excluding: "_")) { m, str in
+            NSAttributedString(string: str.substring(with: m.range(at: 1)), attributes: [
                 .font: NSFont.systemFont(ofSize: 13),
                 .foregroundColor: NSColor(Theme.textPrimary),
                 .underlineStyle: NSUnderlineStyle.single.rawValue
             ])
         }
 
+        // 9. Strikethrough: +text+
+        replace(in: base, skipProcessed: true,
+                pattern: emphasisPattern("\\+", excluding: "+")) { m, str in
+            NSAttributedString(string: str.substring(with: m.range(at: 1)), attributes: [
+                .font: NSFont.systemFont(ofSize: 13),
+                .foregroundColor: NSColor(Theme.textSecondary),
+                .strikethroughStyle: NSUnderlineStyle.single.rawValue
+            ])
+        }
+
         return AttributedString(base)
+    }
+
+    /// Build a regex that matches one org emphasis run with `marker` as the
+    /// open/close char. The body is captured at group 1.
+    /// `escapedMarker` is the regex-escaped form (e.g. "\\*" for `*`),
+    /// `bodyExcluded` is the literal char for the negated body class
+    /// (e.g. "*").
+    private static func emphasisPattern(_ escapedMarker: String, excluding bodyExcluded: String) -> String {
+        // Pre: start-of-string OR one of [\s('"{]
+        // Body: \S (?: [^M\n]* \S)?  (no leading/trailing whitespace, no own marker, no newline)
+        // Post: end-of-string OR one of [\s-.,:;!?'")\}\[\\]
+        // (Backslash in the post class is rare in titles; included for spec parity.)
+        let bodyChar = NSRegularExpression.escapedPattern(for: bodyExcluded)
+        return #"(?:^|(?<=[\s('"{]))"# +
+               escapedMarker +
+               "(\\S(?:[^" + bodyChar + "\\n]*\\S)?)" +
+               escapedMarker +
+               #"(?=$|[\s\-.,:;!?'")}\[\\])"#
     }
 
     private static func replace(

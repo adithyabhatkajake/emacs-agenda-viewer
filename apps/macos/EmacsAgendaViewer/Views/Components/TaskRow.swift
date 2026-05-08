@@ -22,7 +22,9 @@ struct TaskRow: View {
                     if let priority = task.priority, !priority.isEmpty {
                         PriorityBadge(priority: priority)
                     }
-                    Text(task.title)
+                    // Render org-mode emphasis in the title (same renderer
+                    // as notes). `isDone` still applies a strike on top.
+                    Text(renderInline(task.title))
                         .font(.body)
                         .foregroundStyle(isDone ? Theme.textTertiary : Theme.textPrimary)
                         .strikethrough(isDone, color: Theme.textTertiary)

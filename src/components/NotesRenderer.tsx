@@ -87,47 +87,71 @@ function renderLineWithTimestamps(line: string, timestamps: OrgTimestamp[]): Rea
   return out;
 }
 
-/** Parse inline org markup within a text segment */
+/**
+ * Parse inline org markup within a text segment.
+ *
+ * Mirrors Emacs's `org-emphasis-regexp-components` and `org-emphasis-alist`
+ * (org.el): every emphasis run is bracketed by a marker char that must be
+ * preceded by start-of-string / whitespace / `('"{` and followed by end /
+ * whitespace / `-.,:;!?'")\}\[\\`. The body must start and end with a
+ * non-whitespace char, span at most one logical line (we forbid `\n`), and
+ * cannot contain its own marker char (so `*foo*bar*` stays unrendered, the
+ * same as in Emacs). Six markers are recognised:
+ *
+ *   `*…*` bold · `/…/` italic · `_…_` underline
+ *   `=…=` verbatim · `~…~` code · `+…+` strikethrough
+ *
+ * Links (`[[url]]`, `[[url][label]]`) are matched first so a label
+ * containing `*` or `/` doesn't get re-emphasised.
+ */
 export function renderInline(text: string): ReactNode[] {
   const parts: ReactNode[] = [];
-  // Match org links [[target][label]] or [[target]], bold *text*, italic /text/, code ~text~ or =text=
-  const regex = /\[\[([^\]]+)\]\[([^\]]+)\]\]|\[\[([^\]]+)\]\]|(?<![A-Za-z0-9])\*([^*]+)\*(?![A-Za-z0-9])|(?<![A-Za-z0-9])\/([^/]+)\/(?![A-Za-z0-9])|(?<![A-Za-z0-9])~([^~]+)~(?![A-Za-z0-9])|(?<![A-Za-z0-9])=([^=]+)=(?![A-Za-z0-9])/g;
+  const regex = new RegExp(
+    [
+      // Links must come first.
+      /\[\[([^\]]+)\]\[([^\]]+)\]\]/.source,                // 1,2 = url,label
+      /\[\[([^\]]+)\]\]/.source,                            // 3   = bare url
+      // Emphasis. Each alternative captures the body text only.
+      /(?:^|(?<=[\s('"{]))\*(\S(?:[^*\n]*\S)?)\*(?=$|[\s\-.,:;!?'")}\[\\])/.source,  // 4 bold
+      /(?:^|(?<=[\s('"{]))\/(\S(?:[^/\n]*\S)?)\/(?=$|[\s\-.,:;!?'")}\[\\])/.source,  // 5 italic
+      /(?:^|(?<=[\s('"{]))_(\S(?:[^_\n]*\S)?)_(?=$|[\s\-.,:;!?'")}\[\\])/.source,    // 6 underline
+      /(?:^|(?<=[\s('"{]))=(\S(?:[^=\n]*\S)?)=(?=$|[\s\-.,:;!?'")}\[\\])/.source,    // 7 verbatim
+      /(?:^|(?<=[\s('"{]))~(\S(?:[^~\n]*\S)?)~(?=$|[\s\-.,:;!?'")}\[\\])/.source,    // 8 code
+      /(?:^|(?<=[\s('"{]))\+(\S(?:[^+\n]*\S)?)\+(?=$|[\s\-.,:;!?'")}\[\\])/.source,  // 9 strikethrough
+    ].join('|'),
+    'g'
+  );
   let lastIndex = 0;
   let match;
 
   while ((match = regex.exec(text)) !== null) {
-    // Text before this match
     if (match.index > lastIndex) {
       parts.push(text.slice(lastIndex, match.index));
     }
 
     if (match[1] && match[2]) {
-      // [[target][label]]
-      parts.push(
-        <span key={match.index} className="text-accent">{match[2]}</span>
-      );
+      parts.push(<span key={match.index} className="text-accent">{match[2]}</span>);
     } else if (match[3]) {
-      // [[target]] — show the target as label
       const label = match[3].replace(/^file:~?\//, '').replace(/\/$/, '').split('/').pop() || match[3];
-      parts.push(
-        <span key={match.index} className="text-accent">{label}</span>
-      );
+      parts.push(<span key={match.index} className="text-accent">{label}</span>);
     } else if (match[4]) {
-      // *bold*
       parts.push(<strong key={match.index} className="font-semibold text-text-primary">{match[4]}</strong>);
     } else if (match[5]) {
-      // /italic/
       parts.push(<em key={match.index} className="italic">{match[5]}</em>);
     } else if (match[6]) {
-      // ~code~
-      parts.push(
-        <code key={match.index} className="px-1 py-0.5 rounded bg-things-bg text-accent-teal text-[11px] font-mono">{match[6]}</code>
-      );
+      parts.push(<u key={match.index} className="underline decoration-text-secondary/60">{match[6]}</u>);
     } else if (match[7]) {
-      // =verbatim=
+      // verbatim
       parts.push(
         <code key={match.index} className="px-1 py-0.5 rounded bg-things-bg text-accent-teal text-[11px] font-mono">{match[7]}</code>
       );
+    } else if (match[8]) {
+      // code
+      parts.push(
+        <code key={match.index} className="px-1 py-0.5 rounded bg-things-bg text-accent-teal text-[11px] font-mono">{match[8]}</code>
+      );
+    } else if (match[9]) {
+      parts.push(<s key={match.index} className="line-through opacity-70">{match[9]}</s>);
     }
 
     lastIndex = match.index + match[0].length;
