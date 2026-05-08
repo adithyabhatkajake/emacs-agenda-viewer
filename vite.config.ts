@@ -13,7 +13,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        // Prefer the eavd daemon on :3002. If you're shadow-testing
+        // against the legacy Express server, override with VITE_API_TARGET.
+        target: process.env.VITE_API_TARGET ?? 'http://localhost:3002',
         changeOrigin: true,
       },
     },

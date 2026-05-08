@@ -33,28 +33,77 @@ Day / Week grid with lane-layout for overlapping events, drag-to-reschedule, dra
 
 ** Architecture
 
+As of *v0.4.0* the read + transport layer is a Rust daemon (=eavd=). Reads
+land on an in-memory index (~2 ms vs. the ~110 ms an =emacsclient= round-trip
+costs); mutations and the residual semantic reads (sexp/diary days, capture
+templates) proxy to Emacs over a single persistent UNIX socket. Org files
+on disk are still the source of truth and Emacs is still the only writer.
+
 #+begin_example
-  Browser (React/Vite)
-       :5173 (dev)         \
-                            >--HTTP-->  Express Server  <--emacsclient-->  Emacs
-  SwiftUI macOS / iOS app  /                :3001                         (org-mode)
+  ┌──────────────┐    HTTP+SSE     ┌──────────────────────────┐
+  │   Mac app    │  127.0.0.1:3002 │      eavd (Rust)         │
+  │ Web frontend │ ──────────────► │  • orgize parser         │
+  │ MCP server*  │                 │  • in-memory BTreeMap    │
+  └──────────────┘                 │  • SQLite snapshot       │
+                                   │  • notify file watcher   │
+                                   │  • agenda evaluator      │
+                                   └──────────┬───────────────┘
+                                              │ length-prefixed JSON
+                                              │ over UNIX socket
+                                              ▼
+                                   ┌──────────────────────────┐
+                                   │  Emacs server            │
+                                   │  eav-bridge.el           │  ← thin dispatcher
+                                   │  eav.el  (unchanged)     │  ← all org logic
+                                   └──────────┬───────────────┘
+                                              ▼
+                                       Org files on disk
+                                       (single writer: Emacs)
 #+end_example
 
-The same Express server serves the React web frontend (=npm start= bundles it on :3001 -- no Vite process needed in production) and answers JSON requests from the native SwiftUI app under =apps/macos/=. Both clients share the same elisp + REST surface; mutations land in your real org files via =emacsclient=.
+- =daemon/= :: Cargo workspace with eight crates: =eav-core= (wire types),
+  =eav-parse= (orgize wrapper + tag inheritance), =eav-index= (in-memory
+  index + SQLite snapshot + =notify= watcher), =eav-agenda= (day/range
+  evaluator), =eav-bridge= (persistent socket client), =eav-server= (axum
+  HTTP + SSE), =eav-mcp= (optional Model Context Protocol scaffold), and
+  the =eavd= binary that ties them together.
+- =elisp/eav-bridge.el= :: New in-Emacs UNIX-socket dispatcher that exposes
+  the existing =eav.el= mutation/sexp surface to =eavd=. =eav.el= itself is
+  unchanged.
+- =elisp/eav.el= :: As before — every org-semantics function the bridge
+  calls. Treat as load-bearing; only add new methods to the bridge by
+  registering new entries in =eav-bridge--methods=.
+- =src/= :: React + TypeScript + Tailwind CSS frontend, with a new
+  =useDaemonEvents= hook that consumes =/api/events= so the UI refreshes
+  on file save / clock-in / TODO state change without polling.
+- =apps/macos/= :: SwiftUI app. Bundles =eavd= as a helper process
+  (=Networking/DaemonHost.swift= spawns it on launch, terminates on quit).
+  =Networking/EventSubscriber.swift= consumes the same SSE channel and
+  feeds =TasksStore.invalidate(file:)= / =invalidate(taskId:)=.
+- =server/= :: Legacy Express server. Still in the tree for shadow-mode
+  comparison; v1.0.0 will delete it.
 
-- =elisp/eav.el= :: Elisp helper loaded into running Emacs. Uses =org-agenda-get-day-entries= (org's own agenda machinery) for accurate filtering. Provides functions for reading/writing tasks, notes, clock, priorities, scheduling, deadlines, tags, refile, and clock-line tidy.
-- =server/= :: Express + TypeScript backend. Calls =emacsclient --eval= to execute elisp. Writes large JSON results to temp files to avoid control character issues with stdout. Auto-recovers if =eav.el= is reloaded mid-session.
-- =src/= :: React + TypeScript + Tailwind CSS frontend. Things 3 dark mode design.
-- =apps/macos/= :: SwiftUI app, two targets sharing one codebase (=EmacsAgendaViewerMac= / =EmacsAgendaViewer=). Sonoma-vibrancy design refreshed in v0.3.0, edit-mode rework + outline breadcrumb in v0.3.1; see the section below.
+*Express remains available* on its old port (3001) for fallback while
+the daemon is dogfooded. Pick the backend by setting the Mac app's *Server
+URL* (=Settings → Server URL=) or the =VITE_API_TARGET= env for the web
+client (defaults to =http://localhost:3002= now).
+
+\\* The MCP server is a scaffold in v0.4.0 — resource/tool listing works,
+the JSON-RPC stdio loop returns =bail!("not implemented")=. Will be
+finished in v1.0.
 
 ** Setup
 
 *** Prerequisites
 
 - *Emacs* with =server-mode= enabled (=M-x server-start= or add =(server-start)= to your init file)
-- *Node.js* >= 18
-- *npm*
-- =emacsclient= must be on your =PATH=
+- *Node.js* >= 18 -- for the web frontend build
+- *npm* -- ditto
+- =emacsclient= on =PATH=
+- *Rust* stable -- only at *build* time. End users running the bundled
+  =Agenda.app= don't need a Rust toolchain; the daemon is shipped inside
+  =Contents/Resources/=.
+- *Xcode* + =xcodegen= -- only if you build the Mac app
 
 *** Install
 
@@ -62,26 +111,64 @@ The same Express server serves the React web frontend (=npm start= bundles it on
 git clone git@github.com:adithyabhatkajake/emacs-agenda-viewer.git
 cd emacs-agenda-viewer
 npm install
+# eavd is built on demand by the Mac app's Run-Script phase or by
+# scripts/build-eavd-universal.sh for distribution. To build it
+# directly:
+cargo build --manifest-path daemon/Cargo.toml --release -p eavd
 #+end_src
 
 ** Usage
 
-1. Make sure Emacs is running with server mode:
-   #+begin_src elisp
-   (server-start)
-   #+end_src
+*** Native Mac app (recommended)
 
-2. Build and start the production server:
-   #+begin_src shell
-   npm run build
-   npm start
-   #+end_src
+Open =Agenda.app= -- it spawns its bundled =eavd= helper, which loads
+=eav-bridge.el= into your running Emacs on first connect. There is nothing
+to start manually.
 
-3. Open http://localhost:3001 in your browser.
+#+begin_src elisp
+(server-start)        ; once, in your Emacs init
+#+end_src
 
-For development with hot-reload, use =npm run dev= (opens on port 5173).
+#+begin_src shell
+./deploy.sh           ; build + install + relaunch the Mac app
+#+end_src
 
-The app loads =elisp/eav.el= into your running Emacs on first request. All changes (state, priority, schedule, deadline, notes, clock) are written directly to your org files via =emacsclient=.
+The app's *Server URL* defaults to =http://127.0.0.1:3002= (the bundled
+helper) but accepts any =eavd= or Express URL.
+
+*** Web frontend
+
+For local development:
+
+#+begin_src shell
+npm run dev           # vite on :5173, proxying /api → :3002 (eavd)
+#+end_src
+
+For headless deployment on a remote Mac (=visa-nonsoe= setup):
+
+#+begin_src shell
+./deploy-web-eavd.sh   # rsync, build eavd + dist on remote, install
+                       # launchd plist that starts eavd with --static-dir
+#+end_src
+
+After this the SPA + API are both served by =eavd= on the remote's port
+3001. The legacy =./deploy-web.sh= (Express path) is preserved for fallback.
+
+*** Daemon CLI
+
+The =eavd= binary also offers ad-hoc parity / debugging modes:
+
+#+begin_src shell
+eavd                                   # default: localhost:3002, no SPA
+eavd --http-port 3001 --http-host 0.0.0.0 --static-dir dist
+eavd --dump-tasks       --files-from files.json --keywords-from keywords.json
+eavd --dump-active-tasks --files-from files.json --keywords-from keywords.json
+eavd --dump-agenda-day 2026-05-08 --files-from files.json --keywords-from keywords.json
+#+end_src
+
+Useful while comparing daemon output to the Express baseline. The
+=--files-from= argument accepts either a one-path-per-line file or the JSON
+output of =/api/files=.
 
 *** Keyboard shortcuts
 

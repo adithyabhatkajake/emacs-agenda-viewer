@@ -1,0 +1,11 @@
+#+TITLE: Sexp / diary entries
+#+CATEGORY: Diary
+
+* TODO anniversary helper
+%%(diary-anniversary 1990 1 1) Birthday
+
+* TODO normal task with deadline
+DEADLINE: <2026-08-15 Sat>
+
+* TODO another sexp wrapper
+%%(org-class 2026 9 1 2026 12 15 2 1 8 1)

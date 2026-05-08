@@ -1,0 +1,18 @@
+[package]
+name = "eav-parse"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+eav-core.workspace = true
+orgize.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+once_cell.workspace = true
+tracing.workspace = true
+regex = "1.10"

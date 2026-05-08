@@ -1,0 +1,21 @@
+#+TITLE: Tag inheritance and category overrides
+#+CATEGORY: ProjectRoot
+#+FILETAGS: :ft1:ft2:
+
+* TODO root-task                   :local1:
+:PROPERTIES:
+:ID: root-id
+:END:
+
+** TODO mid-task                   :local2:
+:PROPERTIES:
+:CATEGORY: MidCategory
+:END:
+
+*** TODO leaf-task                 :leaf:
+This leaf inherits ft1, ft2 from FILETAGS, local1 + local2 from
+ancestors, and uses MidCategory from the closest ancestor with a
+:CATEGORY: property.
+
+* Plain heading without keyword    :ignored:
+** TODO sibling                    :alone:

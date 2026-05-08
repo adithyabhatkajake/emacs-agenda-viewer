@@ -1,0 +1,38 @@
+#+TITLE: Timestamp parsing fixtures
+#+CATEGORY: Specs
+
+* TODO simple-active
+SCHEDULED: <2026-05-07 Thu>
+
+* TODO active-with-time
+SCHEDULED: <2026-05-07 Thu 10:00>
+
+* TODO time-range
+SCHEDULED: <2026-05-07 Thu 10:00-12:00>
+
+* TODO date-range
+SCHEDULED: <2026-05-07 Thu>--<2026-05-10 Sun>
+
+* TODO inactive-in-body
+[2026-05-07 Thu] should not appear in active timestamps.
+
+* TODO active-in-body
+Body has <2026-06-01 Mon> active and <2026-07-01 Wed 09:00> with time.
+
+* TODO repeater-cumulate
+SCHEDULED: <2026-05-07 Thu +1d>
+
+* TODO repeater-catchup
+SCHEDULED: <2026-05-07 Thu ++1w>
+
+* TODO repeater-restart
+SCHEDULED: <2026-05-07 Thu .+1m>
+
+* TODO warning-only
+DEADLINE: <2026-05-20 Wed -3d>
+
+* TODO repeater-and-warning
+DEADLINE: <2026-05-20 Wed +1w -1d>
+
+* TODO yearly-repeater
+SCHEDULED: <2020-06-15 Mon +1y>

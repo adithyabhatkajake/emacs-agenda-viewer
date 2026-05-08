@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { OrgTask, AgendaEntry, AgendaFile, TodoKeywords, OrgConfig } from '../types';
 import { fetchTasks, fetchFiles, fetchKeywords, fetchConfig, fetchAgendaDay, fetchAgendaRange, fetchClockStatus, type ClockStatus } from '../api/tasks';
+import { useDaemonEvents } from './useDaemonEvents';
 
 function todayStr(): string {
   const d = new Date();
@@ -88,6 +89,29 @@ export function useTasks() {
     } catch { /* ignore */ }
   }, []);
 
+  // Subscribe to daemon-pushed events. Each event maps to the smallest
+  // refresh that keeps the UI consistent. With Express (no SSE), the hook
+  // gives up after a few connect failures and we fall back to manual refresh.
+  const { connected: daemonConnected } = useDaemonEvents({
+    onEvent: (event) => {
+      switch (event.kind) {
+        case 'task-changed':
+        case 'file-changed':
+          // Coarsest invalidation: rebuild the cached lists. The daemon
+          // serves these in <50 ms total so there's no real cost.
+          loadData();
+          break;
+        case 'clock-changed':
+          refreshClock();
+          break;
+        case 'config-changed':
+          // Full reload — keywords, priorities, files may have shifted.
+          loadData();
+          break;
+      }
+    },
+  });
+
   const categories = [...new Set(files.map(f => f.category))];
   const allTags = [...new Set(tasks.flatMap(t => [...t.tags, ...t.inheritedTags]))].sort();
 
@@ -124,5 +148,6 @@ export function useTasks() {
     error,
     refresh,
     refreshClock,
+    daemonConnected,
   };
 }

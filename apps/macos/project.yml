@@ -9,7 +9,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "0.3.1"
+    MARKETING_VERSION: "0.4.0"
     CURRENT_PROJECT_VERSION: "1"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: minimal
@@ -48,5 +48,48 @@ targets:
         INFOPLIST_FILE: EmacsAgendaViewerMac/Info.plist
         ENABLE_HARDENED_RUNTIME: NO
         ENABLE_APP_SANDBOX: NO
+        # The post-build script copies a Rust helper into Resources/, then
+        # Xcode's automatic deep-signing of bundle resources tries to codesign
+        # it. Both writes need to escape the user-script sandbox.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
         COMBINE_HIDPI_IMAGES: YES
         MACOSX_DEPLOYMENT_TARGET: "14.0"
+    postBuildScripts:
+      - name: Build & bundle eavd helper
+        # Builds a release `eavd` for the host arch and copies it together
+        # with the elisp files into the .app's Resources/. Uses CARGO_HOME to
+        # let xcodegen run cargo without picking up Xcode's sandboxed PATH.
+        # Skipped if SKIP_EAVD_BUILD=1 (faster local rebuilds when the binary
+        # is already current).
+        script: |
+          set -euo pipefail
+          if [[ "${SKIP_EAVD_BUILD:-0}" == "1" ]]; then
+            echo "skipping eavd build (SKIP_EAVD_BUILD=1)"
+            exit 0
+          fi
+          REPO_ROOT="${SRCROOT}/../.."
+          export PATH="$HOME/.cargo/bin:$PATH"
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "warning: cargo not on PATH; skipping eavd build" >&2
+            exit 0
+          fi
+          # Host-arch-only release build for speed during dev. The universal
+          # variant is `scripts/build-eavd-universal.sh`; we run that for
+          # release builds via deploy.sh.
+          cargo build --manifest-path "$REPO_ROOT/daemon/Cargo.toml" \
+              --release -p eavd
+          DEST="${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Contents/Resources"
+          mkdir -p "$DEST"
+          cp "$REPO_ROOT/daemon/target/release/eavd" "$DEST/eavd"
+          cp "$REPO_ROOT/elisp/eav.el" "$DEST/eav.el"
+          cp "$REPO_ROOT/elisp/eav-bridge.el" "$DEST/eav-bridge.el"
+          # Note: we don't codesign here — the user-script sandbox blocks
+          # codesign's temp-file writes inside DerivedData. The host app's
+          # outer signing covers the bundle for development; for App Store /
+          # Developer ID distribution use `scripts/build-eavd-universal.sh`,
+          # which signs the universal binary before this script copies it.
+          echo "bundled eavd helper into $DEST"
+        outputFiles:
+          - $(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app/Contents/Resources/eavd
+          - $(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app/Contents/Resources/eav.el
+          - $(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app/Contents/Resources/eav-bridge.el

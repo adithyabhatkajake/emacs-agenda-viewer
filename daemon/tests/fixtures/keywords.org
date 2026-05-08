@@ -1,0 +1,10 @@
+#+TITLE: TODO keyword fixtures
+#+CATEGORY: Keywords
+#+TODO: NEXT(n) WAITING(w) | DONE(d) CANCELLED(c)
+
+* NEXT first task
+* WAITING blocked task
+* DONE wrapped up
+* CANCELLED dropped
+* TODO not-a-keyword-here   :should_not_appear:
+* plain heading             :still_no_task:

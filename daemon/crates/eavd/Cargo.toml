@@ -1,0 +1,27 @@
+[package]
+name = "eavd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "eavd"
+path = "src/main.rs"
+
+[dependencies]
+eav-core.workspace = true
+eav-index.workspace = true
+eav-agenda.workspace = true
+eav-bridge.workspace = true
+eav-server.workspace = true
+eav-parse.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+libc = "0.2"

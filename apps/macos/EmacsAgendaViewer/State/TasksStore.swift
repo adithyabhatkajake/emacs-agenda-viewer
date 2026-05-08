@@ -294,6 +294,38 @@ final class TasksStore {
             lastMutationError = error.message
         }
     }
+
+    // MARK: - Daemon-driven invalidation
+    //
+    // The daemon's SSE channel pushes fine-grained events; these helpers map
+    // each event to the smallest refresh that keeps the view consistent.
+
+    /// Refresh just the cached list slices that contain tasks from FILE.
+    /// Drops the corresponding notes-cache entries so opening a task after
+    /// an external edit doesn't show a stale body.
+    func invalidate(file: String, using client: APIClient) async {
+        let prefix = "\(file)::"
+        notesCache.keys
+            .filter { $0.hasPrefix(prefix) }
+            .forEach { notesCache.removeValue(forKey: $0) }
+        await refreshLoaded(using: client)
+    }
+
+    /// Refresh just the data backing TASKID. For now this falls through to
+    /// `invalidate(file:)` because every list slice we maintain contains
+    /// the task; once we have per-id storage we'll narrow the refresh.
+    func invalidate(taskId: String, file: String, pos: Int, using client: APIClient) async {
+        notesCache.removeValue(forKey: "\(file)::\(pos)")
+        _ = taskId
+        await refreshLoaded(using: client)
+    }
+
+    /// Reload metadata (files, keywords, priorities). Triggered by
+    /// `config-changed` events from the daemon.
+    func invalidateConfig(using client: APIClient, settings: AppSettings) async {
+        initialized = false
+        await loadMetadata(using: client, settings: settings)
+    }
 }
 
 private extension Error {

@@ -1,0 +1,18 @@
+#+TITLE: Property drawers
+#+CATEGORY: Props
+#+PROPERTY: DefaultKey defaultValue
+
+* TODO with-effort
+:PROPERTIES:
+:ID: task-id-001
+:EFFORT: 0:30
+:CUSTOM_KEY: custom-value
+:END:
+Body text.
+
+* TODO no-properties
+
+* TODO inherits-default
+:PROPERTIES:
+:LocalKey: localValue
+:END:

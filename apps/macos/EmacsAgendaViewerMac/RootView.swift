@@ -50,6 +50,7 @@ struct RootView: View {
     @State private var calendarSync: CalendarSync?
     @State private var showCapture = false
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .automatic
+    @State private var eventSubscriber: EventSubscriber?
 
     var body: some View {
         NavigationSplitView(columnVisibility: $sidebarVisibility) {
@@ -66,6 +67,29 @@ struct RootView: View {
             guard let client = settings.apiClient else { return }
             store.initialized = false
             await store.loadMetadata(using: client, settings: settings)
+
+            // Re-attach the SSE subscriber whenever the server URL changes.
+            // Falls silent when the configured backend doesn't expose
+            // /api/events (i.e. the legacy Express server).
+            eventSubscriber?.stop()
+            let sub = EventSubscriber(baseURLString: settings.serverURLString)
+            sub?.start { [weak store] event in
+                guard let store else { return }
+                Task { @MainActor in
+                    guard let client = settings.apiClient else { return }
+                    switch event {
+                    case .taskChanged(_, let file, let pos):
+                        await store.invalidate(taskId: "\(file)::\(pos)", file: file, pos: pos, using: client)
+                    case .fileChanged(let file):
+                        await store.invalidate(file: file, using: client)
+                    case .clockChanged:
+                        await store.refreshClock(using: client)
+                    case .configChanged:
+                        await store.invalidateConfig(using: client, settings: settings)
+                    }
+                }
+            }
+            eventSubscriber = sub
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

@@ -1,5 +1,127 @@
 #+title: Changelog
 
+** 0.4.0
+
+The Rust daemon. Reads land on an in-memory index in ~2 ms; mutations and
+the residual semantic reads proxy to Emacs over one persistent UNIX socket
+instead of an =emacsclient --eval= per call. Live updates push over SSE so
+the UI refreshes on file save and TODO state change without polling.
+
+This is the *dogfood* release on the new architecture. v1.0.0 will land
+once Express has been removed and the dogfood week is clean.
+
+*** =eavd= -- the Rust daemon
+
+New Cargo workspace under =daemon/= with eight crates (=eav-core=,
+=eav-parse=, =eav-index=, =eav-agenda=, =eav-bridge=, =eav-server=,
+=eav-mcp=, =eavd=). The HTTP surface mirrors the Express routes 1:1; the
+agenda evaluator hits 30/30 days byte-identical against the captured
+=/api/agenda/day/<date>= corpus, and =/api/tasks= matches Express on
+active and all-tasks counts. Cold-start <50 ms with a SQLite snapshot at
+=$XDG_CACHE_HOME/eavd/snapshot.sqlite=.
+
+- Parser uses =orgize 0.10.x= for headline structure plus a small regex
+  fallback for the deadline-repeater syntax (=+1w/2w=) that orgize
+  currently rejects (=org-element.el:4445-4448=). Properties, tag
+  inheritance, file-local =#+TODO=/=#+CATEGORY=/=#+PROPERTY= overrides,
+  malformed planning-after-CLOCK lines all handled.
+- File watcher debounces 100 ms and suppresses fsnotify events that
+  =eavd= itself triggered via the bridge (avoids redundant reindex).
+- 24 fixture-driven tests grounded in =org-emphasis-regexp-components=
+  and =org-element-timestamp-parser=, plus a regression test for the
+  symlink-vs-canonical snapshot bug noted below.
+
+*** =elisp/eav-bridge.el= -- in-Emacs UNIX-socket dispatcher
+
+A thin (~480 LOC) elisp file that opens a UNIX socket via
+=make-network-process=, reads length-prefixed JSON frames, and dispatches
+to existing =eav.el= functions. Pushes =after-save=,
+=todo-state-changed=, and clock-event frames so =eavd= can re-index and
+publish SSE without polling. =eav.el= itself is unchanged -- the bridge
+is purely a transport layer.
+
+=eavd= auto-loads the bridge on first connect via =emacsclient --eval=
+when bundled inside =Agenda.app=, so end-users never load it manually.
+
+*** Mac app -- helper-process model
+
+=apps/macos/EmacsAgendaViewer/Networking/DaemonHost.swift= spawns the
+bundled =eavd= on app launch and terminates it on quit. The Run-Script
+build phase in =project.yml= cargo-builds =eavd= and copies it +
+=eav.el= + =eav-bridge.el= into =Contents/Resources/=. Closing the app
+stops the daemon; reopening starts a fresh one.
+
+=Networking/EventSubscriber.swift= consumes the SSE channel and feeds
+=TasksStore.invalidate(file:)= / =invalidate(taskId:)= /
+=invalidateConfig= so a save in Emacs (or an external tool) refreshes
+the views without manual reload.
+
+=AppDelegate= polls =/api/debug= until the helper answers, *then* writes
+the saved =serverURL= -- so =RootView.task(id:serverURLString)= only
+fires once the daemon's actually listening. Removes the
+"Couldn't load" race we hit on first cold start.
+
+*** Web frontend
+
+=src/hooks/useDaemonEvents.ts= subscribes to =/api/events= via
+=EventSource= and triggers a full refresh on each event, with a
+3-strikes-and-out reconnect policy so it falls silent against the
+legacy Express server (which has no SSE endpoint). =vite.config.ts=
+proxy now points at =:3002= by default; override via =VITE_API_TARGET=.
+
+*** Bundling and deployment
+
+- =scripts/build-eavd-universal.sh= -- cross-compile =eavd= for both
+  Apple architectures and =lipo=-fuse them. Used by Xcode's Run-Script
+  phase for =Agenda.app=.
+- =scripts/install-daemon.sh= -- install =eavd= as a launchd plist
+  (macOS) or systemd user unit (Linux), for headless deployments where
+  there is no Mac app to babysit the daemon. Sets =PATH= explicitly
+  because launchd-Aqua services don't inherit Homebrew on the search
+  list. Accepts =--port=, =--host=, =--static-dir= for the SPA.
+- =deploy-web-eavd.sh= -- rsync the repo to the headless host, build
+  =eavd= + the SPA there, retire the legacy
+  =com.hermitsage.emacs-agenda-viewer= plist, install the new
+  =com.hermitsage.eavd= one. Smoke-tests =$REMOTE_URL/api/config= and
+  the SPA root.
+- =server/= and =deploy-web.sh= remain available for fallback. v1.0.0
+  removes them.
+
+*** Snapshot canonicalize fix
+
+Files arriving via the bridge config (e.g. =~/iCloud/Notes/foo.org=)
+were being keyed in =Index::by_file= by their input path, while the
+SQLite snapshot stored canonicalised paths (=~/Library/Mobile
+Documents/.../foo.org=) because =OrgTask.file= goes through
+=fs::canonicalize=. After a snapshot was loaded and live reindex ran,
+=by_file= ended up with two entries for the same file -- =all_tasks=
+walks =by_file= and emits each task once per key, so every task
+surfaced twice. Symptom on =visa-nonsoe=: =/api/tasks= returned 460,
+=task_count()= was 395.
+
+Fix: =Index::rebuild_file= and friends now canonicalise the input path
+before using it as a key, so save/load/rebuild all agree. Regression
+test added (=rebuild_via_symlink_does_not_double_count=).
+
+*** Org-spec emphasis markup in titles and bodies
+
+Both =NotesRenderer= implementations now follow Emacs's
+=org-emphasis-regexp-components= (boundary chars match the spec; body
+forbids its own marker so =*foo*bar*= stays unrendered). Adds
+strikethrough (=+text+=) to both clients and underline (=_text_=) to
+the web client. Mac task rows now route =task.title= through the same
+=renderInline= the body uses, so emphasis lands in headings too.
+
+*** Bridge protocol -- read_exact cancellation fix
+
+The original =BridgeClient::session= used =tokio::select!= over
+=read_exact= and =outgoing.recv()=, but =read_exact= is *not*
+cancel-safe: when an outgoing write fired between the bytes of an
+incoming header, the partial read state was discarded and subsequent
+reads desynced. Symptom on =visa-nonsoe=: =read.config= would block
+forever despite the bridge actually replying. Fix: separate reader and
+writer tasks, neither cancels the other's I/O.
+
 ** 0.3.1
 
 Polish + edit-mode rework on top of v0.3.0.

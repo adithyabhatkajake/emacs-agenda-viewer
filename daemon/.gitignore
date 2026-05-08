@@ -1,0 +1,9 @@
+target/
+Cargo.lock.bak
+*.swp
+.DS_Store
+# Captured agenda dumps used as round-trip / parity goldens.
+# These are personal data (titles, file paths, dates). Regenerate with
+# `daemon/tests/golden/regenerate.sh` against a running Express server.
+tests/golden/*.json
+tests/golden/_agenda_dates.txt

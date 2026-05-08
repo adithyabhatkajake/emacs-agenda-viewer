@@ -1,0 +1,19 @@
+#+TITLE: Deadline-repeater /Nu suffix (org-element.el:4445-4448)
+#+CATEGORY: Habits
+
+* TODO Clean Bathroom
+DEADLINE: <2026-05-07 Thu +1w/2w -0d>
+:PROPERTIES:
+:LAST_REPEAT: [2026-04-30 Thu 20:32]
+:STYLE: habit
+:Effort: 0:15
+:END:
+
+* TODO Read Papers
+SCHEDULED: <2026-05-19 Tue +2m/4m>
+:PROPERTIES:
+:LAST_REPEAT: [2026-03-19 Thu 08:15]
+:END:
+
+* TODO Catch-up monthly
+SCHEDULED: <2026-05-19 Tue ++8w/12w>

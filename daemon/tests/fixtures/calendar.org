@@ -1,0 +1,13 @@
+#+TITLE: Calendar-style entries (no TODO state, just timestamps)
+#+CATEGORY: Calendar
+
+* Standup <2026-05-07 Thu 09:30>
+Recurring meeting.
+
+* Vacation <2026-06-10 Wed>--<2026-06-17 Wed>
+Out of office, the date range should produce a "block" agenda entry on
+each day inside the range.
+
+* Conference <2026-07-15 Wed 14:00-16:00>
+Time-range timestamp; body active timestamps still surface as agenda
+entries on the queried day.

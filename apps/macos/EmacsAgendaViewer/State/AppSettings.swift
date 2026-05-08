@@ -327,6 +327,13 @@ final class AppSettings {
 
     init() {
         let d = UserDefaults.standard
+        // Leave the URL empty on a fresh install. AppDelegate spawns the
+        // bundled eavd helper, polls `/api/debug` until the daemon is
+        // listening, and *then* writes the URL — at which point
+        // `RootView.task(id: serverURLString)` re-fires and the metadata
+        // load runs against a ready daemon. Pre-seeding here would race
+        // the helper's bridge auto-load and surface a transient
+        // "Could not connect" error on first launch.
         self.serverURLString = d.string(forKey: Self.serverURLKey) ?? ""
         self.appearance = AppearancePreference(rawValue: d.string(forKey: Self.appearanceKey) ?? "")
             ?? .system
