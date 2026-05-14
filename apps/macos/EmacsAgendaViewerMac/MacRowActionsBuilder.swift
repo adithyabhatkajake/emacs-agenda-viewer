@@ -7,6 +7,10 @@ struct RowActionFactory {
     let selection: Selection
     let clocks: ClockManager
     let sync: CalendarSync?
+    /// Set by the Logbook view to surface "Archive…" in the row menu.
+    /// The closure receives the row's snapshot so the host can stage a
+    /// confirmation dialog. Nil everywhere else.
+    var onRequestArchive: ((TaskSnapshot) -> Void)? = nil
 
     /// Compute checklist progress for a task using cached notes only.
     /// Returns nil when notes aren't cached yet or contain no checklist.
@@ -40,6 +44,7 @@ struct RowActionFactory {
         let selection = self.selection
         let clocks = self.clocks
         let snapshot: TaskSnapshot = TaskSnapshot(task: task)
+        let onArchive = self.onRequestArchive
         return TaskRowActions(
             toggleDone: {
                 Task { @MainActor in
@@ -125,6 +130,7 @@ struct RowActionFactory {
             refile: {
                 selection.refileTask = snapshot
             },
+            archive: onArchive.map { handler in { handler(snapshot) } },
             setTags: { newTags in
                 Task { @MainActor in
                     guard let client = settings.apiClient else { return }

@@ -26,13 +26,13 @@ struct MacTodayView: View {
                         get: { !settings.hideUpcomingDeadlines },
                         set: { settings.hideUpcomingDeadlines = !$0 }
                     )) {
-                        Label("Show upcoming deadlines",
+                        Label("Show deadlines",
                               systemImage: settings.hideUpcomingDeadlines ? "eye.slash" : "eye")
                     }
                     .toggleStyle(.button)
                     .help(settings.hideUpcomingDeadlines
-                          ? "Showing only today's tasks. Click to also show upcoming deadlines within the warning period."
-                          : "Showing today + upcoming deadlines. Click to hide upcoming deadlines for focus.")
+                          ? "Showing only tasks scheduled for today. Click to also include deadline-anchored rows (today, past-due, and within the warning window)."
+                          : "Showing scheduled tasks plus deadline-anchored rows. Click to hide everything that's only here because of a deadline.")
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Toggle(isOn: $showDone) {
@@ -40,6 +40,21 @@ struct MacTodayView: View {
                     }
                     .toggleStyle(.button)
                     .help(showDone ? "Showing completed tasks. Click to hide." : "Completed tasks hidden. Click to show.")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Toggle(isOn: Binding(
+                        get: { !settings.hideHabitsInToday },
+                        set: { settings.hideHabitsInToday = !$0 }
+                    )) {
+                        Label("Show habits",
+                              systemImage: settings.hideHabitsInToday
+                                ? "arrow.triangle.2.circlepath.circle"
+                                : "arrow.triangle.2.circlepath.circle.fill")
+                    }
+                    .toggleStyle(.button)
+                    .help(settings.hideHabitsInToday
+                          ? "Habits hidden in Today. Click to show. (Dedicated Habits view is unaffected.)"
+                          : "Showing habits inline. Click to hide for less daily/weekly clutter.")
                 }
                 ToolbarItem(placement: .primaryAction) {
                     ReloadButton(action: { Task { await load() } }, disabled: !settings.isConfigured)
@@ -90,8 +105,22 @@ struct MacTodayView: View {
                 return !doneStates.contains(state.uppercased())
             }
         }
+        if settings.hideHabitsInToday {
+            visible = visible.filter { !$0.isHabit }
+        }
         if settings.hideUpcomingDeadlines {
-            visible = visible.filter { $0.agendaType != "upcoming-deadline" }
+            // "Hide deadlines" used to only drop the warning-window
+            // previews (`upcoming-deadline`). That made the toggle
+            // appear broken: an overdue task (e.g. "Cook Food / 1 d.
+            // ago") has `agendaType == "deadline"`, not
+            // `upcoming-deadline`, so clicking the eye-slash left it
+            // visible. The user-facing intent is "hide anything that
+            // appears in Today *because of* a deadline" — past-due,
+            // today, and upcoming — leaving only rows that are
+            // genuinely scheduled (or block/timestamp) for today.
+            visible = visible.filter {
+                $0.agendaType != "deadline" && $0.agendaType != "upcoming-deadline"
+            }
         }
         let deduped = dedupeAgendaEntries(visible)
         let events = deduped.filter(AgendaEntryClassification.isEvent)
@@ -123,38 +152,55 @@ struct MacTodayView: View {
         let factory = RowActionFactory(store: store, settings: settings, selection: selection, clocks: clocks, sync: sync)
         let totalTasks = scheduleItems.filter { if case .task = $0.item { return true }; return false }.count + sortedUntimed.count
         let totalEvents = scheduleItems.filter { if case .event = $0.item { return true }; return false }.count + allDayEvents.count
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
-                dayHead(tasks: totalTasks, events: totalEvents)
-                if !allDayEvents.isEmpty {
-                    MacEventBanners(entries: allDayEvents, showHeader: true)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    dayHead(tasks: totalTasks, events: totalEvents)
+                    if !allDayEvents.isEmpty {
+                        MacEventBanners(entries: allDayEvents, showHeader: true)
+                    }
+                    if !scheduleItems.isEmpty {
+                        scheduleSection(scheduleItems, doneStates: doneStates, factory: factory)
+                    }
+                    GroupedTaskList(
+                        groups: groups,
+                        secondaryKey: settings.agendaGroupSecondary,
+                        eisenhower: eisCtx,
+                        doneStates: doneStates,
+                        factory: factory,
+                        selection: selection,
+                        store: store,
+                        collapsed: $collapsedGroups
+                    )
                 }
-                if !scheduleItems.isEmpty {
-                    scheduleSection(scheduleItems, doneStates: doneStates, factory: factory)
-                }
-                GroupedTaskList(
-                    groups: groups,
-                    secondaryKey: settings.agendaGroupSecondary,
-                    eisenhower: eisCtx,
-                    doneStates: doneStates,
-                    factory: factory,
-                    selection: selection,
-                    store: store,
-                    collapsed: $collapsedGroups
+                .padding(.horizontal, 32)
+                .padding(.top, 22)
+                .padding(.bottom, 40)
+                .frame(maxWidth: .infinity, minHeight: 600, alignment: .leading)
+                .background(
+                    Rectangle()
+                        .fill(Theme.background)
+                        .contentShape(Rectangle())
+                        .onTapGesture { selection.taskId = nil }
                 )
             }
-            .padding(.horizontal, 32)
-            .padding(.top, 22)
-            .padding(.bottom, 40)
-            .frame(maxWidth: .infinity, minHeight: 600, alignment: .leading)
-            .background(
-                Rectangle()
-                    .fill(Theme.background)
-                    .contentShape(Rectangle())
-                    .onTapGesture { selection.taskId = nil }
-            )
+            .background(Theme.background)
+            .onChange(of: selection.revealTaskId) { _, new in
+                consumeReveal(new, proxy: proxy)
+            }
+            .onAppear { consumeReveal(selection.revealTaskId, proxy: proxy) }
         }
-        .background(Theme.background)
+    }
+
+    private func consumeReveal(_ id: String?, proxy: ScrollViewProxy) {
+        guard let id else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            proxy.scrollTo(id, anchor: .center)
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            if selection.revealTaskId == id { selection.revealTaskId = nil }
+        }
     }
 
     private static let dayHeadFormatter: DateFormatter = {
@@ -256,6 +302,7 @@ struct MacTodayView: View {
                                 keywords: store.keywords,
                                 onAppear: factory.prefetch(for: t)
                             )
+                            .id(t.id)
                         }
                     }
                 }

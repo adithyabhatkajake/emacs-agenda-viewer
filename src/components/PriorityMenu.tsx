@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect } from 'react';
 
 interface PriorityMenuProps {
   currentPriority: string | undefined;
@@ -15,6 +15,7 @@ const PRIORITIES = [
 
 export function PriorityMenu({ currentPriority, onSelect, disabled }: PriorityMenuProps) {
   const [open, setOpen] = useState(false);
+  const [placeAbove, setPlaceAbove] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -41,6 +42,23 @@ export function PriorityMenu({ currentPriority, onSelect, disabled }: PriorityMe
     return () => document.removeEventListener('keydown', handler);
   }, [open]);
 
+  // Mirror the auto-flip in TodoStateMenu so a row near the bottom of the
+  // viewport doesn't show only the "Set Priority" header with the rest
+  // clipped by the scroll-container ancestor / mobile URL bar.
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current || !menuRef.current) return;
+    const trigger = triggerRef.current.getBoundingClientRect();
+    const menu = menuRef.current.getBoundingClientRect();
+    const margin = 12;
+    const spaceBelow = window.innerHeight - trigger.bottom - margin;
+    const spaceAbove = trigger.top - margin;
+    if (menu.height > spaceBelow && spaceAbove > spaceBelow) {
+      setPlaceAbove(true);
+    } else {
+      setPlaceAbove(false);
+    }
+  }, [open]);
+
   const current = PRIORITIES.find(p => p.key === currentPriority);
 
   return (
@@ -61,7 +79,9 @@ export function PriorityMenu({ currentPriority, onSelect, disabled }: PriorityMe
       {open && (
         <div
           ref={menuRef}
-          className="absolute left-0 top-full mt-1.5 z-50 bg-things-surface/95 rounded-xl shadow-2xl shadow-black/50 border border-things-border py-1.5 min-w-[180px]"
+          className={`absolute left-0 z-50 bg-things-surface/95 rounded-xl shadow-2xl shadow-black/50 border border-things-border py-1.5 min-w-[180px] max-h-[70vh] overflow-y-auto ${
+            placeAbove ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
+          }`}
           style={{ backdropFilter: 'blur(24px)' }}
         >
           <div className="px-3 pt-1 pb-1.5 text-[9px] font-semibold text-text-tertiary uppercase tracking-widest">

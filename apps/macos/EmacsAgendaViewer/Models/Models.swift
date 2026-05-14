@@ -60,6 +60,11 @@ struct OrgTask: Codable, Hashable, Identifiable, Sendable {
     let scheduled: OrgTimestamp?
     let deadline: OrgTimestamp?
     let closed: String?
+    /// Raw org timestamps mined from the heading's LOGBOOK drawer when
+    /// the heading is flagged `:STYLE: habit`. Newest-first per the
+    /// daemon. Nil for non-habit headings — the daemon doesn't emit
+    /// this field outside of habits to keep the wire payload lean.
+    let completions: [String]?
     let category: String
     let level: Int
     let file: String
@@ -89,11 +94,15 @@ struct AgendaEntry: Codable, Hashable, Identifiable, Sendable {
     let warntime: String?
     let timeOfDay: String?
     let displayDate: String?
+    /// Mirrors `:STYLE: habit` on the underlying heading. Lets list
+    /// views filter habit-driven rows from Today/Upcoming without
+    /// cross-referencing `/api/tasks`.
+    let isHabit: Bool
 
     private enum CodingKeys: String, CodingKey {
         case id, title, agendaType, todoState, priority, tags, inheritedTags
         case scheduled, deadline, category, level, file, pos
-        case effort, warntime, timeOfDay, displayDate, tsDate
+        case effort, warntime, timeOfDay, displayDate, tsDate, isHabit
     }
 
     init(from decoder: Decoder) throws {
@@ -125,6 +134,7 @@ struct AgendaEntry: Codable, Hashable, Identifiable, Sendable {
         let primary = try c.decodeIfPresent(String.self, forKey: .displayDate)
         let fallback = try c.decodeIfPresent(String.self, forKey: .tsDate)
         displayDate = primary ?? fallback
+        isHabit = (try? c.decodeIfPresent(Bool.self, forKey: .isHabit)) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -146,6 +156,7 @@ struct AgendaEntry: Codable, Hashable, Identifiable, Sendable {
         try c.encodeIfPresent(warntime, forKey: .warntime)
         try c.encodeIfPresent(timeOfDay, forKey: .timeOfDay)
         try c.encodeIfPresent(displayDate, forKey: .displayDate)
+        if isHabit { try c.encode(true, forKey: .isHabit) }
     }
 }
 

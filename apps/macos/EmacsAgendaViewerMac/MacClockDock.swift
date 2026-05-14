@@ -4,6 +4,11 @@ struct MacClockDock: View {
     @Environment(AppSettings.self) private var settings
     @Environment(ClockManager.self) private var clocks
     let store: TasksStore
+    /// Called when the user clicks the (non-button) body of a clock row —
+    /// the title, priority box, category chip, or elapsed counter. Lets
+    /// the host (RootView) navigate to the task in the All Tasks list.
+    /// Nil means clicks are inert.
+    var onReveal: ((ClockManager.Session) -> Void)? = nil
 
     var body: some View {
         if clocks.sessions.isEmpty {
@@ -76,32 +81,45 @@ struct MacClockDock: View {
     private func sessionRow(_ session: ClockManager.Session, now: Date) -> some View {
         let priority = priorityFor(session)
         HStack(spacing: 10) {
-            Text("⏰")
-                .font(.system(size: 14))
-                .frame(width: 18)
-            if let p = priority, !p.isEmpty {
-                priorityBox(p)
+            // Reveal area: everything between the stopwatch and the stop
+            // button is one big invisible button. Hit-testing the buttons
+            // takes precedence — they live outside this group below.
+            Button {
+                onReveal?(session)
+            } label: {
+                HStack(spacing: 10) {
+                    Text("⏰")
+                        .font(.system(size: 14))
+                        .frame(width: 18)
+                    if let p = priority, !p.isEmpty {
+                        priorityBox(p)
+                    }
+                    Text(session.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    if !session.category.isEmpty {
+                        Text(session.category.uppercased())
+                            .font(.system(size: 10, weight: .bold))
+                            .tracking(0.6)
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Theme.textSecondary.opacity(0.10))
+                            )
+                    }
+                    Text(ClockManager.formatElapsed(session.elapsed(now: now)))
+                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Theme.priorityB)
+                }
+                .contentShape(Rectangle())
             }
-            Text(session.title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            if !session.category.isEmpty {
-                Text(session.category.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(0.6)
-                    .foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(Theme.textSecondary.opacity(0.10))
-                    )
-            }
-            Text(ClockManager.formatElapsed(session.elapsed(now: now)))
-                .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                .foregroundStyle(Theme.priorityB)
+            .buttonStyle(.plain)
+            .help("Reveal task in the current list")
+            .disabled(onReveal == nil)
             stopButton(session)
             cancelButton(session)
         }

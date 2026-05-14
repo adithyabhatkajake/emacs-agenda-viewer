@@ -50,10 +50,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tasks/:id/deadline", patch(patch_deadline))
         .route("/api/tasks/:id/property", patch(patch_property))
         .route("/api/tasks/:id/refile", post(post_refile_task))
+        .route("/api/tasks/:id/archive", post(post_archive_task))
         .route("/api/capture/templates", get(get_capture_templates))
         .route("/api/capture", post(post_capture))
         .route("/api/insert-entry", post(post_insert_entry))
         .route("/api/debug", get(get_debug))
+        .route("/api/shutdown", post(post_shutdown))
         .route("/api/events", get(get_events))
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -385,6 +387,18 @@ async fn post_refile_task(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
+async fn post_archive_task(
+    State(state): State<AppState>,
+    PathParam(_id): PathParam<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // org-archive-subtree both removes the heading from the source file and
+    // appends it to the archive file. Both writes are picked up by the
+    // file watcher, so we don't need to invalidate the index by hand.
+    let _: serde_json::Value = state.bridge.call("write.archive", body).await?;
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
 async fn patch_title(
     State(state): State<AppState>,
     PathParam(_id): PathParam<String>,
@@ -479,7 +493,25 @@ async fn get_debug(State(state): State<AppState>) -> Result<Json<serde_json::Val
         "platform": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
         "rustVersion": option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown"),
+        // The Mac app reads this on startup to decide whether the existing
+        // daemon matches the bundled binary, and replaces it if not — the
+        // version-handshake half of the lifecycle plan.
+        "version": env!("CARGO_PKG_VERSION"),
     })))
+}
+
+/// Trigger axum's graceful shutdown. Used by the Mac app when it detects
+/// a version mismatch against the currently-running daemon, and by the dev
+/// loop / installers that want a clean stop (final snapshot save included).
+/// 127.0.0.1-only by default; no auth, same threat model as the other writes.
+async fn post_shutdown(State(state): State<AppState>) -> Json<serde_json::Value> {
+    if let Some(tx) = state.shutdown_tx.lock().take() {
+        let _ = tx.send(());
+        Json(serde_json::json!({ "ok": true, "shuttingDown": true }))
+    } else {
+        // Already triggered — idempotent so concurrent clients don't 500.
+        Json(serde_json::json!({ "ok": true, "shuttingDown": true, "alreadyTriggered": true }))
+    }
 }
 
 async fn get_events(

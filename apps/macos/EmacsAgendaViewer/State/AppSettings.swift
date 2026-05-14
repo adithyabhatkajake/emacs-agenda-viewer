@@ -70,6 +70,7 @@ final class AppSettings {
     private static let groupListKey = "groupList"
     private static let calendarIdKey = "eventKitCalendarId"
     private static let hideUpcomingDeadlinesKey = "hideUpcomingDeadlines"
+    private static let hideHabitsKey = "hideHabitsInToday"
     private static let hiddenCalendarsKey = "hiddenCalendarIds"
     private static let groupAgendaSecondaryKey = "groupAgendaSecondary"
     private static let groupListSecondaryKey = "groupListSecondary"
@@ -129,6 +130,14 @@ final class AppSettings {
     /// actually due that day).
     var hideUpcomingDeadlines: Bool {
         didSet { UserDefaults.standard.set(hideUpcomingDeadlines, forKey: Self.hideUpcomingDeadlinesKey) }
+    }
+
+    /// When true, Today and Upcoming drop `:STYLE: habit` headings.
+    /// Helpful for users whose habits are noisy daily/weekly chores
+    /// that crowd out one-shot tasks. The dedicated Habits view still
+    /// shows them.
+    var hideHabitsInToday: Bool {
+        didSet { UserDefaults.standard.set(hideHabitsInToday, forKey: Self.hideHabitsKey) }
     }
 
     var eisenhowerUrgencyDays: Int {
@@ -348,6 +357,7 @@ final class AppSettings {
         self.eventKitCalendarIdentifier = d.string(forKey: Self.calendarIdKey)
         self.hiddenCalendarIds = Set(d.stringArray(forKey: Self.hiddenCalendarsKey) ?? [])
         self.hideUpcomingDeadlines = d.bool(forKey: Self.hideUpcomingDeadlinesKey)
+        self.hideHabitsInToday = d.bool(forKey: Self.hideHabitsKey)
         self.eisenhowerUrgencyDays = (d.object(forKey: Self.eisenhowerUrgencyDaysKey) as? Int) ?? 7
         self.eisenhowerSpan = EisenhowerSpan(rawValue: d.string(forKey: Self.eisenhowerSpanKey) ?? "") ?? .twoWeeks
         self.rowHighlightMode = RowHighlightMode(rawValue: d.string(forKey: Self.rowHighlightModeKey) ?? "") ?? .none

@@ -214,6 +214,62 @@ func groupTasks<T: TaskDisplayable & Identifiable>(
     return sortedKeys.map { TaskGroup(id: $0, label: $0, items: buckets[$0] ?? []) }
 }
 
+/// Bucket DONE/KILL tasks by how recently they closed. The Logbook view
+/// uses this; everything else groups by category/priority/etc.
+///
+/// Buckets, in display order:
+///   Today, Yesterday, This Week, This Month, Earlier, Unknown
+///
+/// "Unknown" catches tasks marked done without a CLOSED timestamp — this
+/// happens when the user disables `org-log-done`, completes a heading
+/// from an external tool, or imports tasks that were already done.
+func groupTasksByClosedDate(_ items: [OrgTask]) -> [TaskGroup<OrgTask>] {
+    let cal = Calendar.current
+    let now = Date()
+    let startOfToday = cal.startOfDay(for: now)
+    let startOfYesterday = cal.date(byAdding: .day, value: -1, to: startOfToday) ?? startOfToday
+    let startOfWeek = cal.date(byAdding: .day, value: -6, to: startOfToday) ?? startOfToday
+    let startOfMonth = cal.date(byAdding: .day, value: -30, to: startOfToday) ?? startOfToday
+
+    enum Bucket: Int, CaseIterable {
+        case today, yesterday, thisWeek, thisMonth, earlier, unknown
+        var label: String {
+            switch self {
+            case .today:     return "Today"
+            case .yesterday: return "Yesterday"
+            case .thisWeek:  return "This Week"
+            case .thisMonth: return "This Month"
+            case .earlier:   return "Earlier"
+            case .unknown:   return "Unknown Date"
+            }
+        }
+    }
+
+    var buckets: [Bucket: [OrgTask]] = [:]
+    for item in items {
+        let ms = extractDateMs(item.closed)
+        let bucket: Bucket
+        if !ms.isFinite {
+            bucket = .unknown
+        } else {
+            let date = Date(timeIntervalSince1970: ms / 1000)
+            if date >= startOfToday { bucket = .today }
+            else if date >= startOfYesterday { bucket = .yesterday }
+            else if date >= startOfWeek { bucket = .thisWeek }
+            else if date >= startOfMonth { bucket = .thisMonth }
+            else { bucket = .earlier }
+        }
+        buckets[bucket, default: []].append(item)
+    }
+
+    // Within each bucket, sort by CLOSED descending (most recent first).
+    return Bucket.allCases.compactMap { b in
+        guard var items = buckets[b], !items.isEmpty else { return nil }
+        items.sort { extractDateMs($0.closed) > extractDateMs($1.closed) }
+        return TaskGroup(id: "closed_\(b.rawValue)", label: b.label, items: items)
+    }
+}
+
 /// Collapse duplicate agenda entries by task id, preferring the entry that
 /// carries a clock time so the row keeps its scheduled hour.
 func dedupeAgendaEntries(_ entries: [AgendaEntry]) -> [AgendaEntry] {

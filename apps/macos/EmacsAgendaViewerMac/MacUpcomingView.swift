@@ -27,10 +27,16 @@ struct MacUpcomingView: View {
         if !settings.isConfigured {
             UnconfiguredStateView()
         } else if let entries = store.upcoming.value {
-            if entries.isEmpty {
+            // Honor the Today/Upcoming "hide habits" toggle here too —
+            // the dedicated Habits view is the place to look at them
+            // collectively; in Upcoming they crowd out one-shots.
+            let filtered = settings.hideHabitsInToday
+                ? entries.filter { !$0.isHabit }
+                : entries
+            if filtered.isEmpty {
                 EmptyStateView(title: "Nothing upcoming", systemImage: "calendar")
             } else {
-                groupedList(entries)
+                groupedList(filtered)
             }
         } else if store.upcoming.isLoading {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -50,23 +56,40 @@ struct MacUpcomingView: View {
         }
         let doneStates = Set((store.keywords?.allDone ?? []).map { $0.uppercased() })
         let factory = RowActionFactory(store: store, settings: settings, selection: selection, clocks: clocks, sync: sync)
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
-                ForEach(groups, id: \.key) { group in
-                    daySection(group, doneStates: doneStates, factory: factory)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 24) {
+                    ForEach(groups, id: \.key) { group in
+                        daySection(group, doneStates: doneStates, factory: factory)
+                    }
                 }
+                .padding(.horizontal, 32)
+                .padding(.vertical, 20)
+                .frame(maxWidth: .infinity, minHeight: 600, alignment: .leading)
+                .background(
+                    Rectangle()
+                        .fill(Theme.background)
+                        .contentShape(Rectangle())
+                        .onTapGesture { selection.taskId = nil }
+                )
             }
-            .padding(.horizontal, 32)
-            .padding(.vertical, 20)
-            .frame(maxWidth: .infinity, minHeight: 600, alignment: .leading)
-            .background(
-                Rectangle()
-                    .fill(Theme.background)
-                    .contentShape(Rectangle())
-                    .onTapGesture { selection.taskId = nil }
-            )
+            .background(Theme.background)
+            .onChange(of: selection.revealTaskId) { _, new in
+                consumeReveal(new, proxy: proxy)
+            }
+            .onAppear { consumeReveal(selection.revealTaskId, proxy: proxy) }
         }
-        .background(Theme.background)
+    }
+
+    private func consumeReveal(_ id: String?, proxy: ScrollViewProxy) {
+        guard let id else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            proxy.scrollTo(id, anchor: .center)
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            if selection.revealTaskId == id { selection.revealTaskId = nil }
+        }
     }
 
     @ViewBuilder
@@ -105,6 +128,7 @@ struct MacUpcomingView: View {
                                 keywords: store.keywords,
                                 onAppear: factory.prefetch(for: entry)
                             )
+                            .id(entry.id)
                         }
                     }
                 }

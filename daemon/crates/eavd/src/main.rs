@@ -27,6 +27,8 @@ async fn main() -> ExitCode {
     let mut http_port: Option<u16> = None;
     let mut static_dir: Option<PathBuf> = None;
     let mut http_host: Option<String> = None;
+    let mut watch_parent: Option<i32> = None;
+    let mut explicit_daemon = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -127,6 +129,25 @@ async fn main() -> ExitCode {
                 };
                 static_dir = Some(PathBuf::from(val));
             }
+            "--watch-parent" => {
+                let val = match args.next() {
+                    Some(v) => v,
+                    None => {
+                        eprintln!("--watch-parent requires a PID");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                match val.parse::<i32>() {
+                    Ok(p) if p > 0 => watch_parent = Some(p),
+                    _ => {
+                        eprintln!("--watch-parent: invalid PID {val}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            "--daemon" => {
+                explicit_daemon = true;
+            }
             "--help" | "-h" => {
                 print_help();
                 return ExitCode::SUCCESS;
@@ -139,8 +160,13 @@ async fn main() -> ExitCode {
         }
     }
 
+    if explicit_daemon && watch_parent.is_some() {
+        eprintln!("--daemon and --watch-parent are mutually exclusive");
+        return ExitCode::FAILURE;
+    }
+
     match mode {
-        Mode::Server => match run_server(http_port, http_host, static_dir).await {
+        Mode::Server => match run_server(http_port, http_host, static_dir, watch_parent).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("eavd: {e:#}");
@@ -170,6 +196,7 @@ async fn run_server(
     http_port: Option<u16>,
     http_host: Option<String>,
     static_dir: Option<PathBuf>,
+    watch_parent: Option<i32>,
 ) -> anyhow::Result<()> {
     let bridge_path = default_bridge_socket();
     // Make sure the bridge is actually listening. On a fresh install the
@@ -200,7 +227,12 @@ async fn run_server(
         }
     }
 
-    let state = AppState::new(index.clone(), bridge.clone()).with_static_dir(static_dir);
+    // Shutdown channel: `/api/shutdown` and signal handlers fire `shutdown_tx`;
+    // axum's `with_graceful_shutdown` awaits the matching `shutdown_rx`.
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let state = AppState::new(index.clone(), bridge.clone())
+        .with_static_dir(static_dir)
+        .with_shutdown_tx(shutdown_tx);
 
     // Pull config + keywords + files from the bridge, populate cached_config,
     // and seed `index.set_global_keywords` so non-`#+TODO:` files match the
@@ -346,6 +378,30 @@ async fn run_server(
         }
     });
 
+    // Optional parent-watchdog. When the Mac app launches eavd as a helper,
+    // it passes `--watch-parent <its-pid>`; we then exit if the parent dies
+    // (crash, SIGKILL, force-quit, auto-update). Headless installs don't pass
+    // the flag and run forever. Two redundant mechanisms in one task:
+    //   • stdin EOF — parent holds the write end of a Pipe; kernel closes it
+    //     when the parent dies, we see EOF on stdin, exit immediately.
+    //   • getppid() poll — backup for cases where stdin is dup'd or closed
+    //     out from under us; fires within ~2 s.
+    if let Some(parent_pid) = watch_parent {
+        spawn_parent_watchdog(parent_pid);
+    }
+
+    // Signal-driven shutdown: SIGTERM / SIGINT trip the same channel that
+    // POST /api/shutdown uses, so launchd `bootout`, Ctrl-C in dev, and
+    // the Mac app's version-mismatch flow all flow through the same final
+    // snapshot save below.
+    let signal_shutdown_tx = state.shutdown_tx.clone();
+    tokio::spawn(async move {
+        wait_for_signal().await;
+        if let Some(tx) = signal_shutdown_tx.lock().take() {
+            let _ = tx.send(());
+        }
+    });
+
     // HTTP server.
     let router = build_router(state);
     let port = http_port.unwrap_or(3002);
@@ -355,8 +411,86 @@ async fn run_server(
     let bind: std::net::SocketAddr = format!("{host}:{port}").parse()?;
     tracing::info!(?bind, "eavd HTTP listening");
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    axum::serve(listener, router).await?;
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.await;
+            tracing::info!("graceful shutdown requested");
+        })
+        .await?;
+
+    // Final snapshot save so an in-flight tick doesn't lose state.
+    // The periodic writer only fires every 5 min; this catches the last delta.
+    if let Ok(mut snap) = Snapshot::open(&Snapshot::default_path()) {
+        if let Err(e) = index.save_snapshot(&mut snap) {
+            tracing::warn!(error = %e, "final snapshot save failed");
+        } else {
+            tracing::info!("final snapshot saved");
+        }
+    }
     Ok(())
+}
+
+/// Watch the parent process. Exits when stdin closes OR the parent's PID
+/// changes (reparented after a parent death). The Mac app launches us with
+/// a Pipe on stdin and never writes to it — kernel closes the write end
+/// when the app dies, we see EOF here.
+fn spawn_parent_watchdog(initial_parent: i32) {
+    use tokio::io::AsyncReadExt;
+    // stdin EOF arm.
+    tokio::spawn(async {
+        let mut stdin = tokio::io::stdin();
+        let mut buf = [0u8; 256];
+        loop {
+            match stdin.read(&mut buf).await {
+                Ok(0) => {
+                    tracing::info!("parent watchdog: stdin closed, exiting");
+                    std::process::exit(0);
+                }
+                Ok(_) => continue, // ignore data; we only care about EOF
+                Err(e) => {
+                    tracing::info!(error = %e, "parent watchdog: stdin error, exiting");
+                    std::process::exit(0);
+                }
+            }
+        }
+    });
+    // getppid() poll arm.
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            // SAFETY: getppid is signal-safe and unconditional.
+            let cur = unsafe { libc::getppid() };
+            if cur != initial_parent {
+                tracing::info!(
+                    initial = initial_parent,
+                    current = cur,
+                    "parent watchdog: parent PID changed, exiting"
+                );
+                std::process::exit(0);
+            }
+        }
+    });
+}
+
+/// Resolve on SIGTERM (launchctl bootout, install scripts), SIGINT (Ctrl-C),
+/// or SIGHUP. On non-Unix this falls back to ctrl_c-only.
+async fn wait_for_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+        let mut int = signal(SignalKind::interrupt()).expect("install SIGINT handler");
+        let mut hup = signal(SignalKind::hangup()).expect("install SIGHUP handler");
+        tokio::select! {
+            _ = term.recv() => tracing::info!("SIGTERM received"),
+            _ = int.recv()  => tracing::info!("SIGINT received"),
+            _ = hup.recv()  => tracing::info!("SIGHUP received"),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 fn forward_bridge_event(
@@ -692,6 +826,8 @@ fn print_help() {
          eavd --http-port N                bind to a different TCP port\n  \
          eavd --http-host HOST             bind to HOST (e.g. 0.0.0.0 for LAN access)\n  \
          eavd --static-dir <path>          serve SPA assets from <path> (`/` ⇒ index.html)\n  \
+         eavd --watch-parent <PID>         exit when PID dies or stdin closes (Mac app helper mode)\n  \
+         eavd --daemon                     explicit headless marker (no parent watchdog; default)\n  \
          eavd --dump-tasks [files...]      parse files and print tasks JSON\n  \
          eavd --dump-active-tasks ...      same, only active (non-done) tasks\n  \
          eavd --dump-agenda-day YYYY-MM-DD parse files and print agenda entries\n  \

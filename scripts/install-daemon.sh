@@ -98,6 +98,7 @@ case "$OS" in
     <string>$EAVD_BIN</string>
     <string>--http-port</string>
     <string>$PORT</string>
+    <string>--daemon</string>
 ${EXTRA_ARGS}  </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -149,7 +150,7 @@ PLISTEOF
             cargo build --manifest-path "$REPO_ROOT/daemon/Cargo.toml" --release -p eavd
         fi
 
-        EXEC_ARGS="--http-port $PORT"
+        EXEC_ARGS="--http-port $PORT --daemon"
         if [[ "$HOST" != "127.0.0.1" ]]; then
             EXEC_ARGS="$EXEC_ARGS --http-host $HOST"
         fi

@@ -7,12 +7,11 @@ members = [
     "crates/eav-agenda",
     "crates/eav-bridge",
     "crates/eav-server",
-    "crates/eav-mcp",
     "crates/eavd",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.80"
 authors = ["Adithya Bhat"]
@@ -67,7 +66,6 @@ eav-index  = { path = "crates/eav-index" }
 eav-agenda = { path = "crates/eav-agenda" }
 eav-bridge = { path = "crates/eav-bridge" }
 eav-server = { path = "crates/eav-server" }
-eav-mcp    = { path = "crates/eav-mcp" }
 
 [profile.release]
 opt-level = 3

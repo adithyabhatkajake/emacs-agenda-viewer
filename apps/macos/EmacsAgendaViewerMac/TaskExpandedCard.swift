@@ -198,7 +198,6 @@ struct TaskExpandedCard: View {
         if !isEditing {
             Button("Edit") { startEditing() }
         }
-        Button(isDone ? "Mark as Not Done" : "Mark as Done") { actions.toggleDone() }
         Divider()
         Menu("Priority") {
             ForEach(["A", "B", "C", "D"], id: \.self) { p in
@@ -229,6 +228,9 @@ struct TaskExpandedCard: View {
         }
         Divider()
         Button("Refile…") { actions.refile() }
+        if let archive = actions.archive {
+            Button("Archive…", role: .destructive) { archive() }
+        }
     }
 
     private func dismissInspector() {
@@ -1245,6 +1247,14 @@ struct DatePickerPopover: View {
     @State private var hasTime: Bool
     @State private var monthAnchor: Date
     @State private var query: String = ""
+    /// True when the user has edited the time field since the popover
+    /// opened (or since the last commit). The compact DatePicker writes
+    /// `date` on EVERY keystroke — without batching, typing "1030"
+    /// fires four daemon round-trips and the task visibly jumps from
+    /// 01:00 → 10:00 → 10:03 → 10:30 as digits land. We defer the
+    /// commit to popover-close, which is the user's explicit "done"
+    /// signal, and flush exactly once.
+    @State private var timeDirty: Bool = false
     let tint: Color
     /// Commit a new date. `closing` is true when the popover should auto-dismiss
     /// after this commit (e.g., picking a day, "Today", or "This Evening").
@@ -1331,6 +1341,14 @@ struct DatePickerPopover: View {
         .shadow(color: .black.opacity(0.35), radius: 14, y: 6)
         .colorScheme(.dark)
         .padding(2)
+        // The popover-close event is the user's explicit "I'm done
+        // editing" signal — fire the one commit here. timeDirty stays
+        // false for picker dismissals that didn't touch the time
+        // field, so we don't redundantly re-write the same SCHEDULED
+        // line when the user just opens-and-closes the popover.
+        .onDisappear {
+            if timeDirty { commit(closing: false) }
+        }
     }
 
     private var eveningHour: Int { 18 }
@@ -1475,6 +1493,7 @@ struct DatePickerPopover: View {
 
     private func commit(closing: Bool = false) {
         onSet(date, hasTime, closing)
+        timeDirty = false
     }
 
     @ViewBuilder
@@ -1514,10 +1533,11 @@ struct DatePickerPopover: View {
                     .labelsHidden()
                     .datePickerStyle(.compact)
                     .fixedSize()
-                    .onChange(of: date) { _, _ in commit(closing: false) }
+                    .onChange(of: date) { _, _ in timeDirty = true }
                 Spacer()
                 Button {
                     hasTime = false
+                    timeDirty = false
                     commit(closing: false)
                 } label: {
                     Image(systemName: "xmark.circle.fill")

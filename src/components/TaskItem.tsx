@@ -1,7 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { OrgTask, AgendaEntry, OrgTimestamp, TodoKeywords } from '../types';
-import { updateTodoState, updatePriority, updateScheduled, updateDeadline, updateTitle, fetchRefileTargets, refileTask, fetchNotes, saveNotes, clockIn, clockOutApi, type ClockStatus, type RefileTarget } from '../api/tasks';
+import { updateTodoState, updatePriority, updateScheduled, updateDeadline, updateTitle, updateTags, setEffort, fetchRefileTargets, refileTask, archiveTask, fetchNotes, saveNotes, clockIn, clockOutApi, type ClockStatus, type RefileTarget } from '../api/tasks';
+import { TagPicker } from './TagPicker';
+import { EffortPicker } from './EffortPicker';
+import { ScheduleTray } from './ScheduleTray';
+import { computeNextRepeat } from '../utils/repeater';
 
 function useLongPress(callback: (e: React.TouchEvent) => void, ms = 500) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -39,6 +43,13 @@ interface TaskItemProps {
   onRefresh: () => void;
   onRefreshClock: () => void;
   agendaType?: string;
+  /** All known tags across all tasks — used by TagPicker for suggestions. */
+  allTags?: string[];
+  /** When true, surface an Archive entry in the row's context menu.
+   *  Gated to the Logbook view because org-archive-subtree is hard
+   *  to reverse (the heading moves into <file>.org_archive, which
+   *  eavd does not index). */
+  allowArchive?: boolean;
 }
 
 function formatTimestamp(ts: { raw: string; date: string; repeater?: { type: string; value: number; unit: string } } | undefined): string | null {
@@ -89,6 +100,18 @@ function categoryDotColor(category: string | undefined): string {
   return `rgb(var(${CATEGORY_DOT_VARS[h % CATEGORY_DOT_VARS.length]}))`;
 }
 
+/** Format a Date as a relative label matching formatTimestamp's style. */
+function formatRelativeDate(date: Date): string {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.floor((d.getTime() - today.getTime()) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Tomorrow';
+  if (diffDays <= 6) return date.toLocaleDateString('en-US', { weekday: 'short' });
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 function isOverdue(ts: { raw: string } | undefined): boolean {
   if (!ts) return false;
   const match = ts.raw.match(/(\d{4})-(\d{2})-(\d{2})/);
@@ -99,7 +122,7 @@ function isOverdue(ts: { raw: string } | undefined): boolean {
   return date < today;
 }
 
-export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, onRefreshClock, agendaType }: TaskItemProps) {
+export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, onRefreshClock, agendaType, allTags, allowArchive }: TaskItemProps) {
   const [updating, setUpdating] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [notes, setNotes] = useState<string | null>(null);
@@ -112,6 +135,8 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
   const [titleText, setTitleText] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [refileOpen, setRefileOpen] = useState(false);
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [effortPickerOpen, setEffortPickerOpen] = useState(false);
   const contextRef = useRef<HTMLDivElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const done = isDoneState(task.todoState);
@@ -238,6 +263,14 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
   const tsDate = agendaEntry?.tsDate;
   const isClocked = clockStatus.clocking && clockStatus.file === task.file && clockStatus.pos === task.pos;
 
+  // Next-repeat chip: only for OrgTask (not AgendaEntry), not done
+  const nextRepeatDate = (!isAgenda && !done)
+    ? (
+        (task.scheduled?.repeater ? computeNextRepeat(task.scheduled) : null)
+        || (task.deadline?.repeater ? computeNextRepeat(task.deadline) : null)
+      )
+    : null;
+
   const handleCheckboxToggle = async (e: React.MouseEvent | React.KeyboardEvent) => {
     e.stopPropagation();
     if (updating || !keywords) return;
@@ -253,6 +286,9 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
 
   return (
     <div
+      data-task-id={task.id}
+      data-task-file={task.file}
+      data-task-pos={task.pos}
       className={`group border-b transition-colors ${
         isClocked ? 'border-done-green/20 bg-done-green/5' :
         expanded ? 'bg-things-surface/60 border-things-border-subtle/30' : 'border-things-border-subtle/30 hover:bg-things-sidebar-hover/30'
@@ -345,9 +381,18 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
               {renderInline(task.title)}
             </span>
           )}
+          {/* Next-repeat chip */}
+          {nextRepeatDate && (
+            <span
+              className="flex-shrink-0 text-[10px] px-1.5 py-[2px] rounded-full bg-accent-teal/10 text-accent-teal border border-accent-teal/15 whitespace-nowrap"
+              title="Next repeat"
+            >
+              {'🔁'} {formatRelativeDate(nextRepeatDate)}
+            </span>
+          )}
         </div>
 
-        {/* Right meta — single date/time chunk */}
+        {/* Right meta — date chip (interactive for OrgTask, static for AgendaEntry) */}
         <span className="text-[11px] md:text-[10px] text-text-tertiary tabular-nums whitespace-nowrap flex-shrink-0">
           {(() => {
             if (isAgenda && effectiveAgendaType === 'deadline') {
@@ -357,9 +402,28 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
               return <span className="text-priority-b">{orgExtra || effectiveAgendaType}</span>;
             }
             if (timeOfDay) return <span className="text-accent-teal">{timeOfDay}</span>;
-            if (!isAgenda && scheduledStr) return <span>{scheduledStr}</span>;
+            if (!isAgenda && scheduledStr) {
+              return (
+                <ScheduleTray
+                  task={task as OrgTask}
+                  field="scheduled"
+                  label={scheduledStr}
+                  onSelect={handleScheduledChange}
+                  disabled={updating}
+                />
+              );
+            }
             if (!isAgenda && deadlineStr) {
-              return <span className={deadlineOverdue ? 'text-priority-a' : ''}>{deadlineStr}</span>;
+              return (
+                <ScheduleTray
+                  task={task as OrgTask}
+                  field="deadline"
+                  label={deadlineStr}
+                  overdue={deadlineOverdue}
+                  onSelect={handleDeadlineChange}
+                  disabled={updating}
+                />
+              );
             }
             if (isAgenda && tsDate) {
               const [y, m, d] = tsDate.split('-').map(Number);
@@ -561,6 +625,44 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
           >
             Refile
           </button>
+          <button
+            onClick={() => {
+              setTagPickerOpen(true);
+              setContextMenu(null);
+            }}
+            className="w-full text-left px-3 py-1.5 text-[12px] text-text-primary hover:bg-things-sidebar-hover/80 transition-colors"
+          >
+            Tags
+          </button>
+          <button
+            onClick={() => {
+              setEffortPickerOpen(true);
+              setContextMenu(null);
+            }}
+            className="w-full text-left px-3 py-1.5 text-[12px] text-text-primary hover:bg-things-sidebar-hover/80 transition-colors"
+          >
+            Effort
+          </button>
+          {allowArchive && (
+            <button
+              onClick={async () => {
+                setContextMenu(null);
+                const fileName = task.file.split('/').pop() || task.file;
+                const ok = window.confirm(
+                  `Archive "${task.title}"?\n\n`
+                  + `This runs org-archive-subtree on the heading, moving it out of ${fileName} `
+                  + `into the configured archive location. It will stop appearing in every view; `
+                  + `reversing requires editing in Emacs.`
+                );
+                if (!ok) return;
+                try { await archiveTask(task); onRefresh(); }
+                catch (err) { console.error('Failed to archive:', err); }
+              }}
+              className="w-full text-left px-3 py-1.5 text-[12px] text-priority-a hover:bg-priority-a/10 transition-colors"
+            >
+              Archive…
+            </button>
+          )}
         </div>,
         document.body
       )}
@@ -571,6 +673,41 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
           task={task}
           onClose={() => setRefileOpen(false)}
           onRefiled={onRefresh}
+        />
+      )}
+
+      {/* Tag picker */}
+      {tagPickerOpen && (
+        <TagPicker
+          currentTags={task.tags}
+          allTags={allTags || []}
+          onConfirm={async (newTags) => {
+            try {
+              await updateTags(task as OrgTask, newTags);
+              onRefresh();
+            } catch (err) {
+              console.error('Failed to update tags:', err);
+            }
+            setTagPickerOpen(false);
+          }}
+          onClose={() => setTagPickerOpen(false)}
+        />
+      )}
+
+      {/* Effort picker */}
+      {effortPickerOpen && (
+        <EffortPicker
+          currentEffort={task.effort}
+          onConfirm={async (value) => {
+            try {
+              await setEffort(task as OrgTask, value);
+              onRefresh();
+            } catch (err) {
+              console.error('Failed to set effort:', err);
+            }
+            setEffortPickerOpen(false);
+          }}
+          onClose={() => setEffortPickerOpen(false)}
         />
       )}
     </div>

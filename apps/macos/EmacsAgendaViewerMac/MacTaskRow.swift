@@ -13,6 +13,11 @@ struct TaskRowActions {
     var openInspector: () -> Void = {}
     var editInspector: () -> Void = {}
     var refile: () -> Void = {}
+    /// Nil when the host view doesn't surface archive (everywhere except
+    /// the Logbook). `org-archive-subtree` is destructive and hard to
+    /// reverse, so we gate it to the one view where the user has already
+    /// signaled intent to clear completed work.
+    var archive: (() -> Void)? = nil
     var setTags: ([String]) -> Void = { _ in }
     var saveTitle: ((String) -> Void)?
 }
@@ -202,6 +207,9 @@ struct MacTaskRow: View {
                     .foregroundStyle(Theme.priorityB)
             }
             Spacer(minLength: 6)
+            if let label = repeaterLabel(task.scheduled?.repeater ?? task.deadline?.repeater) {
+                repeaterPill(label)
+            }
             if !task.tags.isEmpty || !task.inheritedTags.isEmpty {
                 HStack(spacing: 4) {
                     ForEach(task.tags, id: \.self) { tag in
@@ -434,6 +442,31 @@ struct MacTaskRow: View {
             )
     }
 
+    /// "1d" / "1w" / "1mo" — the cadence portion of a repeater, rendered
+    /// next to a recycle SF Symbol. The repeater `type` (`.+` / `++` /
+    /// `+`) is dropped from the label: it controls *when* the next
+    /// instance is computed but isn't useful at a glance. Org uses `m`
+    /// for months; we expand to `mo` so it can't be misread as minutes.
+    private func repeaterLabel(_ r: OrgTimestamp.Repeater?) -> String? {
+        guard let r, r.value > 0 else { return nil }
+        let unit = r.unit == "m" ? "mo" : r.unit
+        return "\(r.value)\(unit)"
+    }
+
+    /// Plain inline metadata, no pill background — matches the visual
+    /// weight of the date badges next to it. SF Symbol + monospaced
+    /// cadence in `textTertiary` so it reads as "metadata" not "chrome".
+    private func repeaterPill(_ label: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 10, weight: .medium))
+            Text(label)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+        }
+        .foregroundStyle(Theme.textTertiary)
+        .help("Repeats every \(label) — next instance is auto-scheduled when this task is completed.")
+    }
+
     private func tagChip(_ tag: String, inherited: Bool) -> some View {
         Text("#\(tag)")
             .font(.system(size: 10.5, design: .monospaced))
@@ -462,7 +495,6 @@ struct MacTaskRow: View {
     @ViewBuilder
     private var contextMenuItems: some View {
         Button("Edit") { actions.editInspector() }
-        Button(isDone ? "Mark as Not Done" : "Mark as Done") { actions.toggleDone() }
         Divider()
         Menu("Priority") {
             ForEach(["A", "B", "C", "D"], id: \.self) { p in
@@ -493,5 +525,8 @@ struct MacTaskRow: View {
         }
         Divider()
         Button("Refile…") { actions.refile() }
+        if let archive = actions.archive {
+            Button("Archive…", role: .destructive) { archive() }
+        }
     }
 }

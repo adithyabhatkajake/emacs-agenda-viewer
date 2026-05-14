@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import type { TodoKeywords } from '../types';
 
 interface TodoStateMenuProps {
@@ -49,6 +49,7 @@ export function TodoStateMenu({
   disabled,
 }: TodoStateMenuProps) {
   const [open, setOpen] = useState(false);
+  const [placeAbove, setPlaceAbove] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -75,6 +76,25 @@ export function TodoStateMenu({
     return () => document.removeEventListener('keydown', handler);
   }, [open]);
 
+  // Flip the menu above the trigger when there isn't enough room below.
+  // The task list lives inside an `overflow-y-auto` scroll container — on
+  // mobile especially (Safari URL bar eats ~80px of the viewport bottom) a
+  // bottom-row trigger would otherwise show only the section header and one
+  // or two states with the rest clipped invisibly off-screen.
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current || !menuRef.current) return;
+    const trigger = triggerRef.current.getBoundingClientRect();
+    const menu = menuRef.current.getBoundingClientRect();
+    const margin = 12;
+    const spaceBelow = window.innerHeight - trigger.bottom - margin;
+    const spaceAbove = trigger.top - margin;
+    if (menu.height > spaceBelow && spaceAbove > spaceBelow) {
+      setPlaceAbove(true);
+    } else {
+      setPlaceAbove(false);
+    }
+  }, [open]);
+
   const done = isDoneState(currentState);
   const seq = keywords ? findSequence(currentState, keywords) : null;
   const style = stateStyle(currentState || '', done);
@@ -98,7 +118,9 @@ export function TodoStateMenu({
       {open && seq && (
         <div
           ref={menuRef}
-          className="absolute left-0 top-full mt-1.5 z-50 bg-things-surface/95 rounded-xl shadow-2xl shadow-black/50 border border-things-border py-1 min-w-[170px]"
+          className={`absolute left-0 z-50 bg-things-surface/95 rounded-xl shadow-2xl shadow-black/50 border border-things-border py-1 min-w-[170px] max-h-[70vh] overflow-y-auto ${
+            placeAbove ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
+          }`}
           style={{ backdropFilter: 'blur(24px)' }}
         >
           {/* Active states */}

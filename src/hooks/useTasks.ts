@@ -31,8 +31,12 @@ export function useTasks() {
       const today = todayStr();
       const upcoming = addDays(today, 7);
       // Fetch core data — clock status is non-fatal
+      // Fetch including DONE/KILL so the Logbook view has data without
+      // a separate round-trip. Done tasks are filtered out client-side
+      // wherever they shouldn't appear (Today/Upcoming/All Tasks
+      // already do this via `!isDoneState(...)`).
       const [t, f, k, c, todayE, upcomingE] = await Promise.all([
-        fetchTasks(),
+        fetchTasks(true),
         fetchFiles(),
         fetchKeywords(),
         fetchConfig(),

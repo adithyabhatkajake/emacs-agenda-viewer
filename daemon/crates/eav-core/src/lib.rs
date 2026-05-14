@@ -119,6 +119,14 @@ pub struct OrgTask {
     pub active_timestamps: Option<Vec<OrgTimestamp>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<BTreeMap<String, String>>,
+    /// Completion timestamps mined from the LOGBOOK drawer's
+    /// `- State "DONE" from "..." [timestamp]` lines. Populated only
+    /// when the heading carries `:STYLE: habit` — habits are the only
+    /// readers today and the full payload across non-habit tasks
+    /// would be substantial. Each string is the raw org timestamp
+    /// inside the brackets, e.g. `2026-05-11 Mon 14:32`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completions: Option<Vec<String>>,
 }
 
 // ----------------------------------------------------------------------------
@@ -202,6 +210,12 @@ pub struct AgendaEntry {
     pub ts_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_date: Option<String>,
+    /// Mirrors `:STYLE: habit` on the underlying heading. Surfaced on
+    /// the agenda entry so Today/Upcoming filters can hide habit-
+    /// generated clutter without round-tripping to `/api/tasks`.
+    /// Omitted (and decoded as nil) for non-habit entries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_habit: Option<bool>,
 }
 
 // ----------------------------------------------------------------------------
@@ -418,6 +432,7 @@ mod tests {
             notes: None,
             active_timestamps: None,
             properties: None,
+            completions: None,
         };
         let json = serde_json::to_string(&task).unwrap();
         assert!(!json.contains("priority"));

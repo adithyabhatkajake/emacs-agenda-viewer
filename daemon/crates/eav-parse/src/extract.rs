@@ -15,6 +15,18 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::timestamp::{convert as ts_convert, extract_active_timestamps};
+use once_cell::sync::Lazy;
+use regex::Regex;
+
+/// Captures `- State "DONE" ... [2026-05-11 Mon 14:32]` lines inside a
+/// LOGBOOK drawer. Group 1 is the new state (we only keep DONE for now —
+/// org records `from "TODO"` etc. and there's no clean way to ask the
+/// daemon what the user's done keywords are at parse time). Group 2 is
+/// the raw timestamp inside the brackets, including the day-of-week and
+/// optional clock time.
+static LOGBOOK_DONE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"-\s+State\s+"([^"]+)"\s+from\s+"[^"]*"\s+\[([^\]]+)\]"#).unwrap()
+});
 
 /// Per-file context resolved before walking headlines.
 #[derive(Debug, Clone)]
@@ -437,6 +449,16 @@ fn walk_headlines(
                 Some(props_map)
             };
 
+            // Habit completions: mine the LOGBOOK only when the heading
+            // is flagged as a habit, so the API payload doesn't grow
+            // for every regular task that's ever been retried.
+            let completions = properties
+                .as_ref()
+                .and_then(|p| p.get("STYLE"))
+                .filter(|v| v.eq_ignore_ascii_case("habit"))
+                .map(|_| extract_logbook_completions(&raw_section_text))
+                .filter(|v| !v.is_empty());
+
             let task = OrgTask {
                 id,
                 title,
@@ -460,6 +482,7 @@ fn walk_headlines(
                     Some(active_ts)
                 },
                 properties,
+                completions,
             };
             out.push(task);
         }
@@ -732,12 +755,66 @@ fn extract_property_drawer(section: &str) -> BTreeMap<String, String> {
     out
 }
 
+/// Scan a heading's raw section text for completion timestamps recorded
+/// in the LOGBOOK drawer. Only `State "DONE" from ...` transitions are
+/// returned — habits use the standard repeat cycle which always lands
+/// the heading in DONE before re-scheduling, and users with custom
+/// completion states can add them later if the need shows up.
+///
+/// Newest-first matches org's own LOGBOOK ordering (`org-log-into-drawer`
+/// prepends), but we don't depend on that — the caller can sort.
+fn extract_logbook_completions(section: &str) -> Vec<String> {
+    let mut in_logbook = false;
+    let mut out = Vec::new();
+    for line in section.lines() {
+        let trimmed = line.trim_start();
+        if !in_logbook {
+            if trimmed == ":LOGBOOK:" {
+                in_logbook = true;
+            }
+            continue;
+        }
+        if trimmed == ":END:" {
+            break;
+        }
+        if let Some(caps) = LOGBOOK_DONE.captures(trimmed) {
+            if &caps[1] == "DONE" {
+                out.push(caps[2].to_string());
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn extract(text: &str) -> Vec<OrgTask> {
         extract_tasks_from_source(text, Path::new("/tmp/test.org")).0
+    }
+
+    #[test]
+    fn extracts_habit_completions() {
+        let src = "* TODO Meditate\n  SCHEDULED: <2026-05-12 Tue .+1d>\n  :PROPERTIES:\n  :STYLE: habit\n  :END:\n  :LOGBOOK:\n  - State \"DONE\"       from \"TODO\"       [2026-05-11 Mon 14:32]\n  - State \"DONE\"       from \"TODO\"       [2026-05-10 Sun 09:15]\n  - State \"DONE\"       from \"TODO\"       [2026-05-09 Sat 18:00]\n  :END:\n";
+        let tasks = extract(src);
+        assert_eq!(tasks.len(), 1);
+        let t = &tasks[0];
+        let completions = t.completions.as_ref().expect("habit should carry completions");
+        assert_eq!(completions.len(), 3);
+        assert_eq!(completions[0], "2026-05-11 Mon 14:32");
+        // Non-habit transitions on the same heading do not surface
+        // — we only attach the field when STYLE=habit.
+        assert!(t.properties.as_ref().unwrap().get("STYLE").map(String::as_str) == Some("habit"));
+    }
+
+    #[test]
+    fn non_habit_omits_completions() {
+        let src = "* DONE Pay bill\n  CLOSED: [2026-05-11 Mon 10:00]\n  :LOGBOOK:\n  - State \"DONE\"       from \"TODO\"       [2026-05-11 Mon 10:00]\n  :END:\n";
+        let tasks = extract(src);
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].completions.is_none(),
+            "non-habit headings should not carry the completions field");
     }
 
     #[test]

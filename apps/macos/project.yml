@@ -9,7 +9,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "0.4.0"
+    MARKETING_VERSION: "0.5.0"
     CURRENT_PROJECT_VERSION: "1"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: minimal
@@ -61,6 +61,17 @@ targets:
         # let xcodegen run cargo without picking up Xcode's sandboxed PATH.
         # Skipped if SKIP_EAVD_BUILD=1 (faster local rebuilds when the binary
         # is already current).
+        #
+        # `basedOnDependencyAnalysis: false` replaces the prior
+        # `outputFiles:` list. Xcode's dependency analysis only re-runs
+        # the script when listed outputs are missing or older than
+        # declared inputs — without `inputFiles` covering every Rust
+        # source, the script was skipped forever after the first build,
+        # bundling stale eavd binaries. Enumerating every source as an
+        # inputFile is brittle; trusting cargo's own incremental build
+        # is simpler. Cargo no-ops in milliseconds when sources are
+        # unchanged.
+        basedOnDependencyAnalysis: false
         script: |
           set -euo pipefail
           if [[ "${SKIP_EAVD_BUILD:-0}" == "1" ]]; then
@@ -89,7 +100,3 @@ targets:
           # Developer ID distribution use `scripts/build-eavd-universal.sh`,
           # which signs the universal binary before this script copies it.
           echo "bundled eavd helper into $DEST"
-        outputFiles:
-          - $(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app/Contents/Resources/eavd
-          - $(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app/Contents/Resources/eav.el
-          - $(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app/Contents/Resources/eav-bridge.el

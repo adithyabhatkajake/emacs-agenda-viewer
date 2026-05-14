@@ -140,6 +140,7 @@ struct GroupSection<T: TaskDisplayable & Identifiable>: View where T.ID == Strin
                                 keywords: store.keywords,
                                 onAppear: factory.prefetch(for: item)
                             )
+                            .id(item.id)
                         }
                     }
                 }

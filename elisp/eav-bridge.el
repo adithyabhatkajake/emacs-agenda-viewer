@@ -95,6 +95,7 @@
     ("write.set-property"     . eav-bridge--write-set-property)
     ("write.set-notes"        . eav-bridge--write-set-notes)
     ("write.refile"           . eav-bridge--write-refile)
+    ("write.archive"          . eav-bridge--write-archive)
     ("write.capture"          . eav-bridge--write-capture)
     ("write.insert-entry"     . eav-bridge--write-insert-entry)
     ("write.clock-in"         . eav-bridge--write-clock-in)
@@ -263,6 +264,11 @@ Iterates `org-agenda-files', evaluating only `:sexp' entries via
                    (eav-bridge--p-int params "sourcePos")
                    (eav-bridge--p params "targetFile")
                    (eav-bridge--p-int params "targetPos"))
+  '((success . t)))
+
+(defun eav-bridge--write-archive (params)
+  (eav-archive-task (eav-bridge--p params "file")
+                    (eav-bridge--p-int params "pos"))
   '((success . t)))
 
 (defun eav-bridge--write-capture (params)

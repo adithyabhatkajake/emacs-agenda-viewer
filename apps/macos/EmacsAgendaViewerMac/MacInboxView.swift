@@ -1,41 +1,43 @@
 import SwiftUI
 
-struct MacAllTasksView: View {
+/// Triage view: active tasks captured into the Inbox category, waiting to be
+/// refiled into their permanent homes. Mirrors the org-capture-then-refile
+/// workflow — `org-capture` lands new headings in the Inbox file, and this
+/// view is where you sweep them out into project trees.
+///
+/// Keyboard flow:
+///   1. Click a row to select it (or use ↑/↓).
+///   2. ⇧⌘R (or the toolbar Refile button) opens the refile sheet.
+///   3. Fuzzy-search the target, hit Enter — the task disappears from the
+///      list as soon as the daemon's SSE invalidation fires.
+struct MacInboxView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(Selection.self) private var selection
     @Environment(ClockManager.self) private var clocks
     @Environment(CalendarSync.self) private var sync
     let store: TasksStore
 
-    @State private var includeDone = false
     @State private var searchText = ""
     @State private var collapsedGroups: Set<String> = []
 
     var body: some View {
-        @Bindable var bindable = settings
         content
-            .navigationTitle("All Tasks")
-            .searchable(text: $searchText, placement: .toolbar, prompt: "Search tasks")
+            .navigationTitle("Inbox")
+            .searchable(text: $searchText, placement: .toolbar, prompt: "Search inbox")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    SortMenu(options: SortKey.listOptions, selection: $bindable.listSort)
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    GroupMenu(primary: $bindable.listGroup, secondary: $bindable.listGroupSecondary)
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Toggle(isOn: $includeDone) {
-                        Label("Include completed", systemImage: "checkmark.circle")
+                    Button {
+                        refileSelected()
+                    } label: {
+                        Label("Refile", systemImage: "tray.and.arrow.up")
                     }
-                    .toggleStyle(.button)
-                    .disabled(!settings.isConfigured)
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
+                    .help("Refile selected task (⇧⌘R)")
+                    .disabled(selection.taskId == nil)
                 }
                 ToolbarItem(placement: .primaryAction) {
                     ReloadButton(action: { Task { await load() } }, disabled: !settings.isConfigured)
                 }
-            }
-            .onChange(of: includeDone) { _, _ in
-                Task { await load() }
             }
             .task(id: settings.serverURLString) { await loadIfNeeded() }
     }
@@ -47,7 +49,10 @@ struct MacAllTasksView: View {
         } else if let tasks = store.allTasks.value {
             let filtered = filter(tasks)
             if filtered.isEmpty {
-                EmptyStateView(title: searchText.isEmpty ? "No tasks" : "No matches", systemImage: "tray")
+                EmptyStateView(
+                    title: searchText.isEmpty ? "Inbox is clear" : "No matches",
+                    systemImage: searchText.isEmpty ? "checkmark.circle.fill" : "magnifyingglass"
+                )
             } else {
                 list(filtered)
             }
@@ -60,16 +65,25 @@ struct MacAllTasksView: View {
         }
     }
 
+    /// Tasks shown here:
+    ///   - category equals "Inbox" (case-insensitive — matches the default
+    ///     org-capture target convention without forcing the user to pin a
+    ///     specific category string in settings)
+    ///   - todo_state is active (filtering done states out keeps the list
+    ///     focused on triage; completed captures live in All Tasks)
     private func filter(_ tasks: [OrgTask]) -> [OrgTask] {
+        let inboxOnly = tasks.filter { task in
+            task.category.caseInsensitiveCompare("Inbox") == .orderedSame
+                && !store.isDoneState(task.todoState)
+        }
         let filtered: [OrgTask]
         if searchText.isEmpty {
-            filtered = tasks
+            filtered = inboxOnly
         } else {
             let needle = searchText.lowercased()
-            filtered = tasks.filter { task in
+            filtered = inboxOnly.filter { task in
                 task.title.lowercased().contains(needle)
                     || task.tags.contains(where: { $0.lowercased().contains(needle) })
-                    || task.category.lowercased().contains(needle)
             }
         }
         return sortTasks(filtered, by: settings.listSort)
@@ -79,13 +93,15 @@ struct MacAllTasksView: View {
         let doneStates = Set((store.keywords?.allDone ?? []).map { $0.uppercased() })
         let factory = RowActionFactory(store: store, settings: settings, selection: selection, clocks: clocks, sync: sync)
         let eisCtx = EisenhowerGroupContext(urgencyDays: settings.eisenhowerUrgencyDays, priorities: store.priorities)
-        let groups = groupTasks(tasks, by: settings.listGroup, eisenhower: eisCtx)
+        // Inbox is small by definition — render as a single ungrouped section
+        // so the user sees every entry at once without collapsible noise.
+        let groups: [TaskGroup<OrgTask>] = [TaskGroup(id: "_inbox", label: "", items: tasks)]
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     GroupedTaskList(
                         groups: groups,
-                        secondaryKey: settings.listGroupSecondary,
+                        secondaryKey: .none,
                         eisenhower: eisCtx,
                         doneStates: doneStates,
                         factory: factory,
@@ -112,10 +128,6 @@ struct MacAllTasksView: View {
         }
     }
 
-    /// Honors a pending reveal request: scrolls the row into view (if it
-    /// exists in this list) and clears the request so subsequent clicks
-    /// on the same task fire again. No-op when the id isn't in the
-    /// current data — scrollTo silently ignores unknown ids.
     private func consumeReveal(_ id: String?, proxy: ScrollViewProxy) {
         guard let id else { return }
         withAnimation(.easeInOut(duration: 0.25)) {
@@ -127,10 +139,21 @@ struct MacAllTasksView: View {
         }
     }
 
+    /// Open the refile sheet for whichever task is currently selected. Hands
+    /// off to the same RefileSheet driven by `Selection.refileTask`, so the
+    /// rest of the refile machinery (target loading, fuzzy search, keyboard
+    /// nav, error handling) is reused.
+    private func refileSelected() {
+        guard let id = selection.taskId,
+              let task = store.allTasks.value?.first(where: { $0.id == id })
+        else { return }
+        selection.refileTask = task
+    }
+
     private func load() async {
         guard let client = settings.apiClient else { return }
         await store.ensureInitialized(using: client, settings: settings)
-        await store.loadAllTasks(using: client, includeDone: includeDone)
+        await store.loadAllTasks(using: client, includeDone: false)
     }
 
     private func loadIfNeeded() async {

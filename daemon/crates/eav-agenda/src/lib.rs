@@ -12,7 +12,8 @@
 pub mod timestamp;
 
 pub use timestamp::{
-    next_occurrence_on_or_after, occurs_on, time_of_day, ts_date, warning_days,
+    next_occurrence_on_or_after, occurs_on, previous_occurrence_on_or_before, time_of_day,
+    ts_date, warning_days,
 };
 
 use chrono::NaiveDate;
@@ -98,14 +99,39 @@ pub fn evaluate_day(
                 // *today's* agenda; querying an arbitrary future day shows
                 // deadlines that fall ON that day, not deadlines previewed
                 // ahead of it.
-                if let Some(actual) = next_occurrence_on_or_after(deadline, target, today) {
+                let is_done_task = task
+                    .todo_state
+                    .as_deref()
+                    .map(is_done_state)
+                    .unwrap_or(false);
+                // org-agenda-get-deadlines (org-agenda.el ~6420) computes
+                // `diff` against the LITERAL stored deadline date — not an
+                // auto-advanced repeater instance. So when a repeating
+                // deadline's last instance was missed (file still says the
+                // old date because the user hasn't ticked done), org shows
+                // the past instance with "N d. ago:" — NOT a preview of the
+                // next future repeat. We mirror that: if any past instance
+                // exists, emit only the past-deadline; otherwise consider
+                // the upcoming-deadline preview within the warning window.
+                let past = if is_done_task {
+                    None
+                } else {
+                    previous_occurrence_on_or_before(deadline, target).filter(|p| *p < target)
+                };
+                if let Some(prev) = past {
+                    let delta = (target - prev).num_days();
+                    let extra = format!("{delta} d. ago:");
+                    out.entries.push(make_entry_with_extra(
+                        task,
+                        prev,
+                        deadline,
+                        agenda_type::DEADLINE,
+                        &display_date,
+                        &extra,
+                    ));
+                } else if let Some(actual) = next_occurrence_on_or_after(deadline, target, today) {
                     let warn = warning_days(deadline.warning.as_ref(), config.deadline_warning_days);
                     let delta = actual.signed_duration_since(target).num_days();
-                    let is_done_task = task
-                        .todo_state
-                        .as_deref()
-                        .map(is_done_state)
-                        .unwrap_or(false);
                     // org-agenda-get-deadlines:6430 — `(when (> diff warning-days) skip)`
                     // i.e. include while diff <= warning-days.
                     if !is_done_task && delta > 0 && delta <= warn as i64 {
@@ -252,6 +278,14 @@ fn make_entry(
         extra,
         ts_date: Some(format_ymd(target)),
         display_date: Some(display_date),
+        // Surfaced so list views can filter habit-driven entries from
+        // Today/Upcoming without joining against /api/tasks. The check
+        // is case-insensitive because property values are user-supplied
+        // even though keys are normalised to uppercase.
+        is_habit: task.properties.as_ref()
+            .and_then(|p| p.get("STYLE"))
+            .filter(|v| v.eq_ignore_ascii_case("habit"))
+            .map(|_| true),
     }
 }
 
@@ -369,6 +403,7 @@ mod tests {
             notes: None,
             active_timestamps: None,
             properties: None,
+            completions: None,
         }
     }
 
@@ -445,6 +480,77 @@ mod tests {
             &AgendaConfig::default(),
         );
         assert_eq!(day.entries.len(), 1);
+    }
+
+    #[test]
+    fn past_deadline_surfaces_on_today_with_days_ago_prefix() {
+        let mut t = task("od", "fill up gas");
+        t.deadline = Some(ts(2026, 5, 8));
+        let day = evaluate_day(
+            &[t],
+            NaiveDate::from_ymd_opt(2026, 5, 11).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 5, 11).unwrap(),
+            &AgendaConfig::default(),
+        );
+        assert_eq!(day.entries.len(), 1);
+        assert_eq!(day.entries[0].agenda_type, "deadline");
+        assert_eq!(day.entries[0].extra.as_deref(), Some("3 d. ago:"));
+    }
+
+    #[test]
+    fn past_deadline_hidden_when_done() {
+        let mut t = task("od", "did it");
+        t.todo_state = Some("DONE".into());
+        t.deadline = Some(ts(2026, 5, 8));
+        let day = evaluate_day(
+            &[t],
+            NaiveDate::from_ymd_opt(2026, 5, 11).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 5, 11).unwrap(),
+            &AgendaConfig::default(),
+        );
+        assert!(day.entries.is_empty());
+    }
+
+    #[test]
+    fn past_deadline_not_shown_when_querying_arbitrary_future_day() {
+        let mut t = task("od", "fill up gas");
+        t.deadline = Some(ts(2026, 5, 8));
+        // target = 2026-05-09, today = 2026-05-11. The deadline is past
+        // relative to today but we're querying a different day — only
+        // today's view should surface overdue deadlines.
+        let day = evaluate_day(
+            &[t],
+            NaiveDate::from_ymd_opt(2026, 5, 9).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 5, 11).unwrap(),
+            &AgendaConfig::default(),
+        );
+        assert!(day.entries.is_empty());
+    }
+
+    #[test]
+    fn repeating_deadline_missed_instance_shows_days_ago() {
+        // File still records the past instance because the user hasn't ticked
+        // done; org keeps surfacing that literal date with "N d. ago" rather
+        // than previewing the next future repeat. Mirrors the agenda's
+        // behavior for `<2026-05-04 +1w>` with today 2026-05-11.
+        let mut t = task("rd", "weekly thing");
+        let mut d = ts(2026, 5, 4);
+        d.repeater = Some(Repeater {
+            kind: "+".into(),
+            value: 1,
+            unit: "w".into(),
+        });
+        t.deadline = Some(d);
+        let day = evaluate_day(
+            &[t],
+            NaiveDate::from_ymd_opt(2026, 5, 13).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 5, 13).unwrap(),
+            &AgendaConfig::default(),
+        );
+        // Most recent occurrence ≤ today is 2026-05-11 (base + 1w). 13 - 11 = 2.
+        assert_eq!(day.entries.len(), 1);
+        assert_eq!(day.entries[0].agenda_type, "deadline");
+        assert_eq!(day.entries[0].extra.as_deref(), Some("2 d. ago:"));
     }
 
     #[test]

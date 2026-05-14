@@ -3,7 +3,11 @@ import { createPortal } from 'react-dom';
 import type { OrgTask, AgendaEntry, ViewFilter, TodoKeywords } from '../types';
 import { TaskItem } from './TaskItem';
 import { renderInline } from './NotesRenderer';
-import { type ClockStatus, clockOutApi } from '../api/tasks';
+import { type ClockStatus, clockOutApi, loadSettings, updateScheduled } from '../api/tasks';
+import { HabitsView, TodayHabitsGroup } from './HabitsView';
+import { isHabit } from '../utils/habits';
+import { EisenhowerView } from './EisenhowerView';
+import { CalendarView } from './CalendarView';
 
 type DisplayItem = OrgTask | AgendaEntry;
 
@@ -15,11 +19,13 @@ interface TaskListProps {
   keywords: TodoKeywords | null;
   isDoneState: (state: string | undefined) => boolean;
   clockStatus: ClockStatus;
+  allTags: string[];
   onRefresh: () => void;
   onRefreshClock: () => void;
   onCapture?: () => void;
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
+  warningDays?: number;
 }
 
 type SortKey = 'priority' | 'state' | 'deadline' | 'category' | 'default';
@@ -30,6 +36,11 @@ function filterTitle(filter: ViewFilter): string {
     case 'all': return 'All Tasks';
     case 'today': return 'Today';
     case 'upcoming': return 'Upcoming';
+    case 'logbook': return 'Logbook';
+    case 'inbox': return 'Inbox';
+    case 'habits': return 'Habits';
+    case 'eisenhower': return 'Eisenhower Matrix';
+    case 'calendar': return 'Calendar';
     case 'file': return filter.path.split('/').pop()?.replace('.org', '') || 'File';
     case 'category': return filter.category;
     case 'tag': return `#${filter.tag}`;
@@ -40,8 +51,9 @@ function priorityOrd(p: string | undefined): number {
   switch (p) { case 'A': return 0; case 'B': return 1; case 'C': return 2; case 'D': return 3; default: return 4; }
 }
 
-function priorityLabel(_p: string | undefined): string {
-  return '';
+function priorityLabel(p: string | undefined): string {
+  if (!p) return 'No Priority';
+  return `Priority ${p}`;
 }
 
 function extractDateMs(raw: string | undefined): number {
@@ -193,17 +205,19 @@ function GroupHeader({ label, depth, collapsed, onToggle, count }: { label: stri
   const size = depth === 0 ? 'text-[11px]' : 'text-[10px]';
   const pad = depth === 0 ? 'pt-3 pb-1' : 'pt-2 pb-0.5';
   return (
-    <div
-      className={`px-3 md:px-5 ${pad} flex items-center gap-2 cursor-pointer select-none group/hdr`}
+    <button
+      type="button"
       onClick={onToggle}
+      aria-expanded={!collapsed}
+      className={`w-full px-3 md:px-5 ${pad} flex items-center gap-2 select-none text-left hover:bg-things-sidebar-hover/40 transition-colors`}
     >
-      <span className={`text-[9px] text-text-tertiary transition-transform ${collapsed ? '' : 'rotate-90'}`}>{'\u25B6'}</span>
+      <span className={`text-[11px] leading-none text-text-secondary transition-transform inline-block w-3 ${collapsed ? '' : 'rotate-90'}`}>{'\u25B6'}</span>
       <span className={`${size} font-semibold text-text-tertiary uppercase tracking-wider`}>
         {label}
       </span>
       <span className="text-[9px] text-text-tertiary/60 tabular-nums">{count}</span>
       <div className="flex-1 border-t border-things-border-subtle/30" />
-    </div>
+    </button>
   );
 }
 
@@ -243,19 +257,31 @@ function countNodeItems(node: GroupNode): number {
   return node.items.length;
 }
 
+const DRAG_KEY = 'eav-drag-task-id';
+
 /** Recursively render grouped items with collapsible headers */
 function RenderGroups({
-  nodes, keywords, isDoneState, clockStatus, onRefresh, onRefreshClock,
+  nodes, keywords, isDoneState, clockStatus, allTags, onRefresh, onRefreshClock, makeDraggable,
 }: {
   nodes: GroupNode[];
   keywords: TodoKeywords | null;
   isDoneState: (s: string | undefined) => boolean;
   clockStatus: ClockStatus;
+  allTags: string[];
   onRefresh: () => void;
   onRefreshClock: () => void;
+  /** When true, each leaf TaskItem is wrapped in a draggable div that sets DRAG_KEY. */
+  makeDraggable?: boolean;
 }) {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const toggle = (key: string) => setCollapsed(prev => ({ ...prev, [key]: !prev[key] }));
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem('eav-collapsed-groups') || '{}'); }
+    catch { return {}; }
+  });
+  const toggle = (key: string) => setCollapsed(prev => {
+    const next = { ...prev, [key]: !prev[key] };
+    try { localStorage.setItem('eav-collapsed-groups', JSON.stringify(next)); } catch { /* quota */ }
+    return next;
+  });
 
   return (
     <>
@@ -277,19 +303,37 @@ function RenderGroups({
             )}
             {!isCollapsed && (
               node.children.length > 0 ? (
-                <RenderGroups nodes={node.children} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
+                <RenderGroups nodes={node.children} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} makeDraggable={makeDraggable} />
               ) : (
-                node.items.map(task => (
-                  <TaskItem
-                    key={task.id + ('agendaType' in task ? (task as AgendaEntry).agendaType : '')}
-                    task={task}
-                    keywords={keywords}
-                    isDoneState={isDoneState}
-                    clockStatus={clockStatus}
-                    onRefresh={onRefresh}
-                    onRefreshClock={onRefreshClock}
-                  />
-                ))
+                node.items.map(task => {
+                  const itemKey = task.id + ('agendaType' in task ? (task as AgendaEntry).agendaType : '');
+                  const taskItem = (
+                    <TaskItem
+                      key={itemKey}
+                      task={task}
+                      keywords={keywords}
+                      isDoneState={isDoneState}
+                      clockStatus={clockStatus}
+                      allTags={allTags}
+                      onRefresh={onRefresh}
+                      onRefreshClock={onRefreshClock}
+                    />
+                  );
+                  if (!makeDraggable) return taskItem;
+                  return (
+                    <div
+                      key={itemKey}
+                      draggable
+                      onDragStart={(e: React.DragEvent) => {
+                        e.dataTransfer.setData(DRAG_KEY, task.id);
+                        e.dataTransfer.effectAllowed = 'move';
+                      }}
+                      className="cursor-grab active:cursor-grabbing"
+                    >
+                      {taskItem}
+                    </div>
+                  );
+                })
               )
             )}
           </div>
@@ -310,7 +354,7 @@ function formatElapsed(seconds: number): string {
 }
 
 export function TaskList({
-  tasks, todayEntries, upcomingEntries, filter, keywords, isDoneState, clockStatus, onRefresh, onRefreshClock, onCapture, sidebarOpen, onToggleSidebar,
+  tasks, todayEntries, upcomingEntries, filter, keywords, isDoneState, clockStatus, allTags, onRefresh, onRefreshClock, onCapture, sidebarOpen, onToggleSidebar, warningDays = 14,
 }: TaskListProps) {
   const [controlsOpen, setControlsOpen] = useState(false);
   const [controlsAnchor, setControlsAnchor] = useState<{ top: number; right: number } | null>(null);
@@ -340,6 +384,8 @@ export function TaskList({
     catch { return []; }
   });
   const [showDone, setShowDone] = useState(() => localStorage.getItem('eav-showDone') === 'true');
+  // Upcoming drag-to-reschedule: track which date header is the current drop target
+  const [upcomingDragOver, setUpcomingDragOver] = useState<string | null>(null);
 
   // Persist sort/group/showDone to localStorage
   useEffect(() => { localStorage.setItem('eav-sort', sortKey); }, [sortKey]);
@@ -370,10 +416,14 @@ export function TaskList({
   const { calendarEvents, todaySection } = useMemo(() => {
     if (filter.type !== 'today') return { calendarEvents: [], todaySection: [] };
 
+    const settings = loadSettings();
+    const hideDeadlines = !!settings.hideDeadlinesInToday;
+
     const events = todayEntries.filter(isEventEntry);
     let todayItems = todayEntries.filter(e =>
       !isEventEntry(e) && e.agendaType !== 'upcoming-deadline'
     );
+    if (hideDeadlines) todayItems = todayItems.filter(e => e.agendaType !== 'deadline');
     if (!showDone) todayItems = todayItems.filter(t => !isDoneState(t.todoState));
 
     return {
@@ -385,18 +435,72 @@ export function TaskList({
   // ========== OTHER VIEWS ==========
   const items: DisplayItem[] = useMemo(() => {
     if (filter.type === 'today') return [];
+    // These views manage their own rendering
+    if (filter.type === 'habits') return [];
+    if (filter.type === 'eisenhower') return [];
+    if (filter.type === 'calendar') return [];
     let result: DisplayItem[];
     switch (filter.type) {
       case 'upcoming': result = upcomingEntries; break;
       case 'all': result = tasks.filter(t => t.todoState); break;
+      case 'logbook': result = tasks.filter(t => t.todoState && isDoneState(t.todoState)); break;
+      case 'inbox': result = tasks.filter(t => {
+        const basename = t.file.split('/').pop() || '';
+        return (
+          basename.toLowerCase() === 'inbox.org' ||
+          t.category.toLowerCase() === 'inbox'
+        );
+      }); break;
       case 'file': result = tasks.filter(t => t.file === filter.path); break;
       case 'category': result = tasks.filter(t => t.category === filter.category); break;
       case 'tag': result = tasks.filter(t => t.tags.includes(filter.tag) || t.inheritedTags.includes(filter.tag)); break;
       default: result = tasks;
     }
-    if (!showDone) result = result.filter(t => !isDoneState(t.todoState));
+    if (filter.type !== 'logbook' && !showDone) {
+      // The logbook is *defined* as done tasks — never hide them there.
+      result = result.filter(t => !isDoneState(t.todoState));
+    }
+    if (filter.type === 'logbook') {
+      // Reverse-chronological by CLOSED is the natural read order; the
+      // bucket renderer below collapses items into Today/Yesterday/etc.
+      return [...result].sort((a, b) => {
+        const ac = (a as OrgTask).closed || '';
+        const bc = (b as OrgTask).closed || '';
+        return bc.localeCompare(ac);
+      });
+    }
     return sortItems(result, sortKey);
   }, [tasks, upcomingEntries, filter, sortKey, showDone, isDoneState]);
+
+  // Logbook: bucket by CLOSED date — Today / Yesterday / This Week / This
+  // Month / Earlier / Unknown. Mirrors the Mac client's groupTasksByClosedDate.
+  const logbookBuckets = useMemo(() => {
+    if (filter.type !== 'logbook') return null;
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const day = 86400000;
+    const startOfYesterday = startOfToday - day;
+    const startOfWeek = startOfToday - 6 * day;
+    const startOfMonth = startOfToday - 30 * day;
+    const buckets: Array<{ label: string; items: OrgTask[] }> = [
+      { label: 'Today', items: [] },
+      { label: 'Yesterday', items: [] },
+      { label: 'This Week', items: [] },
+      { label: 'This Month', items: [] },
+      { label: 'Earlier', items: [] },
+      { label: 'Unknown Date', items: [] },
+    ];
+    for (const t of items as OrgTask[]) {
+      const ms = extractDateMs(t.closed);
+      if (!isFinite(ms)) { buckets[5].items.push(t); continue; }
+      if (ms >= startOfToday) buckets[0].items.push(t);
+      else if (ms >= startOfYesterday) buckets[1].items.push(t);
+      else if (ms >= startOfWeek) buckets[2].items.push(t);
+      else if (ms >= startOfMonth) buckets[3].items.push(t);
+      else buckets[4].items.push(t);
+    }
+    return buckets.filter(b => b.items.length > 0);
+  }, [items, filter.type]);
 
   // File view hierarchy
   const { topLevel, children } = useMemo(() => {
@@ -437,7 +541,11 @@ export function TaskList({
 
   const totalCount = filter.type === 'today'
     ? calendarEvents.length + todaySection.length
-    : items.length;
+    : filter.type === 'habits'
+      ? tasks.filter(isHabit).length
+    : filter.type === 'eisenhower' || filter.type === 'calendar'
+      ? tasks.filter(t => t.todoState && !isDoneState(t.todoState)).length
+      : items.length;
 
   const isAgendaView = filter.type === 'today' || filter.type === 'upcoming';
   const sortOptions: SortKey[] = isAgendaView
@@ -540,13 +648,69 @@ export function TaskList({
           </div>
         )}
 
-        {totalCount === 0 ? (
-          <div className="flex items-center justify-center h-48 text-text-tertiary text-sm">No items</div>
+        {filter.type === 'habits' ? (
+          /* ========== HABITS VIEW ========== */
+          <HabitsView
+            tasks={tasks}
+            keywords={keywords}
+            isDoneState={isDoneState}
+            clockStatus={clockStatus}
+            allTags={allTags}
+            onRefresh={onRefresh}
+            onRefreshClock={onRefreshClock}
+          />
+
+        ) : filter.type === 'eisenhower' ? (
+          /* ========== EISENHOWER MATRIX VIEW ========== */
+          <EisenhowerView
+            tasks={tasks}
+            keywords={keywords}
+            isDoneState={isDoneState}
+            clockStatus={clockStatus}
+            allTags={allTags}
+            onRefresh={onRefresh}
+            onRefreshClock={onRefreshClock}
+            warningDays={warningDays}
+          />
+
+        ) : filter.type === 'calendar' ? (
+          /* ========== CALENDAR MONTH VIEW ========== */
+          <CalendarView
+            tasks={tasks}
+            keywords={keywords}
+            isDoneState={isDoneState}
+            clockStatus={clockStatus}
+            allTags={allTags}
+            onRefresh={onRefresh}
+            onRefreshClock={onRefreshClock}
+          />
+
+        ) : totalCount === 0 ? (
+          <div className="flex flex-col items-center justify-center h-48 gap-2 text-text-tertiary text-sm">
+            {filter.type === 'inbox' ? (
+              <>
+                <span className="text-3xl opacity-40">{'✓'}</span>
+                <span className="font-medium text-text-secondary">Inbox is clear</span>
+                <span className="text-[12px] text-center max-w-[260px]">
+                  New captures land here. Refile them into project trees to keep this list empty.
+                </span>
+              </>
+            ) : (
+              <span>No items</span>
+            )}
+          </div>
 
         ) : filter.type === 'today' ? (
           /* ========== TODAY VIEW ========== */
           <>
             <EventBanners events={calendarEvents} />
+            {loadSettings().showHabitsInToday && (
+              <TodayHabitsGroup
+                tasks={tasks}
+                onRefresh={onRefresh}
+                isMobile={window.innerWidth < 768}
+              />
+            )}
             {todaySection.length > 0 && (
               <>
                 <SectionHeader title="Today" count={todaySection.length} />
@@ -556,6 +720,7 @@ export function TaskList({
                     keywords={keywords}
                     isDoneState={isDoneState}
                     clockStatus={clockStatus}
+                    allTags={allTags}
                     onRefresh={onRefresh}
                     onRefreshClock={onRefreshClock}
                   />
@@ -575,37 +740,96 @@ export function TaskList({
 
             // Apply multi-group to the non-event items
             const grouped = multiGroup(dayTasks, activeGroups);
+            const isDragTarget = upcomingDragOver === date;
+
+            const handleHeaderDragOver = (e: React.DragEvent) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              setUpcomingDragOver(date);
+            };
+            const handleHeaderDrop = async (e: React.DragEvent) => {
+              e.preventDefault();
+              setUpcomingDragOver(null);
+              const id = e.dataTransfer.getData(DRAG_KEY);
+              if (!id) return;
+              // Find the OrgTask from tasks list (upcomingEntries are AgendaEntry, but we need OrgTask for updateScheduled)
+              const taskData = tasks.find(t => t.id === id);
+              if (!taskData) return;
+              const [y, mo, d] = date.split('-').map(Number);
+              const dateObj = new Date(y, mo - 1, d);
+              const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+              const ts = `<${date} ${weekdays[dateObj.getDay()]}>`;
+              try {
+                await updateScheduled(taskData, ts);
+                onRefresh();
+              } catch (err) {
+                console.error('Upcoming drop failed:', err);
+              }
+            };
 
             return (
               <div key={date}>
-                <div className="px-3 md:px-5 pt-4 pb-1 border-b border-things-border-subtle/30 sticky top-0 bg-things-bg/95 backdrop-blur-sm z-10">
+                <div
+                  className={`px-3 md:px-5 pt-4 pb-1 border-b border-things-border-subtle/30 sticky top-0 bg-things-bg/95 backdrop-blur-sm z-10 transition-colors ${
+                    isDragTarget ? 'bg-accent/10 ring-1 ring-inset ring-accent/40' : ''
+                  }`}
+                  onDragOver={handleHeaderDragOver}
+                  onDragLeave={() => setUpcomingDragOver(null)}
+                  onDrop={handleHeaderDrop}
+                >
                   <div className="flex items-baseline gap-2">
                     <span className="text-2xl font-bold text-text-primary tabular-nums leading-none">{dayNum}</span>
                     <span className="text-[12px] font-medium text-text-secondary">
                       {isToday ? 'Today' : isTomorrow ? 'Tomorrow' : weekday}
                     </span>
                     <span className="text-[10px] text-text-tertiary">{month}</span>
+                    {isDragTarget && (
+                      <span className="ml-auto text-[10px] text-accent font-medium">Drop to reschedule</span>
+                    )}
                   </div>
                 </div>
                 <EventBanners events={dayEvents} />
                 {dayTasks.length > 0 && (
                   <div className="task-card">
-                    <RenderGroups nodes={grouped} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
+                    <RenderGroups nodes={grouped} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} makeDraggable />
                   </div>
                 )}
               </div>
             );
           })
 
+        ) : filter.type === 'logbook' && logbookBuckets ? (
+          /* ========== LOGBOOK VIEW ========== */
+          logbookBuckets.map(bucket => (
+            <div key={bucket.label}>
+              <SectionHeader title={bucket.label} count={bucket.items.length} />
+              <div className="task-card">
+                {bucket.items.map(task => (
+                  <TaskItem
+                    key={task.id}
+                    task={task}
+                    keywords={keywords}
+                    isDoneState={isDoneState}
+                    clockStatus={clockStatus}
+                    allTags={allTags}
+                    onRefresh={onRefresh}
+                    onRefreshClock={onRefreshClock}
+                    allowArchive
+                  />
+                ))}
+              </div>
+            </div>
+          ))
+
         ) : filter.type === 'file' ? (
           /* ========== FILE VIEW ========== */
           <div className="task-card">
             {topLevel.map(task => (
               <div key={task.id}>
-                <TaskItem task={task} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
+                <TaskItem task={task} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
                 {children.get(task.id)?.map(child => (
                   <div key={child.id} className="pl-8">
-                    <TaskItem task={child} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
+                    <TaskItem task={child} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
                   </div>
                 ))}
               </div>
@@ -620,6 +844,7 @@ export function TaskList({
               keywords={keywords}
               isDoneState={isDoneState}
               clockStatus={clockStatus}
+              allTags={allTags}
               onRefresh={onRefresh}
               onRefreshClock={onRefreshClock}
             />

@@ -78,7 +78,16 @@ final class TasksStore {
         }
     }
 
+    /// The `includeDone` setting most recently used to load `allTasks`.
+    /// Stored so that automatic refreshes (post-mutation, SSE invalidations)
+    /// preserve the caller's intent — without this, the Logbook view would
+    /// load with `includeDone=true`, then any mutation would trigger a
+    /// `refreshLoaded` with the default `false` and wipe the done tasks
+    /// out from under the user.
+    private(set) var allTasksIncludeDone: Bool = false
+
     func loadAllTasks(using client: APIClient, includeDone: Bool = false) async {
+        allTasksIncludeDone = includeDone
         if allTasks.value == nil { allTasks = .loading }
         do {
             let tasks = try await client.fetchTasks(includeAll: includeDone)
@@ -115,8 +124,39 @@ final class TasksStore {
         self.clock = try? await client.fetchClockStatus()
     }
 
-    /// Refresh whichever lists currently hold data. Called after mutations.
+    // Coalescing state for `refreshLoaded`. Two simultaneous callers (e.g.
+    // a user mutation completing while an SSE-driven invalidation arrives)
+    // would otherwise launch overlapping task groups: the earlier-fired
+    // group can finish *after* the later-fired one and overwrite fresher
+    // server state with staler data. Instead we serialize: at most one
+    // refresh runs at a time, and a pending flag schedules exactly one
+    // re-run if more requests arrive during it. Result: last-result-wins
+    // is actually true in time order, and a burst of N events causes at
+    // most 2 refreshes, not N.
+    private var refreshInFlight = false
+    private var refreshPending = false
+    private var pendingIncludeDone = false
+
+    /// Refresh whichever lists currently hold data. Called after mutations
+    /// and on SSE `file-changed` / `task-changed` events.
     func refreshLoaded(using client: APIClient, includeDone: Bool = false) async {
+        if refreshInFlight {
+            refreshPending = true
+            pendingIncludeDone = pendingIncludeDone || includeDone
+            return
+        }
+        refreshInFlight = true
+        var include = includeDone
+        repeat {
+            refreshPending = false
+            pendingIncludeDone = false
+            await runRefresh(using: client, includeDone: include)
+            include = pendingIncludeDone
+        } while refreshPending
+        refreshInFlight = false
+    }
+
+    private func runRefresh(using client: APIClient, includeDone: Bool) async {
         await withTaskGroup(of: Void.self) { group in
             if today.value != nil {
                 group.addTask { await self.loadToday(using: client) }
@@ -125,7 +165,13 @@ final class TasksStore {
                 group.addTask { await self.loadUpcoming(using: client) }
             }
             if allTasks.value != nil {
-                group.addTask { await self.loadAllTasks(using: client, includeDone: includeDone) }
+                // Preserve the existing include-done setting on refresh —
+                // explicit `includeDone: true` from the caller upgrades but
+                // never downgrades. The Logbook view sets the flag to true
+                // on initial load; we must not silently drop done tasks
+                // when an unrelated mutation triggers a refresh.
+                let include = includeDone || self.allTasksIncludeDone
+                group.addTask { await self.loadAllTasks(using: client, includeDone: include) }
             }
             group.addTask { await self.refreshClock(using: client) }
         }
@@ -133,7 +179,8 @@ final class TasksStore {
 
     // MARK: - Mutations
 
-    func toggleDone(_ task: any TaskDisplayable, file: String, pos: Int, using client: APIClient) async {
+    @discardableResult
+    func toggleDone(_ task: any TaskDisplayable, file: String, pos: Int, using client: APIClient) async -> Bool {
         let isDone = isDoneState(task.todoState)
         let nextState: String
         if isDone {
@@ -142,28 +189,32 @@ final class TasksStore {
         } else {
             nextState = keywords?.allDone.first ?? "DONE"
         }
-        await setState(taskId: task.id, file: file, pos: pos, state: nextState, using: client)
+        return await setState(taskId: task.id, file: file, pos: pos, state: nextState, using: client)
     }
 
-    func setState(taskId: String, file: String, pos: Int, state: String, using client: APIClient) async {
+    @discardableResult
+    func setState(taskId: String, file: String, pos: Int, state: String, using client: APIClient) async -> Bool {
         await runMutation(client: client) {
             try await client.setState(taskId: taskId, file: file, pos: pos, state: state)
         }
     }
 
-    func setPriority(taskId: String, file: String, pos: Int, priority: String, using client: APIClient) async {
+    @discardableResult
+    func setPriority(taskId: String, file: String, pos: Int, priority: String, using client: APIClient) async -> Bool {
         await runMutation(client: client) {
             try await client.setPriority(taskId: taskId, file: file, pos: pos, priority: priority)
         }
     }
 
-    func setTitle(taskId: String, file: String, pos: Int, title: String, using client: APIClient) async {
+    @discardableResult
+    func setTitle(taskId: String, file: String, pos: Int, title: String, using client: APIClient) async -> Bool {
         await runMutation(client: client) {
             try await client.setTitle(taskId: taskId, file: file, pos: pos, title: title)
         }
     }
 
-    func setTags(taskId: String, file: String, pos: Int, tags: [String], using client: APIClient) async {
+    @discardableResult
+    func setTags(taskId: String, file: String, pos: Int, tags: [String], using client: APIClient) async -> Bool {
         await runMutation(client: client) {
             try await client.setTags(taskId: taskId, file: file, pos: pos, tags: tags)
         }
@@ -181,49 +232,71 @@ final class TasksStore {
         }
     }
 
-    func setScheduled(taskId: String, file: String, pos: Int, timestamp: String, using client: APIClient) async {
+    @discardableResult
+    func setScheduled(taskId: String, file: String, pos: Int, timestamp: String, using client: APIClient) async -> Bool {
         await runMutation(client: client) {
             try await client.setScheduled(taskId: taskId, file: file, pos: pos, timestamp: timestamp)
         }
     }
 
-    func setDeadline(taskId: String, file: String, pos: Int, timestamp: String, using client: APIClient) async {
+    @discardableResult
+    func setDeadline(taskId: String, file: String, pos: Int, timestamp: String, using client: APIClient) async -> Bool {
         await runMutation(client: client) {
             try await client.setDeadline(taskId: taskId, file: file, pos: pos, timestamp: timestamp)
         }
     }
 
-    func setProperty(taskId: String, file: String, pos: Int, key: String, value: String, using client: APIClient) async {
+    @discardableResult
+    func setProperty(taskId: String, file: String, pos: Int, key: String, value: String, using client: APIClient) async -> Bool {
         await runMutation(client: client) {
             try await client.setProperty(taskId: taskId, file: file, pos: pos, key: key, value: value)
         }
     }
 
-    func clockIn(file: String, pos: Int, using client: APIClient) async {
+    @discardableResult
+    func clockIn(file: String, pos: Int, using client: APIClient) async -> Bool {
         await runMutation(client: client) {
             try await client.clockIn(file: file, pos: pos)
         }
     }
 
-    func clockOut(using client: APIClient) async {
+    @discardableResult
+    func clockOut(using client: APIClient) async -> Bool {
         await runMutation(client: client) {
             try await client.clockOut()
         }
     }
 
-    func loadRefileTargets(using client: APIClient) async {
+    @discardableResult
+    func loadRefileTargets(using client: APIClient) async -> Bool {
+        lastMutationError = nil
         do {
             refileTargets = try await client.fetchRefileTargets()
             refileTargetsLoaded = true
+            return true
         } catch {
             lastMutationError = error.message
+            return false
         }
     }
 
-    func refile(sourceFile: String, sourcePos: Int, target: RefileTarget, using client: APIClient) async {
+    @discardableResult
+    func refile(sourceFile: String, sourcePos: Int, target: RefileTarget, using client: APIClient) async -> Bool {
         await runMutation(client: client) {
             try await client.refileTask(sourceFile: sourceFile, sourcePos: sourcePos,
                                         targetFile: target.file, targetPos: target.pos)
+        }
+    }
+
+    /// Move the heading out of the agenda files via `org-archive-subtree`.
+    /// Destructive in practice — the archive file isn't indexed by eavd, so
+    /// the task disappears from every view. Reversal requires opening the
+    /// `.org_archive` file in Emacs and refiling back. UI gates this action
+    /// to the Logbook view for that reason.
+    @discardableResult
+    func archive(_ task: any TaskDisplayable, using client: APIClient) async -> Bool {
+        await runMutation(client: client) {
+            try await client.archiveTask(id: task.id, file: task.file, pos: task.pos)
         }
     }
 
@@ -267,14 +340,18 @@ final class TasksStore {
         }
     }
 
-    func setNotes(file: String, pos: Int, notes: String, using client: APIClient) async {
+    @discardableResult
+    func setNotes(file: String, pos: Int, notes: String, using client: APIClient) async -> Bool {
         let key = "\(file)::\(pos)"
+        lastMutationError = nil
         do {
             let final = try await client.setNotes(file: file, pos: pos, notes: notes)
             notesCache[key] = final
             await refreshLoaded(using: client)
+            return true
         } catch {
             lastMutationError = error.message
+            return false
         }
     }
 
@@ -286,12 +363,20 @@ final class TasksStore {
         return (keywords?.allDone ?? []).contains(where: { $0.uppercased() == upper })
     }
 
-    private func runMutation(client: APIClient, _ op: () async throws -> Void) async {
+    /// Run a mutation closure, refreshing loaded data on success. Returns
+    /// `true` if the mutation succeeded. Always clears `lastMutationError`
+    /// on entry so callers reading it after this call see ONLY this
+    /// mutation's outcome — without this, a stale error from an earlier
+    /// failed mutation would block dismissal of a successful sheet.
+    private func runMutation(client: APIClient, _ op: () async throws -> Void) async -> Bool {
+        lastMutationError = nil
         do {
             try await op()
             await refreshLoaded(using: client)
+            return true
         } catch {
             lastMutationError = error.message
+            return false
         }
     }
 

@@ -43,8 +43,8 @@ on disk are still the source of truth and Emacs is still the only writer.
   ┌──────────────┐    HTTP+SSE     ┌──────────────────────────┐
   │   Mac app    │  127.0.0.1:3002 │      eavd (Rust)         │
   │ Web frontend │ ──────────────► │  • orgize parser         │
-  │ MCP server*  │                 │  • in-memory BTreeMap    │
-  └──────────────┘                 │  • SQLite snapshot       │
+  └──────────────┘                 │  • in-memory BTreeMap    │
+                                   │  • SQLite snapshot       │
                                    │  • notify file watcher   │
                                    │  • agenda evaluator      │
                                    └──────────┬───────────────┘
@@ -61,12 +61,11 @@ on disk are still the source of truth and Emacs is still the only writer.
                                        (single writer: Emacs)
 #+end_example
 
-- =daemon/= :: Cargo workspace with eight crates: =eav-core= (wire types),
+- =daemon/= :: Cargo workspace with seven crates: =eav-core= (wire types),
   =eav-parse= (orgize wrapper + tag inheritance), =eav-index= (in-memory
   index + SQLite snapshot + =notify= watcher), =eav-agenda= (day/range
   evaluator), =eav-bridge= (persistent socket client), =eav-server= (axum
-  HTTP + SSE), =eav-mcp= (optional Model Context Protocol scaffold), and
-  the =eavd= binary that ties them together.
+  HTTP + SSE), and the =eavd= binary that ties them together.
 - =elisp/eav-bridge.el= :: New in-Emacs UNIX-socket dispatcher that exposes
   the existing =eav.el= mutation/sexp surface to =eavd=. =eav.el= itself is
   unchanged.
@@ -87,10 +86,6 @@ on disk are still the source of truth and Emacs is still the only writer.
 the daemon is dogfooded. Pick the backend by setting the Mac app's *Server
 URL* (=Settings → Server URL=) or the =VITE_API_TARGET= env for the web
 client (defaults to =http://localhost:3002= now).
-
-\\* The MCP server is a scaffold in v0.4.0 — resource/tool listing works,
-the JSON-RPC stdio loop returns =bail!("not implemented")=. Will be
-finished in v1.0.
 
 ** Setup
 

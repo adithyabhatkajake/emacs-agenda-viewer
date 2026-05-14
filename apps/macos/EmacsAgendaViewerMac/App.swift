@@ -20,6 +20,7 @@ struct EmacsAgendaViewerMacApp: App {
             RootView()
                 .environment(settings)
                 .environment(eventKit)
+                .environment(daemonHost)
                 .preferredColorScheme(settings.appearance.colorScheme)
                 .tint(Theme.accent)
                 .frame(minWidth: 820, idealWidth: 1080, minHeight: 560, idealHeight: 720)
@@ -60,26 +61,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var settings: AppSettings?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        guard let host = daemonHost else { return }
-        do {
-            try host.start()
-        } catch {
-            NSLog("eavd helper failed to start: %@", String(describing: error))
-            return
-        }
+        guard daemonHost != nil else { return }
+        // `start()` is async because the version handshake probes the
+        // existing daemon (if any) before deciding whether to spawn fresh.
         // Don't set the URL until the daemon is actually serving, otherwise
         // the RootView task fires and races the helper's bridge auto-load.
-        // The URL change will retrigger any `.task(id: serverURLString)`.
         Task { @MainActor [weak self] in
             guard let self, let host = self.daemonHost else { return }
+            host.phase = .starting
+            do {
+                try await host.start()
+            } catch {
+                NSLog("eavd helper failed to start: %@", String(describing: error))
+                // Don't clobber a `.crashed` phase that the termination
+                // handler may have set in the same tick — if proc.run()
+                // succeeded but the child died immediately, that's what
+                // we want to show.
+                if case .starting = host.phase {
+                    host.phase = .failedToStart(reason: "Could not launch helper: \(error)")
+                }
+                return
+            }
             let ready = await host.waitForReady()
             guard let s = self.settings else { return }
             if !ready {
                 NSLog("eavd helper didn't become ready within timeout")
+                // The termination handler wins if the child died first;
+                // only mark "timed out" when the process is still alive.
+                switch host.phase {
+                case .starting:
+                    host.phase = .failedToStart(reason:
+                        "Polled /api/debug for 15 seconds with no response. "
+                        + "The process is running but never bound the port — "
+                        + "another service may be on 3002.")
+                default: break  // crashed/failedToStart already set by handler
+                }
+            } else {
+                host.phase = .ready
             }
-            // Set even on `!ready`: the first ContentStates 'Couldn't load'
-            // is preferable to a forever-empty UI, and the user gets a
-            // working `Try again` button once the daemon comes up.
+            // Set even on failure: the user gets a working "Retry"
+            // button in the failure view; the URL just needs to be
+            // populated for when retry succeeds.
             if s.serverURLString.isEmpty {
                 s.serverURLString = host.endpointURL.absoluteString
             }

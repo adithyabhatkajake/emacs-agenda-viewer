@@ -25,7 +25,7 @@ semantics — hooks, advice, capture templates with elisp expansions,
 
 * Goals
 
-- Replace the read path so Mac app (and future web/iOS/MCP clients) get
+- Replace the read path so Mac app (and future web/iOS clients) get
   near-zero-latency responses.
 - Provide a live update channel so the UI reflects org changes without
   manual refresh.
@@ -75,8 +75,8 @@ structure-only; we proxy the rest.
   ┌──────────────┐   JSON+SSE over   ┌──────────────────────────┐
   │   Mac app    │     UNIX sock     │     eav-indexd (Rust)    │
   │ Web frontend │ ◄──────────────►  │                          │
-  │  MCP server  │                   │   • orgize parser        │
-  └──────────────┘                   │   • in-mem index         │
+  └──────────────┘                   │   • orgize parser        │
+                                     │   • in-mem index         │
                                      │   • SQLite snapshot      │
                                      │   • fsnotify watch       │
                                      │   • agenda evaluator     │
@@ -130,8 +130,6 @@ daemon/                              # new Rust workspace
       src/lib.rs
       src/routes.rs
       src/events.rs
-    eav-mcp/                         # optional: MCP server
-      src/lib.rs
     eavd/                            # binary
       src/main.rs
 
@@ -269,18 +267,6 @@ correctness regressions vs. Express.
 - Update =launchd= plist to start =eavd= instead of =npx tsx server/index.ts=
 - Update =deploy.sh= and the remote sync block
 - README arch diagram update
-
-** Phase 8 — MCP server (optional, 3 days)
-
-The same in-memory index trivially exposes an MCP server:
-
-- Resources: =task://{id}=, =agenda://day/{date}=
-- Tools: =toggle-done=, =set-priority=, =set-state=, =capture=, =refile=
-- Streams: subscribe to =task-changed= so an LLM can react to org edits
-
-Wires straight into Claude Code via stdio MCP transport. Useful for
-agent-driven task management ("plan my day around these incoming
-deadlines").
 
 * Data model (=eav-core=)
 

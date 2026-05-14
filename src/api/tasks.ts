@@ -1,39 +1,71 @@
 import type { OrgTask, OrgTimestamp, AgendaEntry, AgendaFile, TodoKeywords, OrgConfig, CaptureTemplate } from '../types';
 
-const BASE = '/api';
+const FALLBACK_BASE = '/api';
+
+export interface EavSettings {
+  serverURL?: string;
+  hideDeadlinesInToday?: boolean;
+  showHabitsInToday?: boolean;
+  themeMode?: string;
+}
+
+export function loadSettings(): EavSettings {
+  try {
+    return JSON.parse(localStorage.getItem('eav-settings') || '{}') as EavSettings;
+  } catch {
+    return {};
+  }
+}
+
+export function saveSettings(patch: Partial<EavSettings>): EavSettings {
+  const current = loadSettings();
+  const next = { ...current, ...patch };
+  localStorage.setItem('eav-settings', JSON.stringify(next));
+  return next;
+}
+
+export function getApiBase(): string {
+  try {
+    const s = loadSettings();
+    if (s.serverURL && s.serverURL.trim()) {
+      return s.serverURL.replace(/\/$/, '') + '/api';
+    }
+  } catch { /* ignore */ }
+  return FALLBACK_BASE;
+}
 
 export async function fetchTasks(all = false): Promise<OrgTask[]> {
-  const res = await fetch(`${BASE}/tasks${all ? '?all=true' : ''}`);
+  const res = await fetch(`${getApiBase()}/tasks${all ? '?all=true' : ''}`);
   if (!res.ok) throw new Error('Failed to fetch tasks');
   return res.json();
 }
 
 export async function fetchFiles(): Promise<AgendaFile[]> {
-  const res = await fetch(`${BASE}/files`);
+  const res = await fetch(`${getApiBase()}/files`);
   if (!res.ok) throw new Error('Failed to fetch files');
   return res.json();
 }
 
 export async function fetchKeywords(): Promise<TodoKeywords> {
-  const res = await fetch(`${BASE}/keywords`);
+  const res = await fetch(`${getApiBase()}/keywords`);
   if (!res.ok) throw new Error('Failed to fetch keywords');
   return res.json();
 }
 
 export async function fetchConfig(): Promise<OrgConfig> {
-  const res = await fetch(`${BASE}/config`);
+  const res = await fetch(`${getApiBase()}/config`);
   if (!res.ok) throw new Error('Failed to fetch config');
   return res.json();
 }
 
 export async function fetchAgendaDay(date: string): Promise<AgendaEntry[]> {
-  const res = await fetch(`${BASE}/agenda/day/${date}`);
+  const res = await fetch(`${getApiBase()}/agenda/day/${date}`);
   if (!res.ok) throw new Error('Failed to fetch agenda day');
   return res.json();
 }
 
 export async function fetchAgendaRange(start: string, end: string): Promise<AgendaEntry[]> {
-  const res = await fetch(`${BASE}/agenda/range?start=${start}&end=${end}`);
+  const res = await fetch(`${getApiBase()}/agenda/range?start=${start}&end=${end}`);
   if (!res.ok) throw new Error('Failed to fetch agenda range');
   return res.json();
 }
@@ -44,7 +76,7 @@ export interface HeadingNotes {
 }
 
 export async function fetchNotes(file: string, pos: number): Promise<HeadingNotes> {
-  const res = await fetch(`${BASE}/notes?file=${encodeURIComponent(file)}&pos=${pos}`);
+  const res = await fetch(`${getApiBase()}/notes?file=${encodeURIComponent(file)}&pos=${pos}`);
   if (!res.ok) throw new Error('Failed to fetch notes');
   const data = await res.json();
   return { notes: data.notes ?? '', activeTimestamps: data.activeTimestamps ?? [] };
@@ -60,13 +92,13 @@ export interface ClockStatus {
 }
 
 export async function fetchClockStatus(): Promise<ClockStatus> {
-  const res = await fetch(`${BASE}/clock`);
+  const res = await fetch(`${getApiBase()}/clock`);
   if (!res.ok) throw new Error('Failed to fetch clock status');
   return res.json();
 }
 
 export async function clockIn(file: string, pos: number): Promise<void> {
-  const res = await fetch(`${BASE}/clock/in`, {
+  const res = await fetch(`${getApiBase()}/clock/in`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file, pos }),
@@ -75,12 +107,12 @@ export async function clockIn(file: string, pos: number): Promise<void> {
 }
 
 export async function clockOutApi(): Promise<void> {
-  const res = await fetch(`${BASE}/clock/out`, { method: 'POST' });
+  const res = await fetch(`${getApiBase()}/clock/out`, { method: 'POST' });
   if (!res.ok) throw new Error('Failed to clock out');
 }
 
 export async function saveNotes(file: string, pos: number, notes: string): Promise<string> {
-  const res = await fetch(`${BASE}/notes`, {
+  const res = await fetch(`${getApiBase()}/notes`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file, pos, notes }),
@@ -97,7 +129,7 @@ export interface RefileTarget {
 }
 
 export async function fetchRefileTargets(): Promise<RefileTarget[]> {
-  const res = await fetch(`${BASE}/refile/targets`);
+  const res = await fetch(`${getApiBase()}/refile/targets`);
   if (!res.ok) throw new Error('Failed to fetch refile targets');
   return res.json();
 }
@@ -105,7 +137,7 @@ export async function fetchRefileTargets(): Promise<RefileTarget[]> {
 export async function refileTask(
   sourceFile: string, sourcePos: number, targetFile: string, targetPos: number,
 ): Promise<void> {
-  const res = await fetch(`${BASE}/refile`, {
+  const res = await fetch(`${getApiBase()}/refile`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sourceFile, sourcePos, targetFile, targetPos }),
@@ -113,8 +145,17 @@ export async function refileTask(
   if (!res.ok) throw new Error('Failed to refile task');
 }
 
+export async function archiveTask(task: OrgTask | { id: string; file: string; pos: number }): Promise<void> {
+  const res = await fetch(`${getApiBase()}/tasks/${encodeURIComponent(task.id)}/archive`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file, pos: task.pos }),
+  });
+  if (!res.ok) throw new Error('Failed to archive task');
+}
+
 export async function updateTitle(task: OrgTask | { file: string; pos: number; id: string }, title: string): Promise<void> {
-  const res = await fetch(`${BASE}/tasks/${encodeURIComponent(task.id)}/title`, {
+  const res = await fetch(`${getApiBase()}/tasks/${encodeURIComponent(task.id)}/title`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file: task.file, pos: task.pos, title }),
@@ -123,7 +164,7 @@ export async function updateTitle(task: OrgTask | { file: string; pos: number; i
 }
 
 export async function updateTodoState(task: OrgTask, state: string): Promise<void> {
-  const res = await fetch(`${BASE}/tasks/${encodeURIComponent(task.id)}/state`, {
+  const res = await fetch(`${getApiBase()}/tasks/${encodeURIComponent(task.id)}/state`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file: task.file, pos: task.pos, state }),
@@ -132,7 +173,7 @@ export async function updateTodoState(task: OrgTask, state: string): Promise<voi
 }
 
 export async function updatePriority(task: OrgTask, priority: string): Promise<void> {
-  const res = await fetch(`${BASE}/tasks/${encodeURIComponent(task.id)}/priority`, {
+  const res = await fetch(`${getApiBase()}/tasks/${encodeURIComponent(task.id)}/priority`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file: task.file, pos: task.pos, priority }),
@@ -141,7 +182,7 @@ export async function updatePriority(task: OrgTask, priority: string): Promise<v
 }
 
 export async function updateTags(task: OrgTask, tags: string[]): Promise<void> {
-  const res = await fetch(`${BASE}/tasks/${encodeURIComponent(task.id)}/tags`, {
+  const res = await fetch(`${getApiBase()}/tasks/${encodeURIComponent(task.id)}/tags`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file: task.file, pos: task.pos, tags }),
@@ -150,7 +191,7 @@ export async function updateTags(task: OrgTask, tags: string[]): Promise<void> {
 }
 
 export async function updateScheduled(task: OrgTask, timestamp: string): Promise<void> {
-  const res = await fetch(`${BASE}/tasks/${encodeURIComponent(task.id)}/scheduled`, {
+  const res = await fetch(`${getApiBase()}/tasks/${encodeURIComponent(task.id)}/scheduled`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file: task.file, pos: task.pos, timestamp }),
@@ -159,7 +200,7 @@ export async function updateScheduled(task: OrgTask, timestamp: string): Promise
 }
 
 export async function updateDeadline(task: OrgTask, timestamp: string): Promise<void> {
-  const res = await fetch(`${BASE}/tasks/${encodeURIComponent(task.id)}/deadline`, {
+  const res = await fetch(`${getApiBase()}/tasks/${encodeURIComponent(task.id)}/deadline`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file: task.file, pos: task.pos, timestamp }),
@@ -168,7 +209,7 @@ export async function updateDeadline(task: OrgTask, timestamp: string): Promise<
 }
 
 export async function fetchCaptureTemplates(): Promise<CaptureTemplate[]> {
-  const res = await fetch(`${BASE}/capture/templates`);
+  const res = await fetch(`${getApiBase()}/capture/templates`);
   if (!res.ok) throw new Error('Failed to fetch capture templates');
   return res.json();
 }
@@ -178,10 +219,19 @@ export async function captureTask(
   title: string,
   options?: { priority?: string; scheduled?: string; deadline?: string },
 ): Promise<void> {
-  const res = await fetch(`${BASE}/capture`, {
+  const res = await fetch(`${getApiBase()}/capture`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ templateKey, title, ...options }),
   });
   if (!res.ok) throw new Error('Failed to capture task');
+}
+
+export async function setEffort(task: OrgTask | { id: string; file: string; pos: number }, value: string): Promise<void> {
+  const res = await fetch(`${getApiBase()}/tasks/${encodeURIComponent(task.id)}/property`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file, pos: task.pos, name: 'EFFORT', value }),
+  });
+  if (!res.ok) throw new Error('Failed to set effort');
 }

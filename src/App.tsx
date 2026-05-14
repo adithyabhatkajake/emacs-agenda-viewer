@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { TaskList } from './components/TaskList';
 import { CaptureModal } from './components/CaptureModal';
+import { SettingsModal } from './components/SettingsModal';
+import { ClockDock } from './components/ClockDock';
 import { useTasks } from './hooks/useTasks';
 import { useTheme } from './hooks/useTheme';
 import type { ViewFilter } from './types';
@@ -24,6 +26,7 @@ export default function App() {
     upcomingEntries,
     files,
     keywords,
+    config,
     clockStatus,
     categories,
     allTags,
@@ -38,13 +41,30 @@ export default function App() {
   const [filter, setFilter] = useState<ViewFilter>({ type: 'today' });
   const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
   const [captureOpen, setCaptureOpen] = useState(false);
-  const { mode: themeMode, cycle: cycleTheme } = useTheme();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { mode: themeMode, setTheme, cycle: cycleTheme } = useTheme();
 
   // Close sidebar on mobile when navigating
   const handleFilterChange = (f: ViewFilter) => {
     setFilter(f);
     if (isMobile) setSidebarOpen(false);
   };
+
+  // Reveal the clocked task in the current view (scroll + brief highlight)
+  const handleReveal = useCallback((file: string, pos: number) => {
+    const el = document.querySelector<HTMLElement>(
+      `[data-task-file="${CSS.escape(file)}"][data-task-pos="${pos}"]`
+    );
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.style.transition = 'box-shadow 0.2s';
+      el.style.boxShadow = '0 0 0 2px var(--color-accent, #5a9cf0)';
+      setTimeout(() => { el.style.boxShadow = ''; }, 1400);
+    } else {
+      // Task not visible in current view — navigate to All Tasks
+      setFilter({ type: 'all' });
+    }
+  }, []);
 
   // Keyboard shortcuts: Cmd+\ toggle sidebar, Cmd+N capture
   useEffect(() => {
@@ -124,6 +144,7 @@ export default function App() {
           isMobile={isMobile}
           onClose={() => setSidebarOpen(false)}
           onCapture={() => setCaptureOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
       )}
       <TaskList
@@ -134,16 +155,30 @@ export default function App() {
         keywords={keywords}
         isDoneState={isDoneState}
         clockStatus={clockStatus}
+        allTags={allTags}
         onRefresh={refresh}
         onRefreshClock={refreshClock}
         onCapture={() => setCaptureOpen(true)}
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen(prev => !prev)}
+        warningDays={config?.deadlineWarningDays ?? 14}
       />
       <CaptureModal
         open={captureOpen}
         onClose={() => setCaptureOpen(false)}
         onCaptured={refresh}
+      />
+      {settingsOpen && (
+        <SettingsModal
+          themeMode={themeMode}
+          onSetTheme={setTheme}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+      <ClockDock
+        clockStatus={clockStatus}
+        onClockOut={refreshClock}
+        onReveal={handleReveal}
       />
     </>
   );

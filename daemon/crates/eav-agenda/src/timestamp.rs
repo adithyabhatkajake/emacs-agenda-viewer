@@ -41,6 +41,45 @@ pub fn next_occurrence_on_or_after(
     advance_to(base, rep, target, today)
 }
 
+/// Returns the most recent occurrence ON or BEFORE target. Used for
+/// past-deadline (overdue) detection: an active task whose deadline is
+/// in the past should surface on today's agenda until done, matching
+/// `org-agenda-get-deadlines` (org-agenda.el ~6420) which uses the
+/// literal stored date (not auto-advanced through the repeater).
+pub fn previous_occurrence_on_or_before(
+    ts: &OrgTimestamp,
+    target: NaiveDate,
+) -> Option<NaiveDate> {
+    let base = ts_date(ts)?;
+    let rep = match ts.repeater.as_ref() {
+        Some(r) => r,
+        None => return if base <= target { Some(base) } else { None },
+    };
+    if base > target {
+        return None;
+    }
+    let step = rep.value.max(1) as i64;
+    if !(rep.kind == "+" || rep.kind == "++" || rep.kind == ".+") {
+        return Some(base);
+    }
+    // Walk forward from base; the last date that is still ≤ target is the
+    // most recent occurrence. Bound the loop like advance_to.
+    let mut cur = base;
+    let mut last = Some(cur);
+    for _ in 0..1_000_000 {
+        let next = match step_unit(cur, step, &rep.unit) {
+            Some(Some(d)) => d,
+            _ => return last,
+        };
+        if next > target {
+            return last;
+        }
+        last = Some(next);
+        cur = next;
+    }
+    last
+}
+
 fn any_repeat_lands_on(
     base: NaiveDate,
     rep: &Repeater,

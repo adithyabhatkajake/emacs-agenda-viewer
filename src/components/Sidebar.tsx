@@ -17,6 +17,7 @@ interface SidebarProps {
   isMobile?: boolean;
   onClose?: () => void;
   onCapture?: () => void;
+  onOpenSettings?: () => void;
 }
 
 function isActive(current: ViewFilter, check: ViewFilter): boolean {
@@ -97,6 +98,7 @@ export function Sidebar({
   isMobile,
   onClose,
   onCapture,
+  onOpenSettings,
 }: SidebarProps) {
   const iconItem = (label: string, filter: ViewFilter, icon: string) => {
     const active = isActive(activeFilter, filter);
@@ -147,9 +149,14 @@ export function Sidebar({
       <div className="flex-1 overflow-y-auto min-h-0">
         {/* Smart views */}
         <div className="px-3 pb-2 flex flex-col gap-0.5">
+          {iconItem('Inbox', { type: 'inbox' }, '\u{1F4E5}')}
           {iconItem('All Tasks', { type: 'all' }, '\u{2630}')}
           {iconItem('Today', { type: 'today' }, '\u{2B50}')}
           {iconItem('Upcoming', { type: 'upcoming' }, '\u{1F4C5}')}
+          {iconItem('Habits', { type: 'habits' }, '\u{1F501}')}
+          {iconItem('Eisenhower', { type: 'eisenhower' }, '\u{1F3AF}')}
+          {iconItem('Calendar', { type: 'calendar' }, '\u{1F5D3}️')}
+          {iconItem('Logbook', { type: 'logbook' }, '\u{1F4D6}')}
         </div>
 
         {/* Categories */}
@@ -175,11 +182,11 @@ export function Sidebar({
         )}
       </div>
 
-      {/* Theme toggle — pinned at bottom */}
-      <div className="flex-shrink-0 px-4 py-3 border-t border-things-border">
+      {/* Theme toggle + Settings gear — pinned at bottom */}
+      <div className="flex-shrink-0 px-4 py-3 border-t border-things-border flex items-center gap-1">
         <button
           onClick={onCycleTheme}
-          className="flex items-center gap-2 w-full px-3 py-1.5 rounded-lg text-[12px] text-text-secondary hover:bg-things-sidebar-hover hover:text-text-primary transition-colors"
+          className="flex items-center gap-2 flex-1 px-3 py-1.5 rounded-lg text-[12px] text-text-secondary hover:bg-things-sidebar-hover hover:text-text-primary transition-colors"
           title={`Theme: ${themeMode} (click to cycle)`}
         >
           <span className="text-[14px]">
@@ -187,6 +194,15 @@ export function Sidebar({
           </span>
           <span className="capitalize">{themeMode === 'auto' ? 'Auto' : themeMode}</span>
         </button>
+        {onOpenSettings && (
+          <button
+            onClick={onOpenSettings}
+            title="Settings"
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-text-tertiary hover:text-text-secondary hover:bg-things-sidebar-hover transition-colors text-[15px]"
+          >
+            {'\u2699\uFE0F'}
+          </button>
+        )}
       </div>
     </aside>
   );

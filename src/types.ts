@@ -44,6 +44,14 @@ export interface OrgTask {
   effort?: string;
   notes?: string;
   activeTimestamps?: OrgTimestamp[];
+  /** Heading properties (`:STYLE:`, `:LAST_REPEAT:`, etc.). Present when eavd parses them. */
+  properties?: Record<string, string>;
+  /**
+   * Completion timestamps mined from the LOGBOOK drawer. Populated only when
+   * `:STYLE: habit` is set. Each string is the raw org timestamp inside the
+   * brackets, e.g. `2026-05-11 Mon 14:32`.
+   */
+  completions?: string[];
 }
 
 export interface AgendaEntry {
@@ -111,6 +119,11 @@ export type ViewFilter =
   | { type: 'all' }
   | { type: 'today' }
   | { type: 'upcoming' }
+  | { type: 'logbook' }
+  | { type: 'inbox' }
+  | { type: 'habits' }
+  | { type: 'eisenhower' }
+  | { type: 'calendar' }
   | { type: 'file'; path: string }
   | { type: 'category'; category: string }
   | { type: 'tag'; tag: string };

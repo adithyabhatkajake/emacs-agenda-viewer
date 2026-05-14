@@ -1,5 +1,49 @@
 #+title: Changelog
 
+** 0.5.0 (2026-05-14)
+
+Web feature-parity push. The Mac app set the bar in 0.4.0; this release
+brings the React frontend to the same surface area. Pure web — no daemon
+or Mac changes ship in this version.
+
+*** Added
+
+- *Tag editing* -- context menu + multi-select picker, calls existing
+  =PATCH /api/tasks/:id/tags=.
+- *Effort editing* -- context menu + preset chips (5m/15m/30m/1h/2h) +
+  custom =HH:MM=, calls the existing property endpoint.
+- *Dedicated Inbox smart view* -- top-level sidebar entry filtering
+  =:CATEGORY: Inbox= and =inbox.org=.
+- *Settings modal* -- gear icon in sidebar footer; server URL, theme
+  cycle, "hide deadlines in Today" and "show habits in Today" toggles;
+  persisted to =localStorage['eav-settings']=.
+- *Schedule tray* -- quick-pick popover (Today / This Evening 18:00 /
+  Tomorrow / This Weekend / Next Week / Someday / Custom…) reachable
+  from a row's date chip.
+- *Clock dock pill* -- persistent fixed pill (top-right desktop,
+  bottom-center mobile) showing the clocked task + live elapsed; click
+  reveals the row, =×= stops the clock.
+- *Next-repeat preview chip* -- 🔁 next-fire date chip on repeating
+  tasks, backed by new =src/utils/repeater.ts=.
+- *Habits view* -- full port of =MacHabitsView.swift= +
+  =HabitStats.swift=: cadence buckets (Today / This Week / Month /
+  Year), 14-day completion strip, streak with 🔥, % done, gray-out
+  done-this-period. New =src/utils/habits.ts=.
+- *Eisenhower matrix* -- 2×2 priority×urgency grid with
+  drag-to-reschedule between quadrants (sets priority + scheduled).
+- *Calendar month view* -- 7-column month grid with per-day task chips,
+  day-click popover, navigation arrows, drag-target day cells.
+- *Drag-to-reschedule on Upcoming* -- Upcoming view day-section headers
+  act as drop targets.
+
+*** Internal
+
+- =src/types.ts= gained =properties= and =completions= fields on
+  =OrgTask= (already on the wire from =eav-core=, just missing from the
+  TS mirror).
+- =src/types.ts= gained four new =ViewFilter= variants: =inbox=,
+  =habits=, =eisenhower=, =calendar=.
+
 ** 0.4.0
 
 The Rust daemon. Reads land on an in-memory index in ~2 ms; mutations and
@@ -12,9 +56,9 @@ once Express has been removed and the dogfood week is clean.
 
 *** =eavd= -- the Rust daemon
 
-New Cargo workspace under =daemon/= with eight crates (=eav-core=,
+New Cargo workspace under =daemon/= with seven crates (=eav-core=,
 =eav-parse=, =eav-index=, =eav-agenda=, =eav-bridge=, =eav-server=,
-=eav-mcp=, =eavd=). The HTTP surface mirrors the Express routes 1:1; the
+=eavd=). The HTTP surface mirrors the Express routes 1:1; the
 agenda evaluator hits 30/30 days byte-identical against the captured
 =/api/agenda/day/<date>= corpus, and =/api/tasks= matches Express on
 active and all-tasks counts. Cold-start <50 ms with a SQLite snapshot at

@@ -247,11 +247,19 @@ impl Index {
 
     /// Populate the index from a snapshot. Used at cold start while the live
     /// reindex runs in the background.
+    ///
+    /// Critically: canonicalize the path before storing it in `by_file` so
+    /// that the subsequent live `rebuild_file` (which always canonicalizes)
+    /// targets the same bucket. Without this, the snapshot path and the
+    /// live-reindex path can differ — most often when the user's agenda
+    /// files sit under iCloud Drive, where macOS sometimes returns the same
+    /// file via two different superficial path forms — and every task ends
+    /// up in two `by_file` buckets, doubling all read paths.
     pub fn load_snapshot(&self, snap: &Snapshot) -> rusqlite::Result<()> {
         let tasks = snap.load_all_tasks()?;
         let mut inner = self.inner.write();
         for t in tasks {
-            let path = std::path::PathBuf::from(&t.file);
+            let path = canonicalize_path(&std::path::PathBuf::from(&t.file));
             inner.by_file.entry(path).or_default().push(t.id.clone());
             insert_secondary(&mut inner, &t);
             inner.tasks.insert(t.id.clone(), t);

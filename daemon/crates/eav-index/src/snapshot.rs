@@ -177,6 +177,7 @@ mod tests {
             notes: None,
             active_timestamps: None,
             properties: Some(BTreeMap::new()),
+            completions: None,
         }
     }
 

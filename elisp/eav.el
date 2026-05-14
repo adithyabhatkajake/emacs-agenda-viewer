@@ -201,7 +201,11 @@ Returns a list of parsed timestamp alists. Uses org's own parser so
 
 (defun eav-set-property (file pos key value)
   "Set custom property KEY to VALUE on the heading at POS in FILE.
-If VALUE is the empty string, the property is removed."
+If VALUE is the empty string, the property is removed.
+
+`run-hooks' flushes any log entry queued by `org-entry-put' /
+`org-entry-delete' under the user's `org-log-changes' (and related)
+settings. See `eav-set-todo-state' for the pattern's rationale."
   (with-current-buffer (find-file-noselect file)
     (save-excursion
       (goto-char pos)
@@ -209,6 +213,7 @@ If VALUE is the empty string, the property is removed."
       (if (or (null value) (string-empty-p value))
           (org-entry-delete nil key)
         (org-entry-put nil key value))
+      (run-hooks 'post-command-hook)
       (save-buffer)))
   (json-encode '((success . t))))
 
@@ -522,22 +527,36 @@ Uses org-agenda's own machinery to determine which entries appear."
     (json-encode '((clocking . :json-false)))))
 
 (defun eav-clock-in (file pos)
-  "Clock in to the heading at POS in FILE."
+  "Clock in to the heading at POS in FILE.
+
+NOTE: we still override `org-clock-into-drawer' to \"LOGBOOK\". The
+daemon's clock-line scanner looks specifically at the LOGBOOK
+drawer; respecting a `nil' (clocks scatter in body) or arbitrary
+custom drawer setting would require a parser rework. The user's
+default is `t' which already resolves to LOGBOOK, so this is a
+no-op for them — flagged here so future-us can revisit when we
+generalise the parser."
   (require 'org-clock)
   (with-current-buffer (find-file-noselect file)
     (goto-char pos)
-    ;; Force LOGBOOK drawer regardless of the user's personal config so the
-    ;; web/mac UIs can reliably hide clock metadata behind a single drawer.
     (let ((org-clock-into-drawer "LOGBOOK"))
-      (org-clock-in)))
+      (org-clock-in))
+    (run-hooks 'post-command-hook))
   (json-encode '((success . t))))
 
 (defun eav-clock-out ()
-  "Clock out of the current task."
+  "Clock out of the current task.
+
+`run-hooks' flushes any clock-out note queued by
+`org-log-note-clock-out' (when set to `note', org prompts and the
+flush will pop *Org Note* — programmatic callers should set that to
+`nil' or `time' if they want the bridge to round-trip without a
+prompt). Same drawer caveat as `eav-clock-in'."
   (require 'org-clock)
   (when (org-clocking-p)
     (let ((org-clock-into-drawer "LOGBOOK"))
-      (org-clock-out)))
+      (org-clock-out))
+    (run-hooks 'post-command-hook))
   (json-encode '((success . t))))
 
 (defun eav--format-clock-stamp (epoch)
@@ -812,14 +831,16 @@ Each target is an alist with name, file, and pos."
     (json-encode (vconcat (nreverse results)))))
 
 (defun eav-refile-to-target (source-file source-pos target-file target-pos)
-  "Refile heading at SOURCE-POS in SOURCE-FILE to TARGET-POS in TARGET-FILE."
+  "Refile heading at SOURCE-POS in SOURCE-FILE to TARGET-POS in TARGET-FILE.
+`run-hooks' flushes any `org-log-refile' entry queued by `org-refile'
+(see `eav-set-todo-state' for the pattern)."
   (let ((target-name ""))
     (with-current-buffer (find-file-noselect source-file)
       (goto-char source-pos)
       (org-back-to-heading t)
       (org-refile nil nil (list target-name target-file nil target-pos))
+      (run-hooks 'post-command-hook)
       (save-buffer))
-    ;; Save target buffer too
     (with-current-buffer (find-file-noselect target-file)
       (save-buffer)))
   (json-encode '((success . t))))
@@ -835,26 +856,47 @@ Preserves TODO state, priority, and tags."
   (json-encode '((success . t))))
 
 (defun eav-set-todo-state (file pos state)
-  "Set the TODO state of heading at POS in FILE to STATE."
+  "Set the TODO state of heading at POS in FILE to STATE.
+
+`org-todo' queues any required logbook entry via `org-add-log-setup',
+which adds `org-add-log-note' to `post-command-hook' to actually
+flush the entry. In an interactive session that hook fires
+automatically after the command returns; in a programmatic call from
+the bridge it doesn't, so we run it ourselves.
+
+This is the *only* mechanism we use to write log entries — we never
+synthesize them by hand. That keeps everything driven by the user's
+configuration (`org-log-done', `org-log-repeat', `org-log-into-drawer',
+`org-todo-log-states'). If the user disables logging or switches it
+to `note', we honor that, just like an interactive completion would."
   (with-current-buffer (find-file-noselect file)
     (goto-char pos)
     (org-todo state)
+    (run-hooks 'post-command-hook)
     (save-buffer))
   (json-encode '((success . t))))
 
 (defun eav-set-priority (file pos priority)
   "Set the priority of heading at POS in FILE to PRIORITY character.
-If PRIORITY is a space, remove the priority."
+If PRIORITY is a space, remove the priority.
+
+`run-hooks' is the same flush pattern documented on
+`eav-set-todo-state' — `org-priority' may queue a log entry via
+`org-log-priority' and we need to flush it ourselves outside an
+interactive session."
   (with-current-buffer (find-file-noselect file)
     (goto-char pos)
     (if (string= priority " ")
         (org-priority 'remove)
       (org-priority (string-to-char priority)))
+    (run-hooks 'post-command-hook)
     (save-buffer))
   (json-encode '((success . t))))
 
 (defun eav-refile-task (source-file source-pos target-file target-pos)
-  "Refile heading at SOURCE-POS in SOURCE-FILE to TARGET-POS in TARGET-FILE."
+  "Refile heading at SOURCE-POS in SOURCE-FILE to TARGET-POS in TARGET-FILE.
+`run-hooks' flushes any refile log entry queued by `org-refile' when
+`org-log-refile' is non-nil (see `eav-set-todo-state' for the pattern)."
   (with-current-buffer (find-file-noselect source-file)
     (goto-char source-pos)
     (let ((org-refile-targets `((,target-file :maxlevel . 9))))
@@ -868,38 +910,88 @@ If PRIORITY is a space, remove the priority."
           (with-current-buffer (find-file-noselect source-file)
             (goto-char source-pos)
             (org-refile nil nil rfloc)
+            (run-hooks 'post-command-hook)
             (save-buffer)))))
     (with-current-buffer (find-file-noselect target-file)
       (save-buffer)))
   (json-encode '((success . t))))
 
+(defun eav-archive-task (file pos)
+  "Archive heading at POS in FILE using `org-archive-subtree'.
+Honors the user's `org-archive-location' (defaults to <file>.org_archive).
+Saves both source and archive buffers so eavd's notify watcher picks up
+the change without needing an explicit refresh.
+
+API note: newer org versions expose `org-archive--compute-location' (and
+have removed the older `org-extract-archive-file' + `org-get-local-archive-location'
+helpers). We probe at runtime to stay compatible with both."
+  (require 'org-archive)
+  (with-current-buffer (find-file-noselect file)
+    ;; find-file-noselect picks the major mode from auto-mode-alist; if a
+    ;; caller hands us a non-.org path (e.g. a probe with a fake file name)
+    ;; the buffer lands in fundamental-mode and org-archive-subtree emits
+    ;; `org-element-at-point' warnings. Force org-mode so the operation
+    ;; either succeeds cleanly or fails with a meaningful error.
+    (unless (derived-mode-p 'org-mode) (org-mode))
+    (goto-char pos)
+    (let* ((location
+            (or (org-entry-get nil "ARCHIVE" 'inherit)
+                org-archive-location))
+           (archive-target
+            (cond
+             ((fboundp 'org-archive--compute-location)
+              (car (org-archive--compute-location location)))
+             ((fboundp 'org-extract-archive-file)
+              (funcall 'org-extract-archive-file location))
+             (t nil))))
+      (org-archive-subtree)
+      ;; Flush any log entry queued by `org-archive-subtree' under
+      ;; `org-archive-mark-done' / `org-todo-log-states'. See
+      ;; `eav-set-todo-state' for the pattern's rationale.
+      (run-hooks 'post-command-hook)
+      (save-buffer)
+      (when (and archive-target (file-exists-p archive-target))
+        (let ((buf (find-buffer-visiting archive-target)))
+          (when buf
+            (with-current-buffer buf (save-buffer)))))))
+  (json-encode '((success . t))))
+
 (defun eav-set-tags (file pos tags)
-  "Set TAGS on heading at POS in FILE. TAGS is a list of tag strings."
+  "Set TAGS on heading at POS in FILE. TAGS is a list of tag strings.
+Flushes `post-command-hook' so any tag-change log entry queued by
+`org-log-set-tags' fires — see `eav-set-todo-state' for the pattern."
   (with-current-buffer (find-file-noselect file)
     (goto-char pos)
     (org-set-tags tags)
+    (run-hooks 'post-command-hook)
     (save-buffer))
   (json-encode '((success . t))))
 
 (defun eav-set-scheduled (file pos timestamp)
   "Set SCHEDULED timestamp on heading at POS in FILE.
-If TIMESTAMP is empty, remove the scheduled date."
+If TIMESTAMP is empty, remove the scheduled date.
+`run-hooks' flushes any `org-log-reschedule' / `org-log-redeadline'
+entry queued by `org-schedule' (see `eav-set-todo-state' for context)."
   (with-current-buffer (find-file-noselect file)
     (goto-char pos)
     (if (or (null timestamp) (string-empty-p timestamp))
         (org-schedule '(4))
       (org-schedule nil timestamp))
+    (run-hooks 'post-command-hook)
     (save-buffer))
   (json-encode '((success . t))))
 
 (defun eav-set-deadline (file pos timestamp)
   "Set DEADLINE timestamp on heading at POS in FILE.
-If TIMESTAMP is empty, remove the deadline."
+If TIMESTAMP is empty, remove the deadline.
+`run-hooks' flushes any `org-log-redeadline' entry queued by
+`org-deadline' (see `eav-set-todo-state' for context)."
   (with-current-buffer (find-file-noselect file)
     (goto-char pos)
     (if (or (null timestamp) (string-empty-p timestamp))
         (org-deadline '(4))
       (org-deadline nil timestamp))
+    (run-hooks 'post-command-hook)
     (save-buffer))
   (json-encode '((success . t))))
 

@@ -177,13 +177,13 @@ struct RefileSheet: View {
         guard let client = settings.apiClient else { return }
         submitting = true
         errorMessage = nil
-        await store.refile(sourceFile: task.file, sourcePos: task.pos,
-                           target: target, using: client)
-        if store.lastMutationError != nil {
+        let ok = await store.refile(sourceFile: task.file, sourcePos: task.pos,
+                                    target: target, using: client)
+        if ok {
+            dismiss()
+        } else {
             errorMessage = store.lastMutationError
             submitting = false
-        } else {
-            dismiss()
         }
     }
 

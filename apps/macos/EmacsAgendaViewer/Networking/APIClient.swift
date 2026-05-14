@@ -246,6 +246,17 @@ struct APIClient {
                                   targetFile: targetFile, targetPos: targetPos))
     }
 
+    func archiveTask(id: String, file: String, pos: Int) async throws {
+        struct Body: Encodable { let file: String; let pos: Int }
+        // Task IDs are `<absolute-file-path>::<pos>`, which contain `/` and
+        // sometimes spaces. `.urlPathAllowed` leaves slashes intact, which
+        // would split the id across multiple path segments and produce a
+        // 404 against axum's `:id` matcher. Use the shared
+        // `pathComponentAllowed` set (alphanumerics + `-_.~`) so the id
+        // becomes a single opaque segment.
+        try await send("POST", taskPath(id, suffix: "archive"), body: Body(file: file, pos: pos))
+    }
+
     func fetchCaptureTemplates() async throws -> [CaptureTemplate] {
         try await get("/api/capture/templates")
     }

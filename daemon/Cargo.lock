@@ -224,7 +224,7 @@ checksum = "7704b5fdd17b18ae31c4c1da5a2e0305a2bf17b5249300a9ee9ed7b72114c636"
 
 [[package]]
 name = "eav-agenda"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "eav-bridge"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -254,7 +254,7 @@ dependencies = [
 
 [[package]]
 name = "eav-core"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "serde",
@@ -264,7 +264,7 @@ dependencies = [
 
 [[package]]
 name = "eav-index"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -283,25 +283,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "eav-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "eav-agenda",
- "eav-bridge",
- "eav-core",
- "eav-index",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "eav-parse"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -317,7 +300,7 @@ dependencies = [
 
 [[package]]
 name = "eav-server"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -342,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "eavd"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",

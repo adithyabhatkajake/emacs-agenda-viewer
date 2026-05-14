@@ -16,10 +16,10 @@ use eav_core::{
     AgendaFile, OrgConfig, OrgListConfig, OrgPriorities, TodoKeywords,
 };
 use eav_index::Index;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, oneshot};
 use tower_http::services::{ServeDir, ServeFile};
 
 pub use events::{ServerEvent, EventBus};
@@ -47,6 +47,11 @@ pub struct AppState {
     /// Replaces the old Express `app.use(express.static(...))` setup that
     /// the legacy server used to host the React frontend on the same port.
     pub static_dir: Option<PathBuf>,
+    /// One-shot used by `POST /api/shutdown` to trigger axum's graceful
+    /// shutdown. Wrapped in a Mutex<Option<…>> because `oneshot::Sender`
+    /// is single-use; `AppState` itself stays Clone-friendly so handlers
+    /// can keep using `State<AppState>`.
+    pub shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 impl AppState {
@@ -58,11 +63,20 @@ impl AppState {
             cached_config: Arc::new(RwLock::new(CachedConfig::default())),
             agenda_config: AgendaConfig::default(),
             static_dir: None,
+            shutdown_tx: Arc::new(Mutex::new(None)),
         }
     }
 
     pub fn with_static_dir(mut self, dir: Option<PathBuf>) -> Self {
         self.static_dir = dir;
+        self
+    }
+
+    /// Stash the shutdown trigger. Call once at startup with the `Sender`
+    /// end of a `oneshot::channel`; the `Receiver` is the `with_graceful_shutdown`
+    /// future passed to `axum::serve`.
+    pub fn with_shutdown_tx(mut self, tx: oneshot::Sender<()>) -> Self {
+        self.shutdown_tx = Arc::new(Mutex::new(Some(tx)));
         self
     }
 
