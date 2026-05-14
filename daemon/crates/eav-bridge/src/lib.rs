@@ -12,7 +12,6 @@ pub mod protocol;
 
 pub use protocol::{BridgeError, Event};
 
-use anyhow::Context;
 use parking_lot::Mutex as PlMutex;
 use protocol::{Inbound, Request, Response, MAX_FRAME_BYTES};
 use std::collections::HashMap;
@@ -298,7 +297,7 @@ mod tests {
         let sock = std::env::var("XDG_RUNTIME_DIR")
             .ok()
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::env::temp_dir())
+            .unwrap_or_else(std::env::temp_dir)
             .join(format!("eav-bridge-{}.sock", users_uid()));
         if !sock.exists() {
             eprintln!("bridge socket not present at {sock:?}; skipping live test");

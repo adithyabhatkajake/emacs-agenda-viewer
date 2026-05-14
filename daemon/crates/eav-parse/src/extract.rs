@@ -106,10 +106,8 @@ impl FileMeta {
                         filetags.push(t.to_string());
                     }
                 }
-                "CATEGORY" => {
-                    if category.is_empty() {
-                        category = value.to_string();
-                    }
+                "CATEGORY" if category.is_empty() => {
+                    category = value.to_string();
                 }
                 "TODO" | "SEQ_TODO" | "TYP_TODO" => {
                     todo_sequences.push(parse_todo_sequence(value));
@@ -621,9 +619,7 @@ fn extract_planning_ts(section: &str, key: &str) -> Option<crate::OrgTimestamp> 
         }
         if let Some(rest) = trimmed.strip_prefix(&prefix) {
             let rest = rest.trim_start();
-            let cap_end = rest
-                .find(|c: char| c == '\n' || c == '\r')
-                .unwrap_or(rest.len());
+            let cap_end = rest.find(['\n', '\r']).unwrap_or(rest.len());
             let mut piece = &rest[..cap_end];
             for stop in &[" SCHEDULED:", " DEADLINE:", " CLOSED:"] {
                 if let Some(idx) = piece.find(stop) {
@@ -650,8 +646,8 @@ fn first_timestamp_token(text: &str) -> Option<String> {
             let close = if c == b'<' { b'>' } else { b']' };
             let start = i;
             let mut end = None;
-            for j in (i + 1)..bytes.len() {
-                if bytes[j] == close {
+            for (j, &b) in bytes.iter().enumerate().skip(i + 1) {
+                if b == close {
                     end = Some(j);
                     break;
                 }
@@ -660,9 +656,7 @@ fn first_timestamp_token(text: &str) -> Option<String> {
             let mut total_end = stamp_end + 1;
             // Date-range: <a>--<b>.
             if text[total_end..].starts_with("--") {
-                if let Some(rest_start) =
-                    text[total_end + 2..].find(|cc: char| cc == '<' || cc == '[')
-                {
+                if let Some(rest_start) = text[total_end + 2..].find(['<', '[']) {
                     let inner_start = total_end + 2 + rest_start;
                     let inner_close = if &text[inner_start..inner_start + 1] == "<" {
                         b'>'

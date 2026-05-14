@@ -16,6 +16,7 @@ pub fn ts_date(ts: &OrgTimestamp) -> Option<NaiveDate> {
 ///   - `+1d`/`+1w`/`+1m`/`+1y`/`+Nh`           cumulate
 ///   - `++1d`/...                              catch-up
 ///   - `.+1d`/...                              restart
+///
 /// Habit tracking (cookies, consistency) is out of scope.
 pub fn occurs_on(ts: &OrgTimestamp, target: NaiveDate, today: NaiveDate) -> bool {
     let Some(base) = ts_date(ts) else {
@@ -114,10 +115,7 @@ fn advance_to(
             if cur >= target {
                 return Some(cur);
             }
-            cur = match step_unit(cur, step, &rep.unit)? {
-                Some(d) => d,
-                None => return None,
-            };
+            cur = step_unit(cur, step, &rep.unit)??;
         }
         None
     } else {

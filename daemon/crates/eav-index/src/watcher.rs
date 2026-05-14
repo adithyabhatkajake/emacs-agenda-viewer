@@ -164,7 +164,7 @@ mod tests {
         let file = dir.join("x.org");
         fs::write(&file, "* TODO seed\n").unwrap();
 
-        let (watcher, mut rx) = FileWatcher::start(&[file.clone()]).unwrap();
+        let (watcher, mut rx) = FileWatcher::start(std::slice::from_ref(&file)).unwrap();
         // Give the OS a moment to register.
         tokio::time::sleep(Duration::from_millis(150)).await;
 

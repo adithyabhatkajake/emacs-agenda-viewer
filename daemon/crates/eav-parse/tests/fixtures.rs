@@ -22,7 +22,7 @@
 use eav_core::OrgTask;
 use eav_parse::extract_tasks_from_source;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
