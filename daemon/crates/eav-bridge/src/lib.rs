@@ -13,8 +13,8 @@ pub mod protocol;
 pub use protocol::{BridgeError, Event};
 
 use anyhow::Context;
-use protocol::{Inbound, Request, Response, MAX_FRAME_BYTES};
 use parking_lot::Mutex as PlMutex;
+use protocol::{Inbound, Request, Response, MAX_FRAME_BYTES};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -111,11 +111,7 @@ impl BridgeClient {
         timeout: Duration,
     ) -> Result<T, CallError> {
         let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
-        let payload = serde_json::to_value(Request {
-            id,
-            method,
-            params,
-        })?;
+        let payload = serde_json::to_value(Request { id, method, params })?;
         let (reply_tx, reply_rx) = oneshot::channel();
         self.inner
             .sender
@@ -217,7 +213,12 @@ impl BridgeRuntime {
                     }
                 };
                 match parsed {
-                    Inbound::Response(Response { id, ok, result, error }) => {
+                    Inbound::Response(Response {
+                        id,
+                        ok,
+                        result,
+                        error,
+                    }) => {
                         let tx = { inflight.lock().remove(&id) };
                         if let Some(tx) = tx {
                             let outcome = if ok {
@@ -304,10 +305,7 @@ mod tests {
             return;
         }
         let client = BridgeClient::connect(&sock).await.unwrap();
-        let result: serde_json::Value = client
-            .call("ping", serde_json::json!({}))
-            .await
-            .unwrap();
+        let result: serde_json::Value = client.call("ping", serde_json::json!({})).await.unwrap();
         assert_eq!(result.get("pong"), Some(&serde_json::Value::Bool(true)));
     }
 

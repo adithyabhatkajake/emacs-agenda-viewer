@@ -364,11 +364,7 @@ impl OrgTask {
 impl OrgTimestamp {
     /// Convert to a `chrono::NaiveDate` from the `start` component.
     pub fn date_naive(&self) -> Option<chrono::NaiveDate> {
-        chrono::NaiveDate::from_ymd_opt(
-            self.start.year,
-            self.start.month,
-            self.start.day,
-        )
+        chrono::NaiveDate::from_ymd_opt(self.start.year, self.start.month, self.start.day)
     }
 
     /// `true` if the start component has hour/minute set.

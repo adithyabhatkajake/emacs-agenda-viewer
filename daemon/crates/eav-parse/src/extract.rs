@@ -24,9 +24,8 @@ use regex::Regex;
 /// daemon what the user's done keywords are at parse time). Group 2 is
 /// the raw timestamp inside the brackets, including the day-of-week and
 /// optional clock time.
-static LOGBOOK_DONE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"-\s+State\s+"([^"]+)"\s+from\s+"[^"]*"\s+\[([^\]]+)\]"#).unwrap()
-});
+static LOGBOOK_DONE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"-\s+State\s+"([^"]+)"\s+from\s+"[^"]*"\s+\[([^\]]+)\]"#).unwrap());
 
 /// Per-file context resolved before walking headlines.
 #[derive(Debug, Clone)]
@@ -78,11 +77,7 @@ impl FileMeta {
 
     /// Pre-scan a file's `#+...:` header lines without a full parse. If the
     /// file has no `#+TODO:` line, fall back to the supplied global keywords.
-    pub fn from_source_with(
-        source: &str,
-        path: &Path,
-        globals: Option<&GlobalKeywords>,
-    ) -> Self {
+    pub fn from_source_with(source: &str, path: &Path, globals: Option<&GlobalKeywords>) -> Self {
         let mut filetags = Vec::new();
         let mut category = String::new();
         let mut todo_sequences: Vec<Vec<(String, bool)>> = Vec::new();
@@ -187,8 +182,7 @@ impl FileMeta {
     }
 
     pub fn is_task_keyword(&self, kw: &str) -> bool {
-        self.active_keywords.iter().any(|s| s == kw)
-            || self.done_keywords.iter().any(|s| s == kw)
+        self.active_keywords.iter().any(|s| s == kw) || self.done_keywords.iter().any(|s| s == kw)
     }
 
     pub fn is_done_keyword(&self, kw: &str) -> bool {
@@ -234,13 +228,7 @@ pub fn extract_tasks(org: &Org, source: &str, meta: &FileMeta) -> Vec<OrgTask> {
     let mut out = Vec::new();
     let document = org.document();
     let mut ancestors: Vec<HeadlineCtx> = Vec::new();
-    walk_headlines(
-        document.headlines(),
-        source,
-        meta,
-        &mut ancestors,
-        &mut out,
-    );
+    walk_headlines(document.headlines(), source, meta, &mut ancestors, &mut out);
     out
 }
 
@@ -314,12 +302,7 @@ fn walk_headlines(
 
         let category = category_property
             .clone()
-            .or_else(|| {
-                ancestors
-                    .iter()
-                    .rev()
-                    .find_map(|a| a.category.clone())
-            })
+            .or_else(|| ancestors.iter().rev().find_map(|a| a.category.clone()))
             .unwrap_or_else(|| meta.category.clone());
 
         // Emit if the heading carries a TODO keyword *or* has a date
@@ -338,8 +321,7 @@ fn walk_headlines(
         // planning slot is "consumed" and any later SCHEDULED:/DEADLINE:
         // line in the section is body content (cf. malformed-order entries).
         let preview_props_present = property_drawer.is_some();
-        let (notes_preview, body_ts_preview) =
-            section_body(&h, source, preview_props_present);
+        let (notes_preview, body_ts_preview) = section_body(&h, source, preview_props_present);
         let has_date = scheduled_preview.is_some()
             || deadline_preview.is_some()
             || !body_ts_preview.is_empty();
@@ -374,11 +356,7 @@ fn walk_headlines(
             // surfaces its timestamp via `org-agenda-get-timestamps` rather
             // than via `:scheduled` (cf. malformed-order entries we observed
             // in the user's data).
-            let raw_section_text = h
-                .section()
-                .as_ref()
-                .map(|s| s.raw())
-                .unwrap_or_default();
+            let raw_section_text = h.section().as_ref().map(|s| s.raw()).unwrap_or_default();
             let allow_planning_fallback = property_drawer.is_none();
             let scheduled = scheduled_preview.or_else(|| {
                 if allow_planning_fallback {
@@ -614,9 +592,7 @@ fn is_drawer_open(line: &str) -> bool {
         return false;
     }
     let inner = &line[1..line.len() - 1];
-    !inner.is_empty()
-        && inner.chars().all(|c| c.is_ascii_uppercase() || c == '_')
-        && inner != "END"
+    !inner.is_empty() && inner.chars().all(|c| c.is_ascii_uppercase() || c == '_') && inner != "END"
 }
 
 /// Pull a `SCHEDULED:` / `DEADLINE:` / `CLOSED:` timestamp out of a raw
@@ -684,9 +660,15 @@ fn first_timestamp_token(text: &str) -> Option<String> {
             let mut total_end = stamp_end + 1;
             // Date-range: <a>--<b>.
             if text[total_end..].starts_with("--") {
-                if let Some(rest_start) = text[total_end + 2..].find(|cc: char| cc == '<' || cc == '[') {
+                if let Some(rest_start) =
+                    text[total_end + 2..].find(|cc: char| cc == '<' || cc == '[')
+                {
                     let inner_start = total_end + 2 + rest_start;
-                    let inner_close = if &text[inner_start..inner_start + 1] == "<" { b'>' } else { b']' };
+                    let inner_close = if &text[inner_start..inner_start + 1] == "<" {
+                        b'>'
+                    } else {
+                        b']'
+                    };
                     if let Some(j) = text.as_bytes()[inner_start + 1..]
                         .iter()
                         .position(|&b| b == inner_close)
@@ -800,12 +782,22 @@ mod tests {
         let tasks = extract(src);
         assert_eq!(tasks.len(), 1);
         let t = &tasks[0];
-        let completions = t.completions.as_ref().expect("habit should carry completions");
+        let completions = t
+            .completions
+            .as_ref()
+            .expect("habit should carry completions");
         assert_eq!(completions.len(), 3);
         assert_eq!(completions[0], "2026-05-11 Mon 14:32");
         // Non-habit transitions on the same heading do not surface
         // — we only attach the field when STYLE=habit.
-        assert!(t.properties.as_ref().unwrap().get("STYLE").map(String::as_str) == Some("habit"));
+        assert!(
+            t.properties
+                .as_ref()
+                .unwrap()
+                .get("STYLE")
+                .map(String::as_str)
+                == Some("habit")
+        );
     }
 
     #[test]
@@ -813,8 +805,10 @@ mod tests {
         let src = "* DONE Pay bill\n  CLOSED: [2026-05-11 Mon 10:00]\n  :LOGBOOK:\n  - State \"DONE\"       from \"TODO\"       [2026-05-11 Mon 10:00]\n  :END:\n";
         let tasks = extract(src);
         assert_eq!(tasks.len(), 1);
-        assert!(tasks[0].completions.is_none(),
-            "non-habit headings should not carry the completions field");
+        assert!(
+            tasks[0].completions.is_none(),
+            "non-habit headings should not carry the completions field"
+        );
     }
 
     #[test]

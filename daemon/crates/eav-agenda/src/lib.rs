@@ -12,8 +12,8 @@
 pub mod timestamp;
 
 pub use timestamp::{
-    next_occurrence_on_or_after, occurs_on, previous_occurrence_on_or_before, time_of_day,
-    ts_date, warning_days,
+    next_occurrence_on_or_after, occurs_on, previous_occurrence_on_or_before, time_of_day, ts_date,
+    warning_days,
 };
 
 use chrono::NaiveDate;
@@ -76,8 +76,14 @@ pub fn evaluate_day(
                 .map(is_done_state)
                 .unwrap_or(false);
             if !is_done_task && occurs_on(sched, target, today) {
-                out.entries
-                    .push(make_entry(task, target, sched, agenda_type::SCHEDULED, &display_date, "Scheduled:"));
+                out.entries.push(make_entry(
+                    task,
+                    target,
+                    sched,
+                    agenda_type::SCHEDULED,
+                    &display_date,
+                    "Scheduled:",
+                ));
             }
         }
 
@@ -130,7 +136,8 @@ pub fn evaluate_day(
                         &extra,
                     ));
                 } else if let Some(actual) = next_occurrence_on_or_after(deadline, target, today) {
-                    let warn = warning_days(deadline.warning.as_ref(), config.deadline_warning_days);
+                    let warn =
+                        warning_days(deadline.warning.as_ref(), config.deadline_warning_days);
                     let delta = actual.signed_duration_since(target).num_days();
                     // org-agenda-get-deadlines:6430 — `(when (> diff warning-days) skip)`
                     // i.e. include while diff <= warning-days.
@@ -159,11 +166,7 @@ pub fn evaluate_day(
         // `timestamp` entry on their day (and only their day).
         if let Some(stamps) = &task.active_timestamps {
             for ts in stamps {
-                let start_d = NaiveDate::from_ymd_opt(
-                    ts.start.year,
-                    ts.start.month,
-                    ts.start.day,
-                );
+                let start_d = NaiveDate::from_ymd_opt(ts.start.year, ts.start.month, ts.start.day);
                 let end_d = ts
                     .end
                     .as_ref()
@@ -208,8 +211,7 @@ pub fn evaluate_day(
         aa.cmp(bb)
             .then_with(|| a.category.cmp(&b.category))
             .then_with(|| {
-                priority_rank(a.priority.as_deref())
-                    .cmp(&priority_rank(b.priority.as_deref()))
+                priority_rank(a.priority.as_deref()).cmp(&priority_rank(b.priority.as_deref()))
             })
             .then_with(|| a.title.cmp(&b.title))
     });
@@ -252,7 +254,11 @@ fn make_entry(
     display_date: &str,
     extra: &str,
 ) -> AgendaEntry {
-    let extra = if extra.is_empty() { None } else { Some(extra.to_string()) };
+    let extra = if extra.is_empty() {
+        None
+    } else {
+        Some(extra.to_string())
+    };
     let display_date = display_date.to_string();
     let level = AgendaLevel::Spaces(" ".repeat(task.level as usize));
     AgendaEntry {
@@ -282,7 +288,9 @@ fn make_entry(
         // Today/Upcoming without joining against /api/tasks. The check
         // is case-insensitive because property values are user-supplied
         // even though keys are normalised to uppercase.
-        is_habit: task.properties.as_ref()
+        is_habit: task
+            .properties
+            .as_ref()
             .and_then(|p| p.get("STYLE"))
             .filter(|v| v.eq_ignore_ascii_case("habit"))
             .map(|_| true),

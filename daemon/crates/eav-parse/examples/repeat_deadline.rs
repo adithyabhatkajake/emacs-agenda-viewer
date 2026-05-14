@@ -6,9 +6,9 @@ DEADLINE: <2026-05-19 Tue +2m/4m>
 :END:
 body
 ";
-    use orgize::Org;
     use orgize::ast::Headline;
     use orgize::rowan::ast::AstNode;
+    use orgize::Org;
     let org = Org::parse(src);
     let doc = org.document();
     for h in doc.headlines() {

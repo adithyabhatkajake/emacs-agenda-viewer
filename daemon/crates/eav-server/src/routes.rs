@@ -13,8 +13,8 @@ use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use eav_agenda::{evaluate_day, evaluate_range};
 use eav_core::{
-    AgendaEntry, AgendaFile, ClockStatus, HeadingNotes, OrgConfig, OrgListConfig,
-    OrgPriorities, OrgTask, OutlinePath, RefileTarget, TodoKeywords,
+    AgendaEntry, AgendaFile, ClockStatus, HeadingNotes, OrgConfig, OrgListConfig, OrgPriorities,
+    OrgTask, OutlinePath, RefileTarget, TodoKeywords,
 };
 use futures::stream::Stream;
 use serde::Deserialize;
@@ -172,7 +172,9 @@ async fn get_files(State(state): State<AppState>) -> Result<Json<Vec<AgendaFile>
     if !cached.is_empty() {
         return Ok(Json(cached));
     }
-    let v: Vec<AgendaFile> = state.bridge.call("read.config", serde_json::json!({}))
+    let v: Vec<AgendaFile> = state
+        .bridge
+        .call("read.config", serde_json::json!({}))
         .await
         .map(|r: serde_json::Value| {
             serde_json::from_value(r["files"].clone()).unwrap_or_default()
@@ -181,9 +183,7 @@ async fn get_files(State(state): State<AppState>) -> Result<Json<Vec<AgendaFile>
     Ok(Json(v))
 }
 
-async fn get_keywords(
-    State(state): State<AppState>,
-) -> Result<Json<TodoKeywords>, ApiError> {
+async fn get_keywords(State(state): State<AppState>) -> Result<Json<TodoKeywords>, ApiError> {
     if let Some(k) = state.cached_config.read().keywords.clone() {
         return Ok(Json(k));
     }
@@ -196,9 +196,7 @@ async fn get_keywords(
     Ok(Json(k))
 }
 
-async fn get_priorities(
-    State(state): State<AppState>,
-) -> Result<Json<OrgPriorities>, ApiError> {
+async fn get_priorities(State(state): State<AppState>) -> Result<Json<OrgPriorities>, ApiError> {
     if let Some(p) = state.cached_config.read().priorities.clone() {
         return Ok(Json(p));
     }
@@ -211,9 +209,7 @@ async fn get_priorities(
     Ok(Json(p))
 }
 
-async fn get_config(
-    State(state): State<AppState>,
-) -> Result<Json<OrgConfig>, ApiError> {
+async fn get_config(State(state): State<AppState>) -> Result<Json<OrgConfig>, ApiError> {
     if let Some(c) = state.cached_config.read().config {
         return Ok(Json(c));
     }
@@ -226,9 +222,7 @@ async fn get_config(
     Ok(Json(c))
 }
 
-async fn get_list_config(
-    State(state): State<AppState>,
-) -> Result<Json<OrgListConfig>, ApiError> {
+async fn get_list_config(State(state): State<AppState>) -> Result<Json<OrgListConfig>, ApiError> {
     if let Some(c) = state.cached_config.read().list_config {
         return Ok(Json(c));
     }
@@ -241,9 +235,7 @@ async fn get_list_config(
     Ok(Json(c))
 }
 
-async fn get_clock_status(
-    State(state): State<AppState>,
-) -> Result<Json<ClockStatus>, ApiError> {
+async fn get_clock_status(State(state): State<AppState>) -> Result<Json<ClockStatus>, ApiError> {
     let c: ClockStatus = state
         .bridge
         .call("read.clock-status", serde_json::json!({}))
@@ -293,10 +285,7 @@ async fn get_agenda_day(
     if !evaluation.needs_sexp_proxy.is_empty() {
         if let Ok(sexp) = state
             .bridge
-            .call::<Vec<AgendaEntry>>(
-                "read.sexp-entries",
-                serde_json::json!({ "date": date }),
-            )
+            .call::<Vec<AgendaEntry>>("read.sexp-entries", serde_json::json!({ "date": date }))
             .await
         {
             evaluation.entries.extend(sexp);
@@ -329,10 +318,7 @@ async fn put_notes(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let _: serde_json::Value = state
-        .bridge
-        .call("write.set-notes", body)
-        .await?;
+    let _: serde_json::Value = state.bridge.call("write.set-notes", body).await?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
@@ -528,4 +514,3 @@ async fn get_events(
     });
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
-

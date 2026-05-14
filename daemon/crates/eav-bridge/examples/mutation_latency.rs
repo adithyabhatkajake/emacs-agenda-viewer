@@ -36,9 +36,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Pick a real task to write to.
-    let tasks: serde_json::Value = client
-        .call("read.tasks", serde_json::json!({}))
-        .await?;
+    let tasks: serde_json::Value = client.call("read.tasks", serde_json::json!({})).await?;
     let arr = tasks.as_array().expect("tasks array");
     let target = arr
         .iter()

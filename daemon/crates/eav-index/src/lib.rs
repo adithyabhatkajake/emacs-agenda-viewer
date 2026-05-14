@@ -70,11 +70,7 @@ impl Index {
     /// file arriving canonical (`~/Library/Mobile Documents/.../foo.org`).
     /// Without this, snapshot-load + live-rebuild would each populate
     /// `by_file` under a different key, doubling the visible task list.
-    pub fn rebuild_file(
-        &self,
-        path: &Path,
-        source: &str,
-    ) -> (Vec<String>, Vec<String>) {
+    pub fn rebuild_file(&self, path: &Path, source: &str) -> (Vec<String>, Vec<String>) {
         let canonical = canonicalize_path(path);
         let globals = self.inner.read().globals.clone();
         let (tasks, meta) = extract_tasks_from_source_with(source, &canonical, globals.as_ref());
@@ -82,11 +78,7 @@ impl Index {
         let mut inner = self.inner.write();
 
         // Remove old entries for this file.
-        let removed: Vec<String> = inner
-            .by_file
-            .get(&canonical)
-            .cloned()
-            .unwrap_or_default();
+        let removed: Vec<String> = inner.by_file.get(&canonical).cloned().unwrap_or_default();
         for id in &removed {
             if let Some(old) = inner.tasks.remove(id) {
                 strip_secondary(&mut inner, &old);
@@ -406,10 +398,7 @@ mod tests {
     fn date_index_picks_up_scheduled() {
         let idx = Index::new();
         let p = fixture("/tmp/sched.org");
-        idx.rebuild_file(
-            &p,
-            "* TODO meeting\nSCHEDULED: <2026-05-07 Thu 10:00>\n",
-        );
+        idx.rebuild_file(&p, "* TODO meeting\nSCHEDULED: <2026-05-07 Thu 10:00>\n");
         let on_date = idx.tasks_by_date("2026-05-07");
         assert_eq!(on_date.len(), 1);
         let elsewhere = idx.tasks_by_date("2026-05-08");
@@ -465,8 +454,16 @@ mod tests {
         idx.rebuild_file(&link, &text);
         // Canonicalisation collapses the two keys into one — task count
         // stays at 2 instead of jumping to 4.
-        assert_eq!(idx.task_count(), 2, "tasks doubled — symlink and canonical path produced separate by_file keys");
+        assert_eq!(
+            idx.task_count(),
+            2,
+            "tasks doubled — symlink and canonical path produced separate by_file keys"
+        );
         assert_eq!(idx.all_tasks().len(), 2, "all_tasks duplicated tasks");
-        assert_eq!(idx.known_files().len(), 1, "by_file should have a single key after canonicalisation");
+        assert_eq!(
+            idx.known_files().len(),
+            1,
+            "by_file should have a single key after canonicalisation"
+        );
     }
 }

@@ -60,48 +60,42 @@ pub struct FileWatcher {
 
 impl FileWatcher {
     /// Start watching PATHS. Events arrive on the returned `mpsc::Receiver`.
-    pub fn start(
-        paths: &[PathBuf],
-    ) -> notify::Result<(Self, mpsc::UnboundedReceiver<FileChange>)> {
+    pub fn start(paths: &[PathBuf]) -> notify::Result<(Self, mpsc::UnboundedReceiver<FileChange>)> {
         let (tx, rx) = mpsc::unbounded_channel::<FileChange>();
         let self_writes: Arc<Mutex<SelfWriteSet>> = Arc::new(Mutex::new(SelfWriteSet::default()));
 
         let self_writes_handler = Arc::clone(&self_writes);
-        let mut debouncer = new_debouncer(
-            DEBOUNCE,
-            None,
-            move |result: DebounceEventResult| {
-                let events = match result {
-                    Ok(events) => events,
-                    Err(errors) => {
-                        for e in errors {
-                            tracing::warn!(error = %e, "watcher reported error");
-                        }
-                        return;
+        let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
+            let events = match result {
+                Ok(events) => events,
+                Err(errors) => {
+                    for e in errors {
+                        tracing::warn!(error = %e, "watcher reported error");
                     }
-                };
-                for ev in events {
-                    let kind = ev.event.kind;
-                    if !is_relevant(&kind) {
+                    return;
+                }
+            };
+            for ev in events {
+                let kind = ev.event.kind;
+                if !is_relevant(&kind) {
+                    continue;
+                }
+                for path in &ev.event.paths {
+                    let suppressed = self_writes_handler.lock().consume(path);
+                    if suppressed {
+                        tracing::debug!(?path, "self-write event suppressed");
                         continue;
                     }
-                    for path in &ev.event.paths {
-                        let suppressed = self_writes_handler.lock().consume(path);
-                        if suppressed {
-                            tracing::debug!(?path, "self-write event suppressed");
-                            continue;
-                        }
-                        let msg = match kind {
-                            EventKind::Remove(_) => FileChange::Removed(path.clone()),
-                            _ => FileChange::Modified(path.clone()),
-                        };
-                        if tx.send(msg).is_err() {
-                            return;
-                        }
+                    let msg = match kind {
+                        EventKind::Remove(_) => FileChange::Removed(path.clone()),
+                        _ => FileChange::Modified(path.clone()),
+                    };
+                    if tx.send(msg).is_err() {
+                        return;
                     }
                 }
-            },
-        )?;
+            }
+        })?;
 
         for p in paths {
             // Watch the *parent* directory, not the file itself: rename/remove

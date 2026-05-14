@@ -7,9 +7,9 @@
 pub mod extract;
 pub mod timestamp;
 
+pub use eav_core::OrgTimestamp;
 pub use extract::{
     extract_tasks, extract_tasks_from_source, extract_tasks_from_source_with, FileMeta,
     GlobalKeywords,
 };
-pub use eav_core::OrgTimestamp;
 pub use timestamp::{convert as convert_timestamp, extract_active_timestamps, parse_timestamp};

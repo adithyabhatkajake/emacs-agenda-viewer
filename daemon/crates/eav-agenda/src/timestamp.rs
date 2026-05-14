@@ -18,7 +18,9 @@ pub fn ts_date(ts: &OrgTimestamp) -> Option<NaiveDate> {
 ///   - `.+1d`/...                              restart
 /// Habit tracking (cookies, consistency) is out of scope.
 pub fn occurs_on(ts: &OrgTimestamp, target: NaiveDate, today: NaiveDate) -> bool {
-    let Some(base) = ts_date(ts) else { return false };
+    let Some(base) = ts_date(ts) else {
+        return false;
+    };
     if let Some(rep) = ts.repeater.as_ref() {
         any_repeat_lands_on(base, rep, target, today)
     } else {
@@ -46,10 +48,7 @@ pub fn next_occurrence_on_or_after(
 /// in the past should surface on today's agenda until done, matching
 /// `org-agenda-get-deadlines` (org-agenda.el ~6420) which uses the
 /// literal stored date (not auto-advanced through the repeater).
-pub fn previous_occurrence_on_or_before(
-    ts: &OrgTimestamp,
-    target: NaiveDate,
-) -> Option<NaiveDate> {
+pub fn previous_occurrence_on_or_before(ts: &OrgTimestamp, target: NaiveDate) -> Option<NaiveDate> {
     let base = ts_date(ts)?;
     let rep = match ts.repeater.as_ref() {
         Some(r) => r,

@@ -50,7 +50,13 @@ pub fn convert(ts: &OrgizeTimestamp) -> Option<OrgTimestamp> {
     let hour = parse_u32(ts.hour_start());
     let minute = parse_u32(ts.minute_start());
 
-    let start = OrgTimestampComponent { year, month, day, hour, minute };
+    let start = OrgTimestampComponent {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+    };
 
     // org-element (and therefore the existing Express output) always populates
     // `end`: for non-range timestamps it's a copy of the start. We mirror that
@@ -98,7 +104,9 @@ pub fn convert(ts: &OrgizeTimestamp) -> Option<OrgTimestamp> {
     };
 
     let range_type = if ts.is_range() {
-        if y2.is_some() && d2.is_some() && (y2 != Some(year) || m2 != Some(month) || d2 != Some(day))
+        if y2.is_some()
+            && d2.is_some()
+            && (y2 != Some(year) || m2 != Some(month) || d2 != Some(day))
         {
             Some("daterange".to_string())
         } else if h2.is_some() {
@@ -195,8 +203,7 @@ pub fn extract_active_timestamps(text: &str) -> Vec<OrgTimestamp> {
     // We then optionally consume `--<...>` for date ranges.
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        Regex::new(r"<\d{4}-\d{2}-\d{2}[^<>\n]*?>(?:--<\d{4}-\d{2}-\d{2}[^<>\n]*?>)?")
-            .unwrap()
+        Regex::new(r"<\d{4}-\d{2}-\d{2}[^<>\n]*?>(?:--<\d{4}-\d{2}-\d{2}[^<>\n]*?>)?").unwrap()
     });
     let mut out = Vec::new();
     for m in re.find_iter(text) {
@@ -217,9 +224,7 @@ pub fn parse_timestamp_lenient(raw: &str) -> Option<OrgTimestamp> {
     use regex::Regex;
     use std::sync::OnceLock;
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"(\+|\+\+|\.\+)(\d+)([hdwmy])(/\d+[hdwmy])").unwrap()
-    });
+    let re = RE.get_or_init(|| Regex::new(r"(\+|\+\+|\.\+)(\d+)([hdwmy])(/\d+[hdwmy])").unwrap());
     let stripped = re.replace_all(raw, "$1$2$3").into_owned();
     let mut ts = parse_timestamp(&stripped)?;
     if stripped != raw {

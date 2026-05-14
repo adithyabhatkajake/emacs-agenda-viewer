@@ -29,13 +29,11 @@ fn read_golden(name: &str) -> Option<String> {
 
 fn assert_round_trip<T: DeserializeOwned + Serialize>(filename: &str) {
     let Some(raw) = read_golden(filename) else {
-        eprintln!(
-            "skipping {filename}: capture goldens with daemon/tests/golden/regenerate.sh"
-        );
+        eprintln!("skipping {filename}: capture goldens with daemon/tests/golden/regenerate.sh");
         return;
     };
-    let value: T = serde_json::from_str(&raw)
-        .unwrap_or_else(|e| panic!("deserialize {filename}: {e}"));
+    let value: T =
+        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("deserialize {filename}: {e}"));
     let re_emitted = serde_json::to_string(&value).unwrap();
     let parsed_orig: serde_json::Value = serde_json::from_str(&raw).unwrap();
     let parsed_round: serde_json::Value = serde_json::from_str(&re_emitted).unwrap();
@@ -101,7 +99,10 @@ fn agenda_days_round_trip() {
     let read = match fs::read_dir(&dir) {
         Ok(it) => it,
         Err(_) => {
-            eprintln!("skipping agenda_days_round_trip: {} not present", dir.display());
+            eprintln!(
+                "skipping agenda_days_round_trip: {} not present",
+                dir.display()
+            );
             return;
         }
     };
@@ -117,8 +118,8 @@ fn agenda_days_round_trip() {
             continue;
         }
         let raw = fs::read_to_string(&path).expect("read agenda day");
-        let parsed: Vec<AgendaEntry> = serde_json::from_str(&raw)
-            .unwrap_or_else(|e| panic!("deserialize {name}: {e}"));
+        let parsed: Vec<AgendaEntry> =
+            serde_json::from_str(&raw).unwrap_or_else(|e| panic!("deserialize {name}: {e}"));
         let re_emitted = serde_json::to_string(&parsed).unwrap();
         let parsed_orig: serde_json::Value = serde_json::from_str(&raw).unwrap();
         let parsed_round: serde_json::Value = serde_json::from_str(&re_emitted).unwrap();

@@ -175,9 +175,7 @@ async fn main() -> ExitCode {
         },
         Mode::DumpTasks { active_only } => dump_tasks(&files, active_only, globals),
         Mode::DumpAgendaDay { date } => dump_agenda_day(&files, &date, globals),
-        Mode::DumpAgendaRange { start, end } => {
-            dump_agenda_range(&files, &start, &end, globals)
-        }
+        Mode::DumpAgendaRange { start, end } => dump_agenda_range(&files, &start, &end, globals),
     }
 }
 
@@ -237,9 +235,7 @@ async fn run_server(
     // Pull config + keywords + files from the bridge, populate cached_config,
     // and seed `index.set_global_keywords` so non-`#+TODO:` files match the
     // user's actual keyword sequences.
-    let config: serde_json::Value = bridge
-        .call("read.config", serde_json::json!({}))
-        .await?;
+    let config: serde_json::Value = bridge.call("read.config", serde_json::json!({})).await?;
     let files: Vec<eav_core::AgendaFile> = serde_json::from_value(config["files"].clone())?;
     let keywords: TodoKeywords = serde_json::from_value(config["keywords"].clone())?;
     {
@@ -302,11 +298,9 @@ async fn run_server(
             let path = p.clone();
             let idx = index_for_reindex.clone();
             handles.push(tokio::spawn(async move {
-                let read = tokio::time::timeout(
-                    Duration::from_secs(10),
-                    tokio::fs::read_to_string(&path),
-                )
-                .await;
+                let read =
+                    tokio::time::timeout(Duration::from_secs(10), tokio::fs::read_to_string(&path))
+                        .await;
                 match read {
                     Ok(Ok(text)) => {
                         idx.rebuild_file(&path, &text);
@@ -319,7 +313,10 @@ async fn run_server(
         for h in handles {
             let _ = h.await;
         }
-        tracing::info!(tasks = index_for_reindex.task_count(), "background reindex complete");
+        tracing::info!(
+            tasks = index_for_reindex.task_count(),
+            "background reindex complete"
+        );
     });
 
     // Start file watcher.
@@ -531,7 +528,11 @@ fn forward_bridge_event(
             });
         }
         "clock-event" => {
-            let file = ev.params.get("file").and_then(|v| v.as_str()).map(String::from);
+            let file = ev
+                .params
+                .get("file")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let pos = ev.params.get("pos").and_then(|v| v.as_u64());
             let kind = ev.params.get("kind").and_then(|v| v.as_str()).unwrap_or("");
             events.publish(ServerEvent::ClockChanged {
@@ -574,8 +575,10 @@ async fn ensure_bridge_loaded(socket_path: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
     let (eav_el, eav_bridge_el) = locate_bundled_elisp().ok_or_else(|| {
-        anyhow::anyhow!("bundled elisp (eav.el / eav-bridge.el) not found near {:?}",
-                        std::env::current_exe().ok())
+        anyhow::anyhow!(
+            "bundled elisp (eav.el / eav-bridge.el) not found near {:?}",
+            std::env::current_exe().ok()
+        )
     })?;
     let socket_path_lit = lisp_string(&socket_path.to_string_lossy());
     let eav_el_lit = lisp_string(&eav_el.to_string_lossy());
@@ -583,7 +586,9 @@ async fn ensure_bridge_loaded(socket_path: &Path) -> anyhow::Result<()> {
     let expr = format!(
         "(progn (load-file {eav}) (load-file {br}) (require 'eav-bridge) \
          (setq eav-bridge-socket-path {sock}) (eav-bridge-start) t)",
-        eav = eav_el_lit, br = bridge_el_lit, sock = socket_path_lit,
+        eav = eav_el_lit,
+        br = bridge_el_lit,
+        sock = socket_path_lit,
     );
     tracing::info!("loading eav-bridge.el into Emacs via emacsclient");
     let output = tokio::process::Command::new("emacsclient")
@@ -697,11 +702,7 @@ fn build_index(files: &[PathBuf], globals: Option<GlobalKeywords>) -> Index {
     index
 }
 
-fn dump_agenda_day(
-    files: &[PathBuf],
-    date: &str,
-    globals: Option<GlobalKeywords>,
-) -> ExitCode {
+fn dump_agenda_day(files: &[PathBuf], date: &str, globals: Option<GlobalKeywords>) -> ExitCode {
     let target = match NaiveDate::parse_from_str(date, "%Y-%m-%d") {
         Ok(d) => d,
         Err(e) => {
@@ -753,11 +754,7 @@ fn dump_agenda_range(
     ExitCode::SUCCESS
 }
 
-fn dump_tasks(
-    files: &[PathBuf],
-    active_only: bool,
-    globals: Option<GlobalKeywords>,
-) -> ExitCode {
+fn dump_tasks(files: &[PathBuf], active_only: bool, globals: Option<GlobalKeywords>) -> ExitCode {
     if files.is_empty() {
         eprintln!("no files to dump (pass paths or --files-from <list>)");
         return ExitCode::FAILURE;

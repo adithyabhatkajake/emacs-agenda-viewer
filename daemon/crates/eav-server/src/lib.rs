@@ -12,9 +12,7 @@ pub mod routes;
 use axum::Router;
 use eav_agenda::AgendaConfig;
 use eav_bridge::BridgeClient;
-use eav_core::{
-    AgendaFile, OrgConfig, OrgListConfig, OrgPriorities, TodoKeywords,
-};
+use eav_core::{AgendaFile, OrgConfig, OrgListConfig, OrgPriorities, TodoKeywords};
 use eav_index::Index;
 use parking_lot::{Mutex, RwLock};
 use std::path::PathBuf;
@@ -22,7 +20,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, oneshot};
 use tower_http::services::{ServeDir, ServeFile};
 
-pub use events::{ServerEvent, EventBus};
+pub use events::{EventBus, ServerEvent};
 
 /// Cached bridge-only metadata refreshed on `config-changed` events. Keeping
 /// it cached avoids a bridge round-trip for every `/api/files` etc. read.

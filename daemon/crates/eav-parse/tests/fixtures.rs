@@ -34,18 +34,18 @@ fn fixture_dir() -> PathBuf {
 
 fn load(fname: &str) -> (Vec<OrgTask>, String) {
     let path = fixture_dir().join(fname);
-    let source = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+    let source = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
     let (tasks, _meta) = extract_tasks_from_source(&source, &path);
     (tasks, source)
 }
 
 fn by_title<'a>(tasks: &'a [OrgTask], title: &str) -> &'a OrgTask {
-    tasks
-        .iter()
-        .find(|t| t.title == title)
-        .unwrap_or_else(|| panic!("no task titled {title:?}; got {:?}",
-            tasks.iter().map(|t| &t.title).collect::<Vec<_>>()))
+    tasks.iter().find(|t| t.title == title).unwrap_or_else(|| {
+        panic!(
+            "no task titled {title:?}; got {:?}",
+            tasks.iter().map(|t| &t.title).collect::<Vec<_>>()
+        )
+    })
 }
 
 // -----------------------------------------------------------------------------
@@ -108,10 +108,7 @@ fn ts_inactive_in_body_is_not_active() {
     let (tasks, _) = load("timestamps.org");
     let t = by_title(&tasks, "inactive-in-body");
     // Body-active extraction filters out [...] inactive timestamps.
-    assert!(t
-        .active_timestamps
-        .as_ref()
-        .map_or(true, |v| v.is_empty()));
+    assert!(t.active_timestamps.as_ref().map_or(true, |v| v.is_empty()));
 }
 
 #[test]
@@ -194,10 +191,14 @@ fn keyword_file_uses_local_sequence() {
     assert!(titles.contains(&"blocked task"));
     assert!(titles.contains(&"wrapped up"));
     assert!(titles.contains(&"dropped"));
-    assert!(!titles.contains(&"not-a-keyword-here"),
-        "TODO is not configured in this file");
-    assert!(!titles.contains(&"plain heading"),
-        "no keyword ⇒ not a task");
+    assert!(
+        !titles.contains(&"not-a-keyword-here"),
+        "TODO is not configured in this file"
+    );
+    assert!(
+        !titles.contains(&"plain heading"),
+        "no keyword ⇒ not a task"
+    );
 }
 
 #[test]
@@ -256,7 +257,10 @@ fn properties_surface_id_and_effort() {
     assert_eq!(t.id, "task-id-001");
     assert_eq!(t.effort.as_deref(), Some("0:30"));
     let props = t.properties.as_ref().unwrap();
-    assert_eq!(props.get("CUSTOM_KEY").map(|s| s.as_str()), Some("custom-value"));
+    assert_eq!(
+        props.get("CUSTOM_KEY").map(|s| s.as_str()),
+        Some("custom-value")
+    );
     assert!(props.get("ID").is_none());
     assert!(props.get("EFFORT").is_none());
     assert!(props.get("CATEGORY").is_none());
@@ -359,11 +363,20 @@ fn pos_is_one_based_character_index() {
         let p = t.pos as usize;
         let prefix: String = source.chars().take(p - 1).collect();
         let rest: String = source.chars().skip(p - 1).collect();
-        assert!(rest.starts_with('*'),
+        assert!(
+            rest.starts_with('*'),
             "pos {p} for {title:?}: prefix ends {prefix_tail:?}, rest starts {rest_head:?}",
             title = t.title,
-            prefix_tail = prefix.chars().rev().take(20).collect::<String>().chars().rev().collect::<String>(),
-            rest_head = rest.chars().take(40).collect::<String>());
+            prefix_tail = prefix
+                .chars()
+                .rev()
+                .take(20)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>(),
+            rest_head = rest.chars().take(40).collect::<String>()
+        );
     }
 }
 
@@ -376,7 +389,10 @@ fn pos_is_one_based_character_index() {
 fn deadline_with_repeater_deadline_suffix_still_parses() {
     let (tasks, _) = load("repeat_deadline.org");
     let t = by_title(&tasks, "Clean Bathroom");
-    let d = t.deadline.as_ref().expect("deadline must parse via fallback");
+    let d = t
+        .deadline
+        .as_ref()
+        .expect("deadline must parse via fallback");
     assert_eq!(d.start.year, 2026);
     assert_eq!(d.start.month, 5);
     let r = d.repeater.as_ref().unwrap();
@@ -394,8 +410,10 @@ fn properties_drawer_after_unparseable_planning_line() {
     let (tasks, _) = load("repeat_deadline.org");
     let t = by_title(&tasks, "Clean Bathroom");
     let props = t.properties.as_ref().expect("properties via fallback");
-    assert_eq!(props.get("LAST_REPEAT").map(|s| s.as_str()),
-        Some("[2026-04-30 Thu 20:32]"));
+    assert_eq!(
+        props.get("LAST_REPEAT").map(|s| s.as_str()),
+        Some("[2026-04-30 Thu 20:32]")
+    );
     assert_eq!(props.get("STYLE").map(|s| s.as_str()), Some("habit"));
     // EFFORT is upcased and stripped from custom properties (it's surfaced
     // on `task.effort`).

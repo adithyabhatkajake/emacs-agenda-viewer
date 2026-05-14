@@ -108,7 +108,9 @@ impl Snapshot {
     }
 
     pub fn load_all_tasks(&self) -> rusqlite::Result<Vec<OrgTask>> {
-        let mut stmt = self.conn.prepare("SELECT body FROM tasks ORDER BY file, id")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT body FROM tasks ORDER BY file, id")?;
         let rows = stmt.query_map([], |r| {
             let body: String = r.get(0)?;
             Ok(body)
@@ -211,7 +213,10 @@ mod tests {
             Path::new("/tmp/x.org"),
             1,
             1,
-            &[task("/tmp/x.org::1", "/tmp/x.org"), task("/tmp/x.org::2", "/tmp/x.org")],
+            &[
+                task("/tmp/x.org::1", "/tmp/x.org"),
+                task("/tmp/x.org::2", "/tmp/x.org"),
+            ],
         )
         .unwrap();
         snap.write_file(
@@ -228,8 +233,7 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir()
-            .join(format!("eavd-test-{}-{}", std::process::id(), n));
+        let dir = std::env::temp_dir().join(format!("eavd-test-{}-{}", std::process::id(), n));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
