@@ -116,15 +116,20 @@ struct MacTaskRow: View {
         if let p = progress {
             let doneFrac = CGFloat(p.done)
             let ongoingFrac = CGFloat(p.ongoing)
-            GeometryReader { geo in
-                HStack(spacing: 0) {
-                    Rectangle()
-                        .fill(Theme.doneGreen.opacity(0.12))
-                        .frame(width: geo.size.width * doneFrac)
-                    Rectangle()
-                        .fill(Theme.priorityB.opacity(0.10))
-                        .frame(width: geo.size.width * ongoingFrac)
-                    Spacer(minLength: 0)
+            Canvas { ctx, size in
+                let doneW = size.width * doneFrac
+                let ongoingW = size.width * ongoingFrac
+                if doneW > 0 {
+                    ctx.fill(
+                        Path(CGRect(x: 0, y: 0, width: doneW, height: size.height)),
+                        with: .color(Theme.doneGreen.opacity(0.12))
+                    )
+                }
+                if ongoingW > 0 {
+                    ctx.fill(
+                        Path(CGRect(x: doneW, y: 0, width: ongoingW, height: size.height)),
+                        with: .color(Theme.priorityB.opacity(0.10))
+                    )
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -134,16 +139,27 @@ struct MacTaskRow: View {
     @ViewBuilder
     private var progressLine: some View {
         if let p = progress {
-            GeometryReader { geo in
-                let doneW = geo.size.width * CGFloat(p.done)
-                let ongoingW = geo.size.width * CGFloat(p.ongoing)
-                ZStack(alignment: .leading) {
-                    Rectangle().fill(Theme.textTertiary.opacity(0.18))
-                    HStack(spacing: 0) {
-                        Rectangle().fill(Theme.doneGreen).frame(width: doneW)
-                        Rectangle().fill(Theme.priorityB.opacity(0.7)).frame(width: ongoingW)
-                        Spacer(minLength: 0)
-                    }
+            Canvas { ctx, size in
+                let doneW = size.width * CGFloat(p.done)
+                let ongoingW = size.width * CGFloat(p.ongoing)
+                // background track
+                ctx.fill(
+                    Path(CGRect(x: 0, y: 0, width: size.width, height: size.height)),
+                    with: .color(Theme.textTertiary.opacity(0.18))
+                )
+                // done segment
+                if doneW > 0 {
+                    ctx.fill(
+                        Path(CGRect(x: 0, y: 0, width: doneW, height: size.height)),
+                        with: .color(Theme.doneGreen)
+                    )
+                }
+                // ongoing segment
+                if ongoingW > 0 {
+                    ctx.fill(
+                        Path(CGRect(x: doneW, y: 0, width: ongoingW, height: size.height)),
+                        with: .color(Theme.priorityB.opacity(0.7))
+                    )
                 }
             }
             .frame(height: 2)

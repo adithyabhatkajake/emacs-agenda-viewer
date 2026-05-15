@@ -1,5 +1,16 @@
 #+title: Changelog
 
+** 0.5.1 (2026-05-15)
+
+*** Fixed
+
+- Mac: fix intermittent freeze in LazyVStack-based task lists. Two
+  GeometryReader blocks in =MacTaskRow.progressBackground= /
+  =progressLine= were causing SwiftUI's layout solver to recurse without
+  converging when =rowProgressStyle= was =line= or =background= and the
+  list contained many rows. Replaced with =Canvas= drawing, which is
+  single-pass.
+
 ** 0.5.0 (2026-05-14)
 
 Web feature-parity push. The Mac app set the bar in 0.4.0; this release
