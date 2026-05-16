@@ -1,5 +1,19 @@
 #+title: Changelog
 
+** 0.5.2 (2026-05-15)
+
+*** Fixed
+
+- Mac: fix second instance of the GeometryReader layout-recursion
+  freeze. v0.5.1 patched =MacTaskRow.progressBackground= /
+  =progressLine=, but =TaskExpandedCard.progressLine= (the
+  checklist-progress bar shown when a task with checkboxes is selected)
+  used the same anti-pattern and triggered the same
+  =StackLayout.placeChildren= constraint-solver loop. Replaced with
+  =Canvas= drawing. A third =GeometryReader= in =MacCalendarView=
+  (interactive — hosts the hour-grid drop zone) is filed for follow-up;
+  it requires =onGeometryChange= + =@State= rather than a =Canvas= swap.
+
 ** 0.5.1 (2026-05-15)
 
 *** Fixed
