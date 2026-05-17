@@ -65,6 +65,34 @@ struct MacPinnedView: View {
         return sortTasks(matched, by: settings.listSort)
     }
 
+    private static let dayHeadFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEEE, MMM d"
+        return f
+    }()
+
+    @ViewBuilder
+    private func pinnedHead(taskCount: Int) -> some View {
+        let dayLabel = MacPinnedView.dayHeadFormatter.string(from: Date())
+        VStack(alignment: .leading, spacing: 4) {
+            Text("PINNED")
+                .font(.system(size: 11, weight: .heavy))
+                .tracking(0.6)
+                .foregroundStyle(Theme.accent)
+            HStack(alignment: .lastTextBaseline, spacing: 12) {
+                Text(dayLabel)
+                    .font(.system(size: 22, weight: .bold))
+                    .tracking(-0.4)
+                    .foregroundStyle(Theme.textPrimary)
+                Text("\(taskCount) pinned task\(taskCount == 1 ? "" : "s")")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 4)
+    }
+
     private func list(_ tasks: [OrgTask]) -> some View {
         let doneStates = Set((store.keywords?.allDone ?? []).map { $0.uppercased() })
         let factory = RowActionFactory(store: store, settings: settings, selection: selection, clocks: clocks, sync: sync)
@@ -72,7 +100,8 @@ struct MacPinnedView: View {
         let groups: [TaskGroup<OrgTask>] = [TaskGroup(id: "_pinned", label: "", items: tasks)]
         return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    pinnedHead(taskCount: tasks.count)
                     GroupedTaskList(
                         groups: groups,
                         secondaryKey: .none,
@@ -85,7 +114,8 @@ struct MacPinnedView: View {
                     )
                 }
                 .padding(.horizontal, 32)
-                .padding(.vertical, 20)
+                .padding(.top, 22)
+                .padding(.bottom, 40)
                 .frame(maxWidth: .infinity, minHeight: 600, alignment: .leading)
                 .background(
                     Rectangle()

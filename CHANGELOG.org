@@ -1,5 +1,15 @@
 #+title: Changelog
 
+** 0.5.4 (2026-05-16)
+
+*** Fixed
+
+- Mac: add page header to Pinned view. v0.5.3 shipped the Pinned smart
+  view without the eyebrow / date / count header strip that Today and
+  Inbox have, leaving task rows stranded mid-page. Added a =pinnedHead=
+  block matching Today's =dayHead= layout (PINNED eyebrow, date heading,
+  "N pinned tasks" subtitle).
+
 ** 0.5.3 (2026-05-16)
 
 *** Added
