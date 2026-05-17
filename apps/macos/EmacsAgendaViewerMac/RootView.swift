@@ -5,12 +5,13 @@ extension Notification.Name {
 }
 
 enum SidebarItem: String, CaseIterable, Identifiable {
-    case today, upcoming, inbox, all, logbook, habits, eisenhower, calendar
+    case pinned, today, upcoming, inbox, all, logbook, habits, eisenhower, calendar
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .pinned: return "Pinned"
         case .today: return "Today"
         case .upcoming: return "Upcoming"
         case .inbox: return "Inbox"
@@ -24,6 +25,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .pinned: return "pin.fill"
         case .today: return "star.fill"
         case .upcoming: return "list.bullet"
         case .inbox: return "tray.and.arrow.down.fill"
@@ -267,6 +269,11 @@ struct RootView: View {
     /// derived from `allTasks` because we don't have a dedicated endpoint.
     private func sidebarCount(_ item: SidebarItem) -> Int? {
         switch item {
+        case .pinned:
+            guard let tasks = store.allTasks.value else { return nil }
+            let today = DateQuery.today()
+            let count = tasks.filter { $0.properties?["PINNED"] == today }.count
+            return count > 0 ? count : nil
         case .today:
             // Match what the view actually renders: dedupe (scheduled +
             // deadline of the same heading collapse into one row),
@@ -322,7 +329,7 @@ struct RootView: View {
     /// user's accent choice can lead.
     private func sidebarTint(_ item: SidebarItem) -> Color {
         switch item {
-        case .today, .upcoming, .inbox, .all, .logbook, .habits,
+        case .pinned, .today, .upcoming, .inbox, .all, .logbook, .habits,
              .eisenhower, .calendar: return Theme.textTertiary
         }
     }
@@ -330,6 +337,7 @@ struct RootView: View {
     @ViewBuilder
     private var detailContent: some View {
         switch selection {
+        case .pinned: MacPinnedView(store: store)
         case .today: MacTodayView(store: store)
         case .upcoming: MacUpcomingView(store: store)
         case .inbox: MacInboxView(store: store)

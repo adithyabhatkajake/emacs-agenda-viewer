@@ -235,3 +235,22 @@ export async function setEffort(task: OrgTask | { id: string; file: string; pos:
   });
   if (!res.ok) throw new Error('Failed to set effort');
 }
+
+/** Returns today's date as YYYY-MM-DD in local time, matching how the user reads dates in org files. */
+export function todayYMD(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export async function setPinned(task: OrgTask | { id: string; file: string; pos: number }, pinned: boolean): Promise<void> {
+  const value = pinned ? todayYMD() : '';
+  const res = await fetch(`${getApiBase()}/tasks/${encodeURIComponent(task.id)}/property`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: task.file, pos: task.pos, name: 'PINNED', value }),
+  });
+  if (!res.ok) throw new Error('Failed to set pinned');
+}

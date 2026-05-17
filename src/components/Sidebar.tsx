@@ -151,6 +151,7 @@ export function Sidebar({
         <div className="px-3 pb-2 flex flex-col gap-0.5">
           {iconItem('Inbox', { type: 'inbox' }, '\u{1F4E5}')}
           {iconItem('All Tasks', { type: 'all' }, '\u{2630}')}
+          {iconItem('My Day', { type: 'pinned' }, '\u{1F4CC}')}
           {iconItem('Today', { type: 'today' }, '\u{2B50}')}
           {iconItem('Upcoming', { type: 'upcoming' }, '\u{1F4C5}')}
           {iconItem('Habits', { type: 'habits' }, '\u{1F501}')}

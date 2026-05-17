@@ -121,6 +121,7 @@ export type ViewFilter =
   | { type: 'upcoming' }
   | { type: 'logbook' }
   | { type: 'inbox' }
+  | { type: 'pinned' }
   | { type: 'habits' }
   | { type: 'eisenhower' }
   | { type: 'calendar' }

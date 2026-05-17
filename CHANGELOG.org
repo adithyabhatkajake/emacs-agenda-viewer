@@ -1,5 +1,19 @@
 #+title: Changelog
 
+** 0.5.3 (2026-05-16)
+
+*** Added
+
+- Pinned (My Day) view: new top-level sidebar entry above Today,
+  holding tasks pinned for the current day. Data model: org property
+  =:PINNED:= with value the YYYY-MM-DD the task was pinned; strict
+  equality against today means yesterday's pins silently roll off (MS
+  Todo strict reset). Pin/unpin via context menu ("Pin to My Day" /
+  "Unpin from My Day"). Mac also binds Cmd+Shift+P. A pinned task
+  shows a 📌 chip in its metadata wherever it appears. Web client's
+  keyboard shortcut is deferred until a "currently selected row"
+  concept lands.
+
 ** 0.5.2 (2026-05-15)
 
 *** Fixed

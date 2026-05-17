@@ -20,6 +20,12 @@ struct TaskRowActions {
     var archive: (() -> Void)? = nil
     var setTags: ([String]) -> Void = { _ in }
     var saveTitle: ((String) -> Void)?
+    /// Toggle the :PINNED: property for today's date. Pinning sets it to
+    /// today's YYYY-MM-DD string; unpinning clears it (empty string, which
+    /// the bridge interprets as deletion).
+    var togglePin: () -> Void = {}
+    /// True when the task is pinned for today. Used to flip the menu label.
+    var isPinnedToday: Bool = false
 }
 
 struct MacTaskRow: View {
@@ -225,6 +231,9 @@ struct MacTaskRow: View {
             Spacer(minLength: 6)
             if let label = repeaterLabel(task.scheduled?.repeater ?? task.deadline?.repeater) {
                 repeaterPill(label)
+            }
+            if actions.isPinnedToday {
+                pinnedChip
             }
             if !task.tags.isEmpty || !task.inheritedTags.isEmpty {
                 HStack(spacing: 4) {
@@ -483,6 +492,16 @@ struct MacTaskRow: View {
         .help("Repeats every \(label) — next instance is auto-scheduled when this task is completed.")
     }
 
+    /// Small pin indicator rendered when the task is pinned for today.
+    /// Same visual weight as `repeaterPill` — no pill background, just
+    /// an SF Symbol in `textTertiary` so it reads as inline metadata.
+    private var pinnedChip: some View {
+        Image(systemName: "pin.fill")
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(Theme.textTertiary)
+            .help("Pinned to My Day")
+    }
+
     private func tagChip(_ tag: String, inherited: Bool) -> some View {
         Text("#\(tag)")
             .font(.system(size: 10.5, design: .monospaced))
@@ -511,6 +530,10 @@ struct MacTaskRow: View {
     @ViewBuilder
     private var contextMenuItems: some View {
         Button("Edit") { actions.editInspector() }
+        Button(actions.isPinnedToday ? "Unpin from My Day" : "Pin to My Day") {
+            actions.togglePin()
+        }
+        .keyboardShortcut("p", modifiers: [.command, .shift])
         Divider()
         Menu("Priority") {
             ForEach(["A", "B", "C", "D"], id: \.self) { p in

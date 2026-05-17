@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { OrgTask, AgendaEntry, OrgTimestamp, TodoKeywords } from '../types';
-import { updateTodoState, updatePriority, updateScheduled, updateDeadline, updateTitle, updateTags, setEffort, fetchRefileTargets, refileTask, archiveTask, fetchNotes, saveNotes, clockIn, clockOutApi, type ClockStatus, type RefileTarget } from '../api/tasks';
+import { updateTodoState, updatePriority, updateScheduled, updateDeadline, updateTitle, updateTags, setEffort, setPinned, todayYMD, fetchRefileTargets, refileTask, archiveTask, fetchNotes, saveNotes, clockIn, clockOutApi, type ClockStatus, type RefileTarget } from '../api/tasks';
 import { TagPicker } from './TagPicker';
 import { EffortPicker } from './EffortPicker';
 import { ScheduleTray } from './ScheduleTray';
@@ -271,6 +271,9 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
       )
     : null;
 
+  // Pin state: task is pinned for today iff PINNED property equals today's local date
+  const isPinned = !isAgenda && (task as OrgTask).properties?.PINNED === todayYMD();
+
   const handleCheckboxToggle = async (e: React.MouseEvent | React.KeyboardEvent) => {
     e.stopPropagation();
     if (updating || !keywords) return;
@@ -388,6 +391,15 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
               title="Next repeat"
             >
               {'🔁'} {formatRelativeDate(nextRepeatDate)}
+            </span>
+          )}
+          {/* Pinned chip */}
+          {isPinned && (
+            <span
+              className="flex-shrink-0 text-[10px] px-1.5 py-[2px] rounded-full bg-accent/10 text-accent border border-accent/15 whitespace-nowrap"
+              title="Pinned to My Day"
+            >
+              {'\u{1F4CC}'}
             </span>
           )}
         </div>
@@ -643,6 +655,18 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
           >
             Effort
           </button>
+          {!isAgenda && (
+            <button
+              onClick={async () => {
+                setContextMenu(null);
+                try { await setPinned(task as OrgTask, !isPinned); onRefresh(); }
+                catch (err) { console.error('Failed to toggle pin:', err); }
+              }}
+              className="w-full text-left px-3 py-1.5 text-[12px] text-text-primary hover:bg-things-sidebar-hover/80 transition-colors"
+            >
+              {isPinned ? 'Unpin from My Day' : '\u{1F4CC} Pin to My Day'}
+            </button>
+          )}
           {allowArchive && (
             <button
               onClick={async () => {

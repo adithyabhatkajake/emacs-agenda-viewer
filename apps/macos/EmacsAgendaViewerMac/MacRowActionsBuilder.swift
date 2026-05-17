@@ -45,6 +45,8 @@ struct RowActionFactory {
         let clocks = self.clocks
         let snapshot: TaskSnapshot = TaskSnapshot(task: task)
         let onArchive = self.onRequestArchive
+        let today = DateQuery.today()
+        let isPinnedToday = (task as? OrgTask)?.properties?["PINNED"] == today
         return TaskRowActions(
             toggleDone: {
                 Task { @MainActor in
@@ -148,7 +150,16 @@ struct RowActionFactory {
                     await store.setTitle(taskId: id, file: file, pos: pos, title: trimmed, using: client)
                     selection.editingTaskId = nil
                 }
-            }
+            },
+            togglePin: {
+                Task { @MainActor in
+                    guard let client = settings.apiClient else { return }
+                    let value = isPinnedToday ? "" : today
+                    await store.setProperty(taskId: id, file: file, pos: pos,
+                                            key: "PINNED", value: value, using: client)
+                }
+            },
+            isPinnedToday: isPinnedToday
         )
     }
 

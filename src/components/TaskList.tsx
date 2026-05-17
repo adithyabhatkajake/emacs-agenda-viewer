@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { OrgTask, AgendaEntry, ViewFilter, TodoKeywords } from '../types';
 import { TaskItem } from './TaskItem';
 import { renderInline } from './NotesRenderer';
-import { type ClockStatus, clockOutApi, loadSettings, updateScheduled } from '../api/tasks';
+import { type ClockStatus, clockOutApi, loadSettings, updateScheduled, todayYMD } from '../api/tasks';
 import { HabitsView, TodayHabitsGroup } from './HabitsView';
 import { isHabit } from '../utils/habits';
 import { EisenhowerView } from './EisenhowerView';
@@ -38,6 +38,7 @@ function filterTitle(filter: ViewFilter): string {
     case 'upcoming': return 'Upcoming';
     case 'logbook': return 'Logbook';
     case 'inbox': return 'Inbox';
+    case 'pinned': return 'My Day';
     case 'habits': return 'Habits';
     case 'eisenhower': return 'Eisenhower Matrix';
     case 'calendar': return 'Calendar';
@@ -444,6 +445,11 @@ export function TaskList({
       case 'upcoming': result = upcomingEntries; break;
       case 'all': result = tasks.filter(t => t.todoState); break;
       case 'logbook': result = tasks.filter(t => t.todoState && isDoneState(t.todoState)); break;
+      case 'pinned': {
+        const ymd = todayYMD();
+        result = tasks.filter(t => t.properties?.PINNED === ymd);
+        break;
+      }
       case 'inbox': result = tasks.filter(t => {
         const basename = t.file.split('/').pop() || '';
         return (
@@ -693,6 +699,14 @@ export function TaskList({
                 <span className="font-medium text-text-secondary">Inbox is clear</span>
                 <span className="text-[12px] text-center max-w-[260px]">
                   New captures land here. Refile them into project trees to keep this list empty.
+                </span>
+              </>
+            ) : filter.type === 'pinned' ? (
+              <>
+                <span className="text-3xl opacity-40">{'\u{1F4CC}'}</span>
+                <span className="font-medium text-text-secondary">Nothing pinned for today</span>
+                <span className="text-[12px] text-center max-w-[280px]">
+                  Pin a task with {'⌘⇧P'} or right-click &rarr; Pin to My Day.
                 </span>
               </>
             ) : (
