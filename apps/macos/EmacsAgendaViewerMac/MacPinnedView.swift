@@ -116,7 +116,7 @@ struct MacPinnedView: View {
                 .padding(.horizontal, 32)
                 .padding(.top, 22)
                 .padding(.bottom, 40)
-                .frame(maxWidth: .infinity, minHeight: 600, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 600, alignment: .topLeading)
                 .background(
                     Rectangle()
                         .fill(Theme.background)

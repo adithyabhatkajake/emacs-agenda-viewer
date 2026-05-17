@@ -1,5 +1,22 @@
 #+title: Changelog
 
+** 0.5.5 (2026-05-16)
+
+*** Fixed
+
+- Mac: anchor Pinned view content to top. v0.5.4's page header
+  positioned itself correctly, but the LazyVStack lived inside a
+  =.frame(minHeight: 600, alignment: .leading)= — .leading only
+  controls horizontal alignment, so vertical fell through to .center.
+  With only a handful of pinned tasks, the content visually centered
+  itself in 600pt of frame, leaving a large void at top. Changed
+  alignment to .topLeading.
+
+*** Internal
+
+- Added TODO.org to .gitignore. The project-local internal backlog
+  tracker stays untracked.
+
 ** 0.5.4 (2026-05-16)
 
 *** Fixed

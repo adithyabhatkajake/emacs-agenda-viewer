@@ -7,3 +7,4 @@ playwright-report/
 *.elc
 *.tsbuildinfo
 productivity/
+TODO.org
