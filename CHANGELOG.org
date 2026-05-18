@@ -1,5 +1,36 @@
 #+title: Changelog
 
+** 0.5.6 (2026-05-18)
+
+*** Fixed
+
+- Mac: inspector no longer freezes when expanding tasks with many
+  nested checkboxes (e.g. ~100 checklist items). =NotesRenderedView=
+  previously built one =HStack= per =NoteBlock=, producing ~700 layout
+  nodes in a non-lazy =VStack=; SwiftUI's =StackLayout= solver
+  cascaded through all of them on every layout transaction, and the
+  20Hz =TimelineView= pulse in =MacClockDock= re-triggered that
+  cascade ~20×/sec, saturating the main thread. The notes body now
+  renders as a single =Text(AttributedString)= — checkbox toggles and
+  collapse chevrons dispatch via custom URL schemes
+  (=eav-check://=, =eav-collapse://=) handled by an =OpenURLAction=
+  override, while real links fall through to =.systemAction=. This
+  collapses ~700 layout nodes to ~1. Also replaced the O(N²)
+  =isHidden= per-row walk with a single forward pass.
+
+*** Changed
+
+- Mac: SF Symbol checkbox/chevron icons in notes are replaced with
+  unicode glyphs (=☐= / =◐= / =☑= / =▸= / =▾=) as part of the
+  single-=Text= rewrite. Tap targets are unchanged.
+
+*** Internal
+
+- Mac: =TaskExpandedCard.blocks= changed from a computed =var=
+  (re-parsed on every body eval, including every 20Hz tick) to
+  =@State=, populated by =.onChange(of: notesText)=. Eliminates the
+  redundant =NotesParser.parse= call per tick.
+
 ** 0.5.5 (2026-05-16)
 
 *** Fixed

@@ -318,6 +318,14 @@ enum OrgInline {
 
 // MARK: - Rendered view
 
+/// Renders notes as a SINGLE `Text(AttributedString)` view. Previous
+/// implementation built one HStack per NoteBlock; for a heavy task (~100
+/// blocks) that produced ~700 layout nodes and the StackLayout solver would
+/// cascade through all of them on every layout transaction, saturating the
+/// main thread (see sample taken 2026-05-18). Folding the entire body into
+/// one attributed string collapses the per-block layout cost to ~O(text length)
+/// and routes checkbox/collapse interactions through `OpenURLAction` rather
+/// than per-row Buttons.
 struct NotesRenderedView: View {
     let blocks: [NoteBlock]
     let onToggleChecklist: (Int) -> Void
@@ -327,13 +335,130 @@ struct NotesRenderedView: View {
     @State private var collapsed: Set<Int> = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(blocks.enumerated()), id: \.element.id) { idx, block in
-                if !isHidden(idx) {
-                    row(for: block, index: idx)
-                }
+        Text(attributed)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .environment(\.openURL, OpenURLAction(handler: handleURL))
+    }
+
+    // MARK: Building the attributed string
+
+    private struct VisibleEntry {
+        let block: NoteBlock
+        let hasChildren: Bool
+    }
+
+    /// Single forward pass replaces the O(N²) per-row `isHidden` walk and
+    /// per-row `hasChildren` lookup of the previous implementation.
+    private var visibleBlocks: [VisibleEntry] {
+        var out: [VisibleEntry] = []
+        out.reserveCapacity(blocks.count)
+        var hideUnderIndent: Int? = nil
+        for i in 0..<blocks.count {
+            let block = blocks[i]
+            let myIndent = indentOf(block)
+            if let h = hideUnderIndent {
+                if myIndent > h { continue }
+                hideUnderIndent = nil
+            }
+            let isListItem: Bool
+            switch block {
+            case .checklist, .bullet: isListItem = true
+            default: isListItem = false
+            }
+            let hasKids = isListItem
+                && i + 1 < blocks.count
+                && indentOf(blocks[i + 1]) > myIndent
+            out.append(VisibleEntry(block: block, hasChildren: hasKids))
+            if isListItem && collapsed.contains(block.id) {
+                hideUnderIndent = myIndent
             }
         }
+        return out
+    }
+
+    private var attributed: AttributedString {
+        var out = AttributedString()
+        let visible = visibleBlocks
+        for (offset, entry) in visible.enumerated() {
+            if offset > 0 {
+                out.append(AttributedString("\n"))
+            }
+            out.append(line(for: entry))
+        }
+        return out
+    }
+
+    private func line(for entry: VisibleEntry) -> AttributedString {
+        switch entry.block {
+        case .checklist(let id, let state, let indent, let inline):
+            var result = indentString(indent)
+            if entry.hasChildren {
+                result.append(chevronRun(for: id))
+            }
+            result.append(checklistRun(state: state, lineIndex: id))
+            result.append(bodyWithState(inline, state: state))
+            return result
+
+        case .bullet(let id, let indent, let inline):
+            var result = indentString(indent)
+            if entry.hasChildren {
+                result.append(chevronRun(for: id))
+            }
+            var bullet = AttributedString("• ")
+            bullet.foregroundColor = Theme.textTertiary
+            result.append(bullet)
+            result.append(inline)
+            return result
+
+        case .paragraph(_, let inline):
+            return inline
+
+        case .blank:
+            // Single space keeps the line break we already insert between
+            // entries; a zero-length line would collapse visually.
+            return AttributedString(" ")
+        }
+    }
+
+    private func indentString(_ level: Int) -> AttributedString {
+        guard level > 0 else { return AttributedString() }
+        return AttributedString(String(repeating: "    ", count: level))
+    }
+
+    private func chevronRun(for id: Int) -> AttributedString {
+        let isCollapsed = collapsed.contains(id)
+        var chev = AttributedString(isCollapsed ? "▸ " : "▾ ")
+        chev.foregroundColor = Theme.textTertiary
+        if let url = URL(string: "eav-collapse://\(id)") {
+            chev.link = url
+        }
+        return chev
+    }
+
+    private func checklistRun(state: ChecklistState, lineIndex: Int) -> AttributedString {
+        let glyph: String
+        let color: Color
+        switch state {
+        case .notStarted: glyph = "☐ "; color = Theme.textTertiary
+        case .ongoing:    glyph = "◐ "; color = Theme.priorityB
+        case .done:       glyph = "☑ "; color = Theme.doneGreen
+        }
+        var run = AttributedString(glyph)
+        run.foregroundColor = color
+        if let url = URL(string: "eav-check://\(lineIndex)") {
+            run.link = url
+        }
+        return run
+    }
+
+    private func bodyWithState(_ inline: AttributedString, state: ChecklistState) -> AttributedString {
+        guard state == .done else { return inline }
+        var body = inline
+        let range = body.startIndex..<body.endIndex
+        body[range].strikethroughStyle = .single
+        body[range].foregroundColor = Theme.textTertiary
+        return body
     }
 
     private func indentOf(_ block: NoteBlock) -> Int {
@@ -344,136 +469,28 @@ struct NotesRenderedView: View {
         }
     }
 
-    private func hasChildren(_ index: Int) -> Bool {
-        guard index + 1 < blocks.count else { return false }
-        let myIndent = indentOf(blocks[index])
-        let nextIndent = indentOf(blocks[index + 1])
-        let isListItem: Bool = {
-            switch blocks[index] {
-            case .checklist, .bullet: return true
-            default: return false
+    // MARK: URL dispatch
+
+    private func handleURL(_ url: URL) -> OpenURLAction.Result {
+        switch url.scheme {
+        case "eav-check":
+            if let host = url.host, let line = Int(host) {
+                onToggleChecklist(line)
+                return .handled
             }
-        }()
-        return isListItem && nextIndent > myIndent
-    }
-
-    private func isHidden(_ index: Int) -> Bool {
-        for i in stride(from: index - 1, through: 0, by: -1) {
-            let parentIndent = indentOf(blocks[i])
-            let myIndent = indentOf(blocks[index])
-            if parentIndent < myIndent {
-                if collapsed.contains(blocks[i].id) { return true }
+            return .discarded
+        case "eav-collapse":
+            if let host = url.host, let id = Int(host) {
+                if collapsed.contains(id) {
+                    collapsed.remove(id)
+                } else {
+                    collapsed.insert(id)
+                }
+                return .handled
             }
-            if parentIndent == 0 { break }
-        }
-        return false
-    }
-
-    @ViewBuilder
-    private func row(for block: NoteBlock, index: Int) -> some View {
-        switch block {
-        case .checklist(let lineIndex, let state, let indent, let inline):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                if indent > 0 {
-                    Spacer().frame(width: CGFloat(indent) * 16)
-                }
-                if hasChildren(index) {
-                    Button {
-                        if collapsed.contains(block.id) {
-                            collapsed.remove(block.id)
-                        } else {
-                            collapsed.insert(block.id)
-                        }
-                    } label: {
-                        Image(systemName: collapsed.contains(block.id) ? "chevron.right" : "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Theme.textTertiary)
-                            .frame(width: 10)
-                    }
-                    .buttonStyle(.plain)
-                }
-                Button {
-                    onToggleChecklist(lineIndex)
-                } label: {
-                    checklistIcon(for: state)
-                }
-                .buttonStyle(.plain)
-                Text(inline)
-                    .strikethrough(state == .done, color: Theme.textTertiary)
-                    .foregroundStyle(foregroundColor(for: state))
-                    .textSelection(.enabled)
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 1)
-
-        case .bullet(_, let indent, let inline):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                if indent > 0 {
-                    Spacer().frame(width: CGFloat(indent) * 16)
-                }
-                if hasChildren(index) {
-                    Button {
-                        if collapsed.contains(block.id) {
-                            collapsed.remove(block.id)
-                        } else {
-                            collapsed.insert(block.id)
-                        }
-                    } label: {
-                        Image(systemName: collapsed.contains(block.id) ? "chevron.right" : "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Theme.textTertiary)
-                            .frame(width: 10)
-                    }
-                    .buttonStyle(.plain)
-                }
-                Text("•")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textTertiary)
-                Text(inline)
-                    .textSelection(.enabled)
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 1)
-
-        case .paragraph(_, let inline):
-            Text(inline)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 1)
-
-        case .blank:
-            Spacer().frame(height: 6)
-        }
-    }
-
-    @ViewBuilder
-    private func checklistIcon(for state: ChecklistState) -> some View {
-        switch state {
-        case .notStarted:
-            Image(systemName: "circle")
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.textTertiary)
-        case .ongoing:
-            ZStack {
-                Image(systemName: "circle.fill")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.priorityB)
-                Image(systemName: "minus")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white)
-            }
-        case .done:
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.doneGreen)
-        }
-    }
-
-    private func foregroundColor(for state: ChecklistState) -> Color {
-        switch state {
-        case .notStarted: return Theme.textPrimary
-        case .ongoing: return Theme.textPrimary
-        case .done: return Theme.textTertiary
+            return .discarded
+        default:
+            return .systemAction
         }
     }
 }

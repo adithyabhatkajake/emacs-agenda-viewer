@@ -17,6 +17,10 @@ struct TaskExpandedCard: View {
     @State private var savingNotes = false
     @State private var titleText: String = ""
     @State private var outline: APIClient.OutlinePathResponse?
+    /// Memoized parse of `notesText`. Kept as @State so `body` re-evaluations
+    /// triggered by unrelated state changes (e.g. the 20Hz clock pulse) don't
+    /// re-run `NotesParser.parse` against the entire notes body each tick.
+    @State private var blocks: [NoteBlock] = []
     @FocusState private var notesFocused: Bool
     @FocusState private var titleFocused: Bool
 
@@ -39,8 +43,6 @@ struct TaskExpandedCard: View {
             && store.clock?.file == task.file
             && store.clock?.pos == task.pos
     }
-
-    private var blocks: [NoteBlock] { NotesParser.parse(notesText) }
 
     private var hasVisibleNotes: Bool {
         blocks.contains { block in
@@ -92,6 +94,9 @@ struct TaskExpandedCard: View {
             selection.editingTaskId = nil
             loadNotes()
             loadOutline()
+        }
+        .onChange(of: notesText) { _, newValue in
+            blocks = NotesParser.parse(newValue)
         }
     }
 
