@@ -18,3 +18,8 @@ SCHEDULED: <2026-05-22 Fri>
 - State "DONE"       from "TODO"       [2026-05-16 Sat 23:29]
 :END:
 - [ ] only region
+
+* TODO Weekly habit with deadline repeater
+SCHEDULED: <2026-05-22 Fri> DEADLINE: <2026-05-22 Fri +1w>
+:PROPERTIES:
+:END:

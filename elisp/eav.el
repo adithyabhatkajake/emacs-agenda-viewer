@@ -912,7 +912,8 @@ to `note', we honor that, just like an interactive completion would."
   (with-current-buffer (find-file-noselect file)
     (goto-char pos)
     (let ((before (substring-no-properties (or (org-get-todo-state) "")))
-          (was-blocked (org-entry-blocked-p)))
+          (was-blocked (org-entry-blocked-p))
+          (last-repeat-before (org-entry-get (point) "LAST_REPEAT")))
       (cond
        ((string= state "@DONE") (org-todo 'done))
        ((string= state "@TODO") (org-todo 'todo))
@@ -920,14 +921,26 @@ to `note', we honor that, just like an interactive completion would."
        (t                       (org-todo state)))
       (run-hooks 'post-command-hook)
       (save-buffer)
-      (let ((after (substring-no-properties (or (org-get-todo-state) ""))))
+      (let* ((after (substring-no-properties (or (org-get-todo-state) "")))
+             (last-repeat-after (org-entry-get (point) "LAST_REPEAT"))
+             (repeated (and last-repeat-after
+                            (not (equal last-repeat-before last-repeat-after)))))
         ;; org-mode silently refuses transitions when
         ;; `org-enforce-todo-dependencies' is set and the task has unfinished
         ;; children, or `org-enforce-todo-checkbox-dependencies' with
         ;; unchecked checkboxes. The user sees "tap done → nothing happens".
         ;; Surface it as an explicit error so the client can show feedback.
+        ;;
+        ;; Repeating tasks (SCHEDULED/DEADLINE with a +/++/.+ repeater) are
+        ;; the exception: `(org-todo 'done)` logs completion and advances
+        ;; the timestamp, then resets state back to the active keyword. The
+        ;; LAST_REPEAT property is set/bumped on every such cycle, so we
+        ;; treat a fresh LAST_REPEAT as a successful done-cycle even when
+        ;; before == after. Without this guard the iOS app shows a spurious
+        ;; 400 for every weekly/daily habit.
         (if (and (string= before after)
-                 (not (string= state "@NEXT")))
+                 (not (string= state "@NEXT"))
+                 (not repeated))
             (json-encode
              `((success . :json-false)
                (error . ,(cond

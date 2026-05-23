@@ -1,5 +1,23 @@
 #+title: Changelog
 
+** 0.6.2 (2026-05-23)
+
+*** Fixed
+
+- *Critical hotfix for repeating tasks.* Marking a SCHEDULED or
+  DEADLINE task with a repeater (=+1w=, =+1d=, =.+1m=, etc.) as Done
+  failed with a 400 error and a persistent error banner on Today
+  (visible on every weekly habit attempt). =org-todo 'done= correctly
+  logs the completion and advances the timestamp, but resets the
+  state back to the active keyword — our bridge in =elisp/eav.el=
+  treated =before == after= as a failed transition and returned an
+  error even though the cycle succeeded. The fix tracks =LAST_REPEAT=
+  before and after =org-todo=; a freshly bumped =LAST_REPEAT= now
+  counts as success regardless of the visible state name. New ert
+  test =eav-set-todo-state-repeater-success= and a "Weekly habit with
+  deadline repeater" fixture heading pin the invariant. All users
+  with repeating tasks should upgrade immediately.
+
 ** 0.6.1 (2026-05-23)
 
 *** Fixed

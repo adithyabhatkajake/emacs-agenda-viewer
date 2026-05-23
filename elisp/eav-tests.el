@@ -366,12 +366,12 @@ against that heading's :EXPECTED: property."
     (should pos)
     (eav-set-heading-notes file pos "- [X] replaced")
     (let ((body (eav-tests--read-file file)))
-      ;; Each drawer marker appears once per heading; fixture has 2 headings.
-      (should (= 2 (count-matches-in-string ":PROPERTIES:" body)))
+      ;; Fixture has 3 headings: two with PROPERTIES+LOGBOOK drawers, one
+      ;; with only PROPERTIES. Corruption replaced one :END: with :LOGBOOK:,
+      ;; so these counts catch a regression.
+      (should (= 3 (count-matches-in-string ":PROPERTIES:" body)))
       (should (= 2 (count-matches-in-string ":LOGBOOK:"    body)))
-      ;; Four :END: markers (two per heading). Corruption replaced one :END:
-      ;; with :LOGBOOK:, so this assertion catches a regression.
-      (should (= 4 (count-matches-in-string ":END:"        body)))
+      (should (= 5 (count-matches-in-string ":END:"        body)))
       ;; Planning line preserved.
       (should (string-match-p "SCHEDULED: <2026-05-22 Fri>" body))
       ;; Custom ID preserved (inside PROPERTIES).
@@ -383,6 +383,29 @@ against that heading's :EXPECTED: property."
       (should-not (string-match-p "first user-text region item" body))
       ;; Second heading's body must remain untouched.
       (should (string-match-p "only region" body)))))
+
+(ert-deftest eav-set-todo-state-repeater-success ()
+  "Marking a repeating task done bounces state back to TODO; the bridge
+must treat that as success (LAST_REPEAT bumped) rather than reporting
+\"did not change state\"."
+  (let* ((file (eav-tests--copy-fixture "set-notes.org"))
+         (title "Weekly habit with deadline repeater")
+         (pos  (eav-tests--find-heading file title))
+         ;; Force a deterministic timestamp so org's repeater logic doesn't
+         ;; misbehave under batch's faked clock.
+         (org-log-done nil)
+         (response-json (eav-set-todo-state file pos "@DONE"))
+         (response (json-read-from-string response-json)))
+    (should (eq (alist-get 'success response) t))
+    (should (null (alist-get 'error response)))
+    ;; Verify the deadline advanced (proves the operation actually succeeded
+    ;; on org's side even though state == TODO before and after).
+    (with-temp-buffer
+      (insert-file-contents file)
+      (goto-char (point-min))
+      (re-search-forward (regexp-quote title))
+      (org-back-to-heading t)
+      (should (string-match-p "LAST_REPEAT" (buffer-string))))))
 
 (ert-deftest eav-set-notes-no-duplication ()
   "Writing notes a single time must NOT duplicate existing body."
