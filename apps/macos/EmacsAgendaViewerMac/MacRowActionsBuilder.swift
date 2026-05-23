@@ -46,7 +46,7 @@ struct RowActionFactory {
         let snapshot: TaskSnapshot = TaskSnapshot(task: task)
         let onArchive = self.onRequestArchive
         let today = DateQuery.today()
-        let isPinnedToday = (task as? OrgTask)?.properties?["PINNED"] == today
+        let isPinnedToday = (task as? OrgTask).map { TaskFilters.isPinnedToday($0) } ?? false
         return TaskRowActions(
             toggleDone: {
                 Task { @MainActor in

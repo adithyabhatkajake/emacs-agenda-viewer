@@ -36,15 +36,7 @@ private func priorityOrd(_ p: String?) -> Int {
 
 private func extractDateMs(_ raw: String?) -> Double {
     guard let raw else { return .infinity }
-    // Org timestamp form: "<2026-04-19 Sun .+1d -0d>"
-    let pattern = #"(\d{4})-(\d{2})-(\d{2})"#
-    guard let range = raw.range(of: pattern, options: .regularExpression) else { return .infinity }
-    let s = raw[range]
-    let parts = s.split(separator: "-").compactMap { Int($0) }
-    guard parts.count == 3 else { return .infinity }
-    var dc = DateComponents()
-    dc.year = parts[0]; dc.month = parts[1]; dc.day = parts[2]
-    return Calendar.current.date(from: dc).map { $0.timeIntervalSince1970 * 1000 } ?? .infinity
+    return OrgTimestamp.parseDateString(raw).map { $0.timeIntervalSince1970 * 1000 } ?? .infinity
 }
 
 private func extractTimeMinutes(_ item: any TaskDisplayable) -> Int {
@@ -288,33 +280,62 @@ func dedupeAgendaEntries(_ entries: [AgendaEntry]) -> [AgendaEntry] {
     return order.compactMap { seen[$0] }
 }
 
+private struct SortKeys {
+    let primary: SortPrimary
+    let timeMinutes: Int
+
+    enum SortPrimary {
+        case int(Int)
+        case double(Double)
+        case string(String)
+    }
+}
+
+private func makeSortKeys<T: TaskDisplayable>(_ item: T, key: SortKey) -> SortKeys {
+    let primary: SortKeys.SortPrimary
+    switch key {
+    case .priority:
+        primary = .int(priorityOrd(item.priority))
+    case .state:
+        primary = .string(item.todoState ?? "")
+    case .deadline:
+        let dl = extractDateMs(item.deadline?.raw)
+        let ms = dl.isFinite ? dl : extractDateMs(item.scheduled?.raw)
+        primary = .double(ms)
+    case .scheduled:
+        primary = .double(extractDateMs(item.scheduled?.raw))
+    case .category:
+        primary = .string(item.category)
+    case .default:
+        primary = .int(0)
+    }
+    return SortKeys(primary: primary, timeMinutes: extractTimeMinutes(item))
+}
+
 func sortTasks<T: TaskDisplayable>(_ items: [T], by key: SortKey) -> [T] {
     if key == .default { return items }
-    return items.sorted { a, b in
+    // Schwartzian transform: materialize sort keys once per item so that
+    // extractDateMs (regex + parse) and extractTimeMinutes (regex) are not
+    // recomputed inside the O(N log N) comparator.
+    let keyed = items.map { (makeSortKeys($0, key: key), $0) }
+    let sorted = keyed.sorted { lhs, rhs in
+        let (la, _) = lhs
+        let (ra, _) = rhs
         var cmp = 0
-        switch key {
-        case .priority:
-            cmp = priorityOrd(a.priority) - priorityOrd(b.priority)
-        case .state:
-            cmp = (a.todoState ?? "").localizedCompare(b.todoState ?? "").rawValue
-        case .deadline:
-            let ad = extractDateMs(a.deadline?.raw).isFinite ? extractDateMs(a.deadline?.raw) : extractDateMs(a.scheduled?.raw)
-            let bd = extractDateMs(b.deadline?.raw).isFinite ? extractDateMs(b.deadline?.raw) : extractDateMs(b.scheduled?.raw)
-            cmp = ad < bd ? -1 : (ad > bd ? 1 : 0)
-        case .scheduled:
-            let ad = extractDateMs(a.scheduled?.raw)
-            let bd = extractDateMs(b.scheduled?.raw)
-            cmp = ad < bd ? -1 : (ad > bd ? 1 : 0)
-        case .category:
-            cmp = a.category.localizedCompare(b.category).rawValue
-        case .default:
+        switch (la.primary, ra.primary) {
+        case (.int(let l), .int(let r)):
+            cmp = l - r
+        case (.double(let l), .double(let r)):
+            cmp = l < r ? -1 : (l > r ? 1 : 0)
+        case (.string(let l), .string(let r)):
+            cmp = l.localizedCompare(r).rawValue
+        default:
             cmp = 0
         }
         if cmp == 0 {
-            let at = extractTimeMinutes(a)
-            let bt = extractTimeMinutes(b)
-            cmp = at - bt
+            cmp = la.timeMinutes - ra.timeMinutes
         }
         return cmp < 0
     }
+    return sorted.map { $0.1 }
 }

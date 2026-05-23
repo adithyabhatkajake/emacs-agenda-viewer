@@ -123,7 +123,14 @@ enum CalendarGridItem: Identifiable {
     }
 
     static func stableId(of event: EKEvent) -> String {
-        event.calendarItemExternalIdentifier ?? event.eventIdentifier ?? UUID().uuidString
+        CalendarStableId.makeStableId(
+            eventIdentifier: event.eventIdentifier,
+            externalIdentifier: event.calendarItemExternalIdentifier,
+            title: event.title ?? "",
+            start: event.startDate,
+            end: event.endDate,
+            calendarId: event.calendar?.calendarIdentifier ?? ""
+        )
     }
 
     var dragPayload: String {

@@ -62,6 +62,8 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
 
 @Observable
 final class AppSettings {
+    // MARK: - UserDefaults Keys
+
     private static let serverURLKey = "serverURL"
     private static let appearanceKey = "appearance"
     private static let sortAgendaKey = "sortAgenda"
@@ -79,57 +81,77 @@ final class AppSettings {
     private static let rowHighlightModeKey = "rowHighlightMode"
     private static let rowHighlightStyleKey = "rowHighlightStyle"
     private static let rowProgressStyleKey = "rowProgressStyle"
+    private static let notificationsEnabledKey = "notificationsEnabled"
+    private static let hiddenEventTagsKey = "hiddenEventTags"
+    private static let lastCaptureTemplateKey = "lastCaptureTemplate"
+
+    // MARK: - Persistence helpers
+
+    /// The UserDefaults suite used for all persistence. Overridable in tests.
+    var defaults: UserDefaults = .standard
+
+    private func persist(_ value: Any?, to key: String) {
+        defaults.set(value, forKey: key)
+    }
+
+    private func persist<T: RawRepresentable>(_ value: T, to key: String) where T.RawValue == String {
+        defaults.set(value.rawValue, forKey: key)
+    }
+
+    private func persist(_ value: Set<String>, to key: String) {
+        defaults.set(Array(value), forKey: key)
+    }
+
+    // MARK: - Settings properties
 
     var serverURLString: String {
-        didSet { UserDefaults.standard.set(serverURLString, forKey: Self.serverURLKey) }
+        didSet { persist(serverURLString, to: Self.serverURLKey) }
     }
 
     var appearance: AppearancePreference {
-        didSet { UserDefaults.standard.set(appearance.rawValue, forKey: Self.appearanceKey) }
+        didSet { persist(appearance, to: Self.appearanceKey) }
     }
 
     /// Sort key used by Today/Upcoming agenda views.
     var agendaSort: SortKey {
-        didSet { UserDefaults.standard.set(agendaSort.rawValue, forKey: Self.sortAgendaKey) }
+        didSet { persist(agendaSort, to: Self.sortAgendaKey) }
     }
 
     /// Sort key used by All Tasks list view.
     var listSort: SortKey {
-        didSet { UserDefaults.standard.set(listSort.rawValue, forKey: Self.sortListKey) }
+        didSet { persist(listSort, to: Self.sortListKey) }
     }
 
     var agendaGroup: GroupKey {
-        didSet { UserDefaults.standard.set(agendaGroup.rawValue, forKey: Self.groupAgendaKey) }
+        didSet { persist(agendaGroup, to: Self.groupAgendaKey) }
     }
 
     var listGroup: GroupKey {
-        didSet { UserDefaults.standard.set(listGroup.rawValue, forKey: Self.groupListKey) }
+        didSet { persist(listGroup, to: Self.groupListKey) }
     }
 
     var agendaGroupSecondary: GroupKey {
-        didSet { UserDefaults.standard.set(agendaGroupSecondary.rawValue, forKey: Self.groupAgendaSecondaryKey) }
+        didSet { persist(agendaGroupSecondary, to: Self.groupAgendaSecondaryKey) }
     }
 
     var listGroupSecondary: GroupKey {
-        didSet { UserDefaults.standard.set(listGroupSecondary.rawValue, forKey: Self.groupListSecondaryKey) }
+        didSet { persist(listGroupSecondary, to: Self.groupListSecondaryKey) }
     }
 
     /// EKCalendar.calendarIdentifier of the calendar to push events into.
     var eventKitCalendarIdentifier: String? {
-        didSet { UserDefaults.standard.set(eventKitCalendarIdentifier, forKey: Self.calendarIdKey) }
+        didSet { persist(eventKitCalendarIdentifier, to: Self.calendarIdKey) }
     }
 
     var hiddenCalendarIds: Set<String> {
-        didSet {
-            UserDefaults.standard.set(Array(hiddenCalendarIds), forKey: Self.hiddenCalendarsKey)
-        }
+        didSet { persist(hiddenCalendarIds, to: Self.hiddenCalendarsKey) }
     }
 
     /// When true, Today/Upcoming hide entries that org-agenda surfaces purely
     /// because of an upcoming deadline (deadline within warning period but not
     /// actually due that day).
     var hideUpcomingDeadlines: Bool {
-        didSet { UserDefaults.standard.set(hideUpcomingDeadlines, forKey: Self.hideUpcomingDeadlinesKey) }
+        didSet { persist(hideUpcomingDeadlines, to: Self.hideUpcomingDeadlinesKey) }
     }
 
     /// When true, Today and Upcoming drop `:STYLE: habit` headings.
@@ -137,30 +159,69 @@ final class AppSettings {
     /// that crowd out one-shot tasks. The dedicated Habits view still
     /// shows them.
     var hideHabitsInToday: Bool {
-        didSet { UserDefaults.standard.set(hideHabitsInToday, forKey: Self.hideHabitsKey) }
+        didSet { persist(hideHabitsInToday, to: Self.hideHabitsKey) }
     }
 
     var eisenhowerUrgencyDays: Int {
-        didSet { UserDefaults.standard.set(eisenhowerUrgencyDays, forKey: Self.eisenhowerUrgencyDaysKey) }
+        didSet { persist(eisenhowerUrgencyDays, to: Self.eisenhowerUrgencyDaysKey) }
     }
 
     var eisenhowerSpan: EisenhowerSpan {
-        didSet { UserDefaults.standard.set(eisenhowerSpan.rawValue, forKey: Self.eisenhowerSpanKey) }
+        didSet { persist(eisenhowerSpan, to: Self.eisenhowerSpanKey) }
     }
 
     /// What dimension drives the row highlight color (priority, todo state, or off).
     var rowHighlightMode: RowHighlightMode {
-        didSet { UserDefaults.standard.set(rowHighlightMode.rawValue, forKey: Self.rowHighlightModeKey) }
+        didSet { persist(rowHighlightMode, to: Self.rowHighlightModeKey) }
     }
 
     /// How the highlight is applied (left edge bar vs subtle background tint).
     var rowHighlightStyle: RowHighlightStyle {
-        didSet { UserDefaults.standard.set(rowHighlightStyle.rawValue, forKey: Self.rowHighlightStyleKey) }
+        didSet { persist(rowHighlightStyle, to: Self.rowHighlightStyleKey) }
     }
 
     /// How checklist progress is rendered on each row.
     var rowProgressStyle: RowProgressStyle {
-        didSet { UserDefaults.standard.set(rowProgressStyle.rawValue, forKey: Self.rowProgressStyleKey) }
+        didSet { persist(rowProgressStyle, to: Self.rowProgressStyleKey) }
+    }
+
+    /// Local-notification reminders fired at each task's scheduled time
+    /// (only tasks with a time component, not bare-date scheduled). Off by
+    /// default — user opts in from Settings.
+    var notificationsEnabled: Bool {
+        didSet { persist(notificationsEnabled, to: Self.notificationsEnabledKey) }
+    }
+
+    /// Tags (typically calendar names like "HarshithaDEPTcalendar") whose
+    /// events are suppressed from the Events list in Today / Upcoming.
+    /// Matched against an event's direct OR inherited tags.
+    var hiddenEventTags: Set<String> {
+        didSet { persist(hiddenEventTags, to: Self.hiddenEventTagsKey) }
+    }
+
+    func isEventTagHidden(_ tag: String) -> Bool {
+        hiddenEventTags.contains(tag)
+    }
+
+    func hideEventTag(_ tag: String) {
+        guard !tag.isEmpty else { return }
+        hiddenEventTags.insert(tag)
+    }
+
+    func showEventTag(_ tag: String) {
+        hiddenEventTags.remove(tag)
+    }
+
+    /// Last capture template the user picked; seeds the CaptureSheet picker
+    /// so repeat captures don't require re-selecting the same template.
+    var lastCaptureTemplateKey: String? {
+        didSet {
+            if let v = lastCaptureTemplateKey, !v.isEmpty {
+                defaults.set(v, forKey: Self.lastCaptureTemplateKey)
+            } else {
+                defaults.removeObject(forKey: Self.lastCaptureTemplateKey)
+            }
+        }
     }
 
     /// Per-server category color overrides. Map of category name → hex string
@@ -177,13 +238,13 @@ final class AppSettings {
         } else {
             map.removeValue(forKey: category)
         }
-        UserDefaults.standard.set(map, forKey: categoryColorsKey)
+        defaults.set(map, forKey: categoryColorsKey)
         // Bump observable touch so views re-render.
         colorRevision &+= 1
     }
 
     func clearCategoryColors() {
-        UserDefaults.standard.removeObject(forKey: categoryColorsKey)
+        defaults.removeObject(forKey: categoryColorsKey)
         colorRevision &+= 1
     }
 
@@ -201,12 +262,12 @@ final class AppSettings {
         } else {
             map.removeValue(forKey: key)
         }
-        UserDefaults.standard.set(map, forKey: todoStateColorsKey)
+        defaults.set(map, forKey: todoStateColorsKey)
         colorRevision &+= 1
     }
 
     func clearTodoStateColors() {
-        UserDefaults.standard.removeObject(forKey: todoStateColorsKey)
+        defaults.removeObject(forKey: todoStateColorsKey)
         colorRevision &+= 1
     }
 
@@ -240,12 +301,12 @@ final class AppSettings {
         } else {
             map.removeValue(forKey: key)
         }
-        UserDefaults.standard.set(map, forKey: priorityColorsKey)
+        defaults.set(map, forKey: priorityColorsKey)
         colorRevision &+= 1
     }
 
     func clearPriorityColors() {
-        UserDefaults.standard.removeObject(forKey: priorityColorsKey)
+        defaults.removeObject(forKey: priorityColorsKey)
         colorRevision &+= 1
     }
 
@@ -269,28 +330,28 @@ final class AppSettings {
 
     var cachedTodoKeywords: TodoKeywords? {
         get {
-            guard let data = UserDefaults.standard.data(forKey: cachedKeywordsKey) else { return nil }
+            guard let data = defaults.data(forKey: cachedKeywordsKey) else { return nil }
             return try? JSONDecoder().decode(TodoKeywords.self, from: data)
         }
         set {
             if let newValue, let data = try? JSONEncoder().encode(newValue) {
-                UserDefaults.standard.set(data, forKey: cachedKeywordsKey)
+                defaults.set(data, forKey: cachedKeywordsKey)
             } else {
-                UserDefaults.standard.removeObject(forKey: cachedKeywordsKey)
+                defaults.removeObject(forKey: cachedKeywordsKey)
             }
         }
     }
 
     var cachedPriorities: OrgPriorities? {
         get {
-            guard let data = UserDefaults.standard.data(forKey: cachedPrioritiesKey) else { return nil }
+            guard let data = defaults.data(forKey: cachedPrioritiesKey) else { return nil }
             return try? JSONDecoder().decode(OrgPriorities.self, from: data)
         }
         set {
             if let newValue, let data = try? JSONEncoder().encode(newValue) {
-                UserDefaults.standard.set(data, forKey: cachedPrioritiesKey)
+                defaults.set(data, forKey: cachedPrioritiesKey)
             } else {
-                UserDefaults.standard.removeObject(forKey: cachedPrioritiesKey)
+                defaults.removeObject(forKey: cachedPrioritiesKey)
             }
         }
     }
@@ -313,15 +374,15 @@ final class AppSettings {
     private(set) var colorRevision: Int = 0
 
     private var currentCategoryMap: [String: String] {
-        (UserDefaults.standard.dictionary(forKey: categoryColorsKey) as? [String: String]) ?? [:]
+        (defaults.dictionary(forKey: categoryColorsKey) as? [String: String]) ?? [:]
     }
 
     private var currentTodoStateMap: [String: String] {
-        (UserDefaults.standard.dictionary(forKey: todoStateColorsKey) as? [String: String]) ?? [:]
+        (defaults.dictionary(forKey: todoStateColorsKey) as? [String: String]) ?? [:]
     }
 
     private var currentPriorityMap: [String: String] {
-        (UserDefaults.standard.dictionary(forKey: priorityColorsKey) as? [String: String]) ?? [:]
+        (defaults.dictionary(forKey: priorityColorsKey) as? [String: String]) ?? [:]
     }
 
     private var serverSuffix: String {
@@ -334,8 +395,9 @@ final class AppSettings {
     private var cachedKeywordsKey: String { "cachedKeywords_" + serverSuffix }
     private var cachedPrioritiesKey: String { "cachedPriorities_" + serverSuffix }
 
-    init() {
-        let d = UserDefaults.standard
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        let d = defaults
         // Leave the URL empty on a fresh install. AppDelegate spawns the
         // bundled eavd helper, polls `/api/debug` until the daemon is
         // listening, and *then* writes the URL — at which point
@@ -363,6 +425,9 @@ final class AppSettings {
         self.rowHighlightMode = RowHighlightMode(rawValue: d.string(forKey: Self.rowHighlightModeKey) ?? "") ?? .none
         self.rowHighlightStyle = RowHighlightStyle(rawValue: d.string(forKey: Self.rowHighlightStyleKey) ?? "") ?? .edgeBar
         self.rowProgressStyle = RowProgressStyle(rawValue: d.string(forKey: Self.rowProgressStyleKey) ?? "") ?? .line
+        self.notificationsEnabled = d.bool(forKey: Self.notificationsEnabledKey)
+        self.hiddenEventTags = Set(d.stringArray(forKey: Self.hiddenEventTagsKey) ?? [])
+        self.lastCaptureTemplateKey = d.string(forKey: Self.lastCaptureTemplateKey)
     }
 
     var apiClient: APIClient? {

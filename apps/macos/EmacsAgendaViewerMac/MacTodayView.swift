@@ -8,7 +8,6 @@ struct MacTodayView: View {
     let store: TasksStore
 
     @State private var collapsedGroups: Set<String> = []
-    @State private var showDone = false
 
     var body: some View {
         @Bindable var bindable = settings
@@ -21,26 +20,11 @@ struct MacTodayView: View {
                 ToolbarItem(placement: .primaryAction) {
                     GroupMenu(primary: $bindable.agendaGroup, secondary: $bindable.agendaGroupSecondary)
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    Toggle(isOn: Binding(
-                        get: { !settings.hideUpcomingDeadlines },
-                        set: { settings.hideUpcomingDeadlines = !$0 }
-                    )) {
-                        Label("Show deadlines",
-                              systemImage: settings.hideUpcomingDeadlines ? "eye.slash" : "eye")
-                    }
-                    .toggleStyle(.button)
-                    .help(settings.hideUpcomingDeadlines
-                          ? "Showing only tasks scheduled for today. Click to also include deadline-anchored rows (today, past-due, and within the warning window)."
-                          : "Showing scheduled tasks plus deadline-anchored rows. Click to hide everything that's only here because of a deadline.")
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Toggle(isOn: $showDone) {
-                        Label("Show completed", systemImage: showDone ? "checkmark.circle.fill" : "checkmark.circle")
-                    }
-                    .toggleStyle(.button)
-                    .help(showDone ? "Showing completed tasks. Click to hide." : "Completed tasks hidden. Click to show.")
-                }
+                // Today follows the canonical iOS rule (see TodayClassifier):
+                // upcoming-deadlines are ALWAYS dropped and done tasks are
+                // ALWAYS hidden, so the per-view "show deadlines" and "show
+                // completed" toggles are gone. The habits toggle stays
+                // because both platforms expose it.
                 ToolbarItem(placement: .primaryAction) {
                     Toggle(isOn: Binding(
                         get: { !settings.hideHabitsInToday },
@@ -90,41 +74,27 @@ struct MacTodayView: View {
 
     private func agendaList(_ entries: [AgendaEntry]) -> some View {
         let doneStates = Set((store.keywords?.allDone ?? []).map { $0.uppercased() })
-        let todayStr = DateQuery.today()
-        let cal = Calendar.current
-        let todayStart = cal.startOfDay(for: Date())
-        var visible = entries.filter { entry in
-            if let display = entry.displayDate { return display == todayStr }
-            if let sch = entry.scheduled?.parsedDate, cal.isDate(sch, inSameDayAs: todayStart) { return true }
-            if let dl = entry.deadline?.parsedDate, cal.isDate(dl, inSameDayAs: todayStart) { return true }
-            return entry.agendaType == "upcoming-deadline"
+        // Canonical Today rule (same as iOS): upcoming-deadlines are dropped,
+        // done tasks are dropped, overdue scheduled is pulled from /api/tasks.
+        // Mac's timed-schedule + grouped-untimed layout is built on top.
+        let classified = TodayClassifier.buildItems(
+            today: entries,
+            all: store.allTasks.value ?? [],
+            doneStates: doneStates,
+            hideHabits: settings.hideHabitsInToday
+        )
+        let events = classified.events
+        // The classifier returns `main` as `[any TaskDisplayable]` — a mix of
+        // `AgendaEntry` (today-anchored) and `OrgTask` (overdue pulls). The
+        // Mac timed-schedule layout reads minutesOfDay off AgendaEntry; overdue
+        // OrgTask rows are all-day by nature, so we route them to the untimed
+        // bucket so they appear in the grouped task list under the schedule.
+        var todayAgendaEntries: [AgendaEntry] = []
+        var overdueOrgTasks: [OrgTask] = []
+        for item in classified.main {
+            if let a = item as? AgendaEntry { todayAgendaEntries.append(a) }
+            else if let t = item as? OrgTask { overdueOrgTasks.append(t) }
         }
-        if !showDone {
-            visible = visible.filter { entry in
-                guard let state = entry.todoState, !state.isEmpty else { return true }
-                return !doneStates.contains(state.uppercased())
-            }
-        }
-        if settings.hideHabitsInToday {
-            visible = visible.filter { !$0.isHabit }
-        }
-        if settings.hideUpcomingDeadlines {
-            // "Hide deadlines" used to only drop the warning-window
-            // previews (`upcoming-deadline`). That made the toggle
-            // appear broken: an overdue task (e.g. "Cook Food / 1 d.
-            // ago") has `agendaType == "deadline"`, not
-            // `upcoming-deadline`, so clicking the eye-slash left it
-            // visible. The user-facing intent is "hide anything that
-            // appears in Today *because of* a deadline" — past-due,
-            // today, and upcoming — leaving only rows that are
-            // genuinely scheduled (or block/timestamp) for today.
-            visible = visible.filter {
-                $0.agendaType != "deadline" && $0.agendaType != "upcoming-deadline"
-            }
-        }
-        let deduped = dedupeAgendaEntries(visible)
-        let events = deduped.filter(AgendaEntryClassification.isEvent)
-        let nonEvents = deduped.filter { !AgendaEntryClassification.isEvent($0) }
 
         var allDayEvents: [AgendaEntry] = []
         var scheduleItems: [(min: Int, item: ScheduleItem)] = []
@@ -137,7 +107,7 @@ struct MacTodayView: View {
                 allDayEvents.append(e)
             }
         }
-        for t in nonEvents {
+        for t in todayAgendaEntries {
             if let m = MacTodayView.minutesOfDay(t) {
                 scheduleItems.append((m, .task(t)))
             } else {
@@ -147,10 +117,11 @@ struct MacTodayView: View {
         scheduleItems.sort { $0.min < $1.min }
 
         let sortedUntimed = sortTasks(untimedTasks, by: settings.agendaSort)
+        let sortedOverdue = sortTasks(overdueOrgTasks, by: .scheduled)
         let eisCtx = EisenhowerGroupContext(urgencyDays: settings.eisenhowerUrgencyDays, priorities: store.priorities)
         let groups = groupTasks(sortedUntimed, by: settings.agendaGroup, eisenhower: eisCtx)
         let factory = RowActionFactory(store: store, settings: settings, selection: selection, clocks: clocks, sync: sync)
-        let totalTasks = scheduleItems.filter { if case .task = $0.item { return true }; return false }.count + sortedUntimed.count
+        let totalTasks = scheduleItems.filter { if case .task = $0.item { return true }; return false }.count + sortedUntimed.count + sortedOverdue.count
         let totalEvents = scheduleItems.filter { if case .event = $0.item { return true }; return false }.count + allDayEvents.count
         return ScrollViewReader { proxy in
             ScrollView {
@@ -158,6 +129,9 @@ struct MacTodayView: View {
                     dayHead(tasks: totalTasks, events: totalEvents)
                     if !allDayEvents.isEmpty {
                         MacEventBanners(entries: allDayEvents, showHeader: true)
+                    }
+                    if !sortedOverdue.isEmpty {
+                        overdueSection(sortedOverdue, doneStates: doneStates, factory: factory)
                     }
                     if !scheduleItems.isEmpty {
                         scheduleSection(scheduleItems, doneStates: doneStates, factory: factory)
@@ -310,13 +284,72 @@ struct MacTodayView: View {
         }
     }
 
+    /// Overdue OrgTasks pulled from `/api/tasks` — tasks whose scheduled
+    /// date is in the past and are still open. iOS displays them inline at
+    /// the top of the unified list; Mac gives them a dedicated section
+    /// above the schedule because the daily layout is denser.
+    @ViewBuilder
+    private func overdueSection(_ items: [OrgTask],
+                                doneStates: Set<String>,
+                                factory: RowActionFactory) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Theme.priorityA)
+                Text("OVERDUE")
+                    .font(.system(size: 11, weight: .heavy))
+                    .tracking(0.6)
+                    .foregroundStyle(Theme.textSecondary)
+                Text("\(items.count)")
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(Theme.textTertiary)
+                Spacer()
+            }
+            .padding(.leading, 14)
+            .padding(.bottom, 2)
+
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(items, id: \.id) { t in
+                    let rowActions = factory.make(for: t)
+                    if selection.taskId == t.id {
+                        TaskExpandedCard(
+                            store: store,
+                            task: t,
+                            actions: rowActions,
+                            doneStates: doneStates
+                        )
+                        .id(t.id)
+                    } else {
+                        MacTaskRow(
+                            task: t,
+                            isClocked: factory.isClocked(t),
+                            isSelected: false,
+                            doneStates: doneStates,
+                            actions: rowActions,
+                            progress: factory.progress(for: t),
+                            keywords: store.keywords,
+                            onAppear: factory.prefetch(for: t)
+                        )
+                        .id(t.id)
+                    }
+                }
+            }
+        }
+    }
+
     private func load() async {
         guard let client = settings.apiClient else { return }
         await store.ensureInitialized(using: client, settings: settings)
         await store.loadToday(using: client)
+        // Today now matches iOS: overdue scheduled tasks come from
+        // /api/tasks. Load them so the classifier can pull them in even
+        // when the user lands on Today first (other views also load
+        // allTasks lazily — duplicate fetches coalesce in TasksStore).
+        await store.loadAllTasks(using: client, includeDone: false)
     }
 
     private func loadIfNeeded() async {
-        if store.today.value == nil { await load() }
+        if store.today.value == nil || store.allTasks.value == nil { await load() }
     }
 }

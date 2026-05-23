@@ -72,10 +72,8 @@ struct MacInboxView: View {
     ///   - todo_state is active (filtering done states out keeps the list
     ///     focused on triage; completed captures live in All Tasks)
     private func filter(_ tasks: [OrgTask]) -> [OrgTask] {
-        let inboxOnly = tasks.filter { task in
-            task.category.caseInsensitiveCompare("Inbox") == .orderedSame
-                && !store.isDoneState(task.todoState)
-        }
+        let doneStates = TaskFilters.resolvedDoneSet(store.keywords)
+        let inboxOnly = tasks.filter { TaskFilters.isInbox($0, doneStates: doneStates) }
         let filtered: [OrgTask]
         if searchText.isEmpty {
             filtered = inboxOnly

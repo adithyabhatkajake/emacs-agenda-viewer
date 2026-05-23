@@ -1,3 +1,7 @@
+// macOS-only: iOS sandbox forbids spawning subprocesses, and the iOS app
+// always talks to a remote eavd (no bundled helper). Gating the whole file
+// keeps the shared Networking/ directory compilable by both targets.
+#if os(macOS)
 import Foundation
 
 /// Launches the bundled `eavd` helper process and tears it down on app exit.
@@ -113,7 +117,12 @@ final class DaemonHost {
     /// Probe `/api/debug`. Returns nil if nothing is responding, otherwise
     /// the running daemon's `version` and `pid`. 500 ms timeout — fast
     /// enough that "no existing daemon" doesn't delay launch perceptibly.
-    private func probeRunningDaemon() async -> (version: String, pid: Int32)? {
+    ///
+    /// `pid` is `nil` when the field is absent or non-numeric (e.g. a
+    /// string-encoded pid). Callers that need to send signals should guard
+    /// on a non-nil pid; the replace path still proceeds — it will exhaust
+    /// the HTTP/SIGTERM path without the SIGKILL fallback.
+    private func probeRunningDaemon() async -> (version: String, pid: Int32?)? {
         var req = URLRequest(url: endpointURL.appendingPathComponent("api/debug"))
         req.timeoutInterval = 0.5
         guard let (data, response) = try? await URLSession.shared.data(for: req),
@@ -121,17 +130,14 @@ final class DaemonHost {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         let version = (obj["version"] as? String) ?? ""
-        let pid: Int32 = (obj["pid"] as? Int32)
-            ?? Int32(exactly: (obj["pid"] as? Int) ?? -1)
-            ?? -1
-        return (version, pid)
+        return (version, parsePid(from: obj["pid"]))
     }
 
     /// Replace the running daemon: hit `/api/shutdown`, wait up to 1 s for
     /// it to actually stop responding, then SIGTERM and finally SIGKILL.
     /// Used when the running version doesn't match the bundled binary
     /// (the auto-update path).
-    private func replaceRunningDaemon(pid: Int32) async {
+    private func replaceRunningDaemon(pid: Int32?) async {
         var req = URLRequest(url: endpointURL.appendingPathComponent("api/shutdown"))
         req.httpMethod = "POST"
         req.timeoutInterval = 1
@@ -142,7 +148,7 @@ final class DaemonHost {
             if (await probeRunningDaemon()) == nil { return }
         }
         // Still up — escalate.
-        if pid > 0 {
+        if let pid, pid > 0 {
             _ = kill(pid, SIGTERM)
             for _ in 0..<10 {
                 try? await Task.sleep(nanoseconds: 100_000_000)
@@ -261,17 +267,30 @@ final class DaemonHost {
         }
     }
 
+    private(set) var shuttingDown = false
+
     func stop() {
         guard let proc = process, proc.isRunning else {
             process = nil
             return
         }
+        shuttingDown = true
         proc.interrupt()
-        // Give it 2 s to shut down gracefully; SIGKILL if it hangs.
-        DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak proc] in
-            if let p = proc, p.isRunning { p.terminate() }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak self, weak proc] in
+            guard let proc else { return }
+            if proc.isRunning {
+                proc.terminate()
+                // Brief spin after SIGTERM; SIGKILL if it still hasn't exited.
+                Thread.sleep(forTimeInterval: 0.2)
+                if proc.isRunning {
+                    kill(proc.processIdentifier, SIGKILL)
+                }
+            }
+            Task { @MainActor [weak self] in
+                self?.process = nil
+                self?.shuttingDown = false
+            }
         }
-        process = nil
     }
 
     private func locateBinary() throws -> URL {
@@ -311,3 +330,5 @@ enum DaemonHostError: LocalizedError {
         }
     }
 }
+
+#endif

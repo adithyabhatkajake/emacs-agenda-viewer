@@ -14,8 +14,6 @@ struct MacPinnedView: View {
     @State private var searchText = ""
     @State private var collapsedGroups: Set<String> = []
 
-    private var todayString: String { DateQuery.today() }
-
     var body: some View {
         content
             .navigationTitle("Pinned")
@@ -54,8 +52,7 @@ struct MacPinnedView: View {
     }
 
     private func filter(_ tasks: [OrgTask]) -> [OrgTask] {
-        let today = todayString
-        let pinned = tasks.filter { $0.properties?["PINNED"] == today }
+        let pinned = tasks.filter { TaskFilters.isPinnedToday($0) }
         guard !searchText.isEmpty else { return sortTasks(pinned, by: settings.listSort) }
         let needle = searchText.lowercased()
         let matched = pinned.filter {

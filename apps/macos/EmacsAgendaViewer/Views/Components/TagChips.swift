@@ -13,6 +13,14 @@ struct TagChips: View {
                 chip(tag, inherited: true)
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        let all = tags + inheritedTags.filter { !tags.contains($0) }
+        guard !all.isEmpty else { return "" }
+        return "Tags: \(all.joined(separator: ", "))"
     }
 
     private func chip(_ tag: String, inherited: Bool) -> some View {

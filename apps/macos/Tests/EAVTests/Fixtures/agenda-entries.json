@@ -41,7 +41,8 @@
     "file": "/home/user/org/work.org",
     "pos": 600,
     "timeOfDay": "17:00",
-    "displayDate": "2026-04-18"
+    "displayDate": "2026-04-18",
+    "extra": "In 3 d.:"
   },
   {
     "id": "/home/user/org/habits.org::Exercise",

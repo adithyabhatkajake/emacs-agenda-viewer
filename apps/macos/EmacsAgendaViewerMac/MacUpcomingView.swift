@@ -212,27 +212,10 @@ struct MacUpcomingView: View {
     }
 
     private static func groupByDay(_ entries: [AgendaEntry]) -> [DayGroup] {
-        var buckets: [String: [AgendaEntry]] = [:]
-        var order: [String] = []
-        for entry in entries {
-            let dayKey = entry.displayDate
-                ?? entry.scheduled?.date
-                ?? entry.deadline?.date
-                ?? "—"
-            if buckets[dayKey] == nil {
-                buckets[dayKey] = []
-                order.append(dayKey)
-            }
-            buckets[dayKey]?.append(entry)
-        }
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        return order.map { key in
-            let date = formatter.date(from: key)
-            let label = date.map { DateBadge.relativeLabel(for: $0) } ?? key
-            return DayGroup(key: key, label: label, items: buckets[key] ?? [])
+        TaskFilters.groupAgendaEntriesByDay(entries).map { bucket in
+            let date = isoFmt.date(from: bucket.key)
+            let label = date.map { DateBadge.relativeLabel(for: $0) } ?? bucket.key
+            return DayGroup(key: bucket.key, label: label, items: bucket.items)
         }
     }
 

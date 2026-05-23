@@ -40,6 +40,18 @@ struct OrgTimestamp: Codable, Hashable, Sendable {
         return OrgTimestamp.dayFormatter.date(from: date)
     }
 
+    /// Parse the leading YYYY-MM-DD from a free-form org timestamp string
+    /// (e.g. `"<2026-04-19 Sun .+1d>"` or `"2026-05-11 Mon 14:32"`).
+    /// Returns midnight in `Calendar.current` for the extracted date.
+    /// Returns nil when no YYYY-MM-DD prefix can be found.
+    static func parseDateString(_ raw: String) -> Date? {
+        // Find the first YYYY-MM-DD run anywhere in the string.
+        guard let range = raw.range(of: #"\d{4}-\d{2}-\d{2}"#, options: .regularExpression) else {
+            return nil
+        }
+        return dayFormatter.date(from: String(raw[range]))
+    }
+
     private static let dayFormatter: DateFormatter = {
         let f = DateFormatter()
         f.calendar = Calendar(identifier: .gregorian)
@@ -94,15 +106,29 @@ struct AgendaEntry: Codable, Hashable, Identifiable, Sendable {
     let warntime: String?
     let timeOfDay: String?
     let displayDate: String?
+    /// The date of the triggering timestamp (YYYY-MM-DD). Distinct from
+    /// `displayDate`: org-agenda may render a row on one day while the
+    /// underlying timestamp lives on another (e.g. range entries, diary
+    /// sexps). Kept as a separate stored field so encode→decode round
+    /// trips don't conflate the two.
+    let tsDate: String?
+    /// Org-agenda's computed offset descriptor, e.g. "In 3 d.:" or "1 d. ago:".
+    /// Passed through from elisp; nil when org-agenda did not produce one.
+    let extra: String?
     /// Mirrors `:STYLE: habit` on the underlying heading. Lets list
     /// views filter habit-driven rows from Today/Upcoming without
     /// cross-referencing `/api/tasks`.
     let isHabit: Bool
 
+    /// Legacy flatten: prefer `displayDate`, fall back to `tsDate`. Use
+    /// from UI grouping/filter sites that previously read `displayDate`
+    /// before the two were split.
+    var effectiveDate: String? { displayDate ?? tsDate }
+
     private enum CodingKeys: String, CodingKey {
         case id, title, agendaType, todoState, priority, tags, inheritedTags
         case scheduled, deadline, category, level, file, pos
-        case effort, warntime, timeOfDay, displayDate, tsDate, isHabit
+        case effort, warntime, timeOfDay, displayDate, tsDate, extra, isHabit
     }
 
     init(from decoder: Decoder) throws {
@@ -131,9 +157,9 @@ struct AgendaEntry: Codable, Hashable, Identifiable, Sendable {
         effort = try c.decodeIfPresent(String.self, forKey: .effort)
         warntime = try c.decodeIfPresent(String.self, forKey: .warntime)
         timeOfDay = try c.decodeIfPresent(String.self, forKey: .timeOfDay)
-        let primary = try c.decodeIfPresent(String.self, forKey: .displayDate)
-        let fallback = try c.decodeIfPresent(String.self, forKey: .tsDate)
-        displayDate = primary ?? fallback
+        displayDate = try c.decodeIfPresent(String.self, forKey: .displayDate)
+        tsDate = try c.decodeIfPresent(String.self, forKey: .tsDate)
+        extra = try c.decodeIfPresent(String.self, forKey: .extra)
         isHabit = (try? c.decodeIfPresent(Bool.self, forKey: .isHabit)) ?? false
     }
 
@@ -156,6 +182,8 @@ struct AgendaEntry: Codable, Hashable, Identifiable, Sendable {
         try c.encodeIfPresent(warntime, forKey: .warntime)
         try c.encodeIfPresent(timeOfDay, forKey: .timeOfDay)
         try c.encodeIfPresent(displayDate, forKey: .displayDate)
+        try c.encodeIfPresent(tsDate, forKey: .tsDate)
+        try c.encodeIfPresent(extra, forKey: .extra)
         if isHabit { try c.encode(true, forKey: .isHabit) }
     }
 }
@@ -175,8 +203,18 @@ struct TodoKeywords: Codable, Hashable, Sendable {
         let done: [String]
     }
 
-    var allActive: [String] { sequences.flatMap(\.active) }
-    var allDone: [String] { sequences.flatMap(\.done) }
+    /// Flatten all sequences' active keywords, deduped in first-seen order.
+    /// Users with multiple TODO sequences typically repeat the same keyword
+    /// names across them (e.g. each `… | DONE KILL`), which would otherwise
+    /// appear as dupes in pickers and break `id: \.self` ForEach iteration.
+    var allActive: [String] {
+        var seen = Set<String>()
+        return sequences.flatMap(\.active).filter { seen.insert($0).inserted }
+    }
+    var allDone: [String] {
+        var seen = Set<String>()
+        return sequences.flatMap(\.done).filter { seen.insert($0).inserted }
+    }
 }
 
 struct OrgConfig: Codable, Hashable, Sendable {

@@ -32,6 +32,10 @@ struct MacScheduleTray: View {
     @State private var includeDeadlines: Bool = true
     @State private var excludeScheduled: Bool = false
     @State private var query: String = ""
+    /// Raw text from the search field. The debouncer writes it to `query`
+    /// after 250 ms of inactivity so `filtered` doesn't run on every keystroke.
+    @State private var queryInput: String = ""
+    private let searchDebouncer = Debouncer(interval: .milliseconds(250))
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -102,11 +106,18 @@ struct MacScheduleTray: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.textTertiary)
-            TextField("Filter", text: $query)
+            TextField("Filter", text: $queryInput)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
-            if !query.isEmpty {
-                Button { query = "" } label: {
+                .onChange(of: queryInput) { _, newValue in
+                    searchDebouncer.schedule { query = newValue }
+                }
+            if !queryInput.isEmpty {
+                Button {
+                    queryInput = ""
+                    searchDebouncer.cancel()
+                    query = ""
+                } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.textTertiary)

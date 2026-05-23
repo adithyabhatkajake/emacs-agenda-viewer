@@ -813,8 +813,29 @@ Each target is an alist with name, file, and pos."
   (require 'org-refile)
   ;; org-refile-get-targets needs to be called from an org buffer
   (let* ((default-buf (org-get-agenda-file-buffer (car (org-agenda-files))))
-         (targets (with-current-buffer default-buf
-                    (org-refile-get-targets default-buf)))
+         (targets
+          ;; org-refile-get-targets aborts the entire walk if any one
+          ;; agenda buffer is open in a non-org major mode (e.g. the user
+          ;; opened `mobile.org' in fundamental-mode). Pre-coercing every
+          ;; agenda buffer to `org-mode` on each call would be wasteful;
+          ;; instead, try once, and on failure parse the offending buffer
+          ;; name from the error, force `org-mode` on just that buffer,
+          ;; and retry. If the retry still fails, return nil — the iOS
+          ;; client renders an empty list rather than a 500.
+          (condition-case err
+              (with-current-buffer default-buf
+                (org-refile-get-targets default-buf))
+            (error
+             (let ((msg (error-message-string err)))
+               (when (string-match "buffer \"\\([^\"]+\\)\"" msg)
+                 (when-let ((buf (get-buffer (match-string 1 msg))))
+                   (with-current-buffer buf (org-mode))))
+               (condition-case _
+                   (with-current-buffer default-buf
+                     (org-refile-get-targets default-buf))
+                 (error
+                  (message "eav-get-refile-targets: %s" (error-message-string err))
+                  nil))))))
          results)
     (dolist (target targets)
       (let* ((name (nth 0 target))
@@ -858,6 +879,16 @@ Preserves TODO state, priority, and tags."
 (defun eav-set-todo-state (file pos state)
   "Set the TODO state of heading at POS in FILE to STATE.
 
+Special STATE sentinels — used by clients that don't know the
+file's TODO sequence:
+  \"@DONE\" → `(org-todo 'done)' (advance to the file's own done state)
+  \"@TODO\" → `(org-todo 'todo)' (advance to the file's own todo state)
+  \"@NEXT\" → `(org-todo 'right)' (cycle one step forward)
+
+For any other STATE, the literal string is passed to `org-todo'.
+This is how iOS toggles done without guessing keyword names across
+multi-sequence configs or file-local `#+TODO:` overrides.
+
 `org-todo' queues any required logbook entry via `org-add-log-setup',
 which adds `org-add-log-note' to `post-command-hook' to actually
 flush the entry. In an interactive session that hook fires
@@ -871,10 +902,33 @@ configuration (`org-log-done', `org-log-repeat', `org-log-into-drawer',
 to `note', we honor that, just like an interactive completion would."
   (with-current-buffer (find-file-noselect file)
     (goto-char pos)
-    (org-todo state)
-    (run-hooks 'post-command-hook)
-    (save-buffer))
-  (json-encode '((success . t))))
+    (let ((before (substring-no-properties (or (org-get-todo-state) "")))
+          (was-blocked (org-entry-blocked-p)))
+      (cond
+       ((string= state "@DONE") (org-todo 'done))
+       ((string= state "@TODO") (org-todo 'todo))
+       ((string= state "@NEXT") (org-todo 'right))
+       (t                       (org-todo state)))
+      (run-hooks 'post-command-hook)
+      (save-buffer)
+      (let ((after (substring-no-properties (or (org-get-todo-state) ""))))
+        ;; org-mode silently refuses transitions when
+        ;; `org-enforce-todo-dependencies' is set and the task has unfinished
+        ;; children, or `org-enforce-todo-checkbox-dependencies' with
+        ;; unchecked checkboxes. The user sees "tap done → nothing happens".
+        ;; Surface it as an explicit error so the client can show feedback.
+        (if (and (string= before after)
+                 (not (string= state "@NEXT")))
+            (json-encode
+             `((success . :json-false)
+               (error . ,(cond
+                          (was-blocked
+                           (format "Blocked: \"%s\" has unfinished sub-tasks (org-enforce-todo-dependencies)"
+                                   (org-get-heading t t t t)))
+                          (t
+                           (format "org-todo %S did not change state from %S"
+                                   state before))))))
+          (json-encode '((success . t))))))))
 
 (defun eav-set-priority (file pos priority)
   "Set the priority of heading at POS in FILE to PRIORITY character.

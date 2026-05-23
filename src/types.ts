@@ -76,6 +76,13 @@ export interface AgendaEntry {
   extra?: string;
   /** The date of the triggering timestamp (YYYY-MM-DD) */
   tsDate?: string;
+  /**
+   * Mirrors `:STYLE: habit` on the underlying heading. Surfaced on the agenda
+   * entry by eavd so Today/Upcoming filters can hide habit-generated clutter
+   * without round-tripping to `/api/tasks`. Omitted (decoded as undefined)
+   * for non-habit entries.
+   */
+  isHabit?: boolean;
 }
 
 export interface OrgConfig {

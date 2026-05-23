@@ -1,0 +1,109 @@
+#if !os(macOS)
+import SwiftUI
+
+/// Quick-action menu attached to task rows via `.contextMenu`. The unified
+/// "Edit…" entry opens `EditTaskSheet` for full edits (title, state, priority,
+/// tags, scheduled, deadline, notes). Mark Done / Clock / Pin are left as
+/// direct quick-toggles because they don't benefit from a form sheet.
+struct TaskRowMenu: View {
+    let task: any TaskDisplayable
+    let store: TasksStore
+    let doneStates: Set<String>
+    /// Invoked when the user picks "Edit…". Sheet presentation lives on the
+    /// enclosing row (`ExpandableTaskRow`); the menu just signals.
+    var onEdit: (() -> Void)? = nil
+    /// Kept for backward compatibility — no longer wired to a menu item, but
+    /// callers that set it are still valid and will not crash.
+    var onEditNotes: (() -> Void)? = nil
+
+    @Environment(AppSettings.self) private var settings
+    @Environment(ClockManager.self) private var clocks
+    private var client: APIClient? { settings.apiClient }
+
+    private var isDone: Bool {
+        guard let s = task.todoState else { return false }
+        return doneStates.contains(s.uppercased())
+    }
+
+    private var isPinnedToday: Bool {
+        guard let task = currentTask() else { return false }
+        return TaskFilters.isPinnedToday(task)
+    }
+
+    private func currentTask() -> OrgTask? {
+        store.allTasks.value?.first { $0.id == task.id }
+    }
+
+    var body: some View {
+        // Edit — unified sheet for title / state / priority / tags /
+        // scheduled / deadline / notes. Shown first so it's the primary
+        // discoverable action on long-press.
+        if let onEdit {
+            Button(action: onEdit) {
+                Label("Edit\u{2026}", systemImage: "square.and.pencil")
+            }
+        }
+
+        // Mark Done / Reopen — kept as a direct toggle so the user can tick
+        // tasks off without opening the full edit sheet.
+        Button {
+            run { try await client?._toggleDone(task: task, store: store, doneStates: doneStates) }
+        } label: {
+            Label(isDone ? "Reopen" : "Mark Done",
+                  systemImage: isDone ? "arrow.uturn.backward.circle" : "checkmark.circle")
+        }
+
+        Divider()
+
+        // Clock In / Out via ClockManager (local-only multi-clock — multiple
+        // sessions can run in parallel; stop writes a finished CLOCK: line
+        // to the task's LOGBOOK drawer).
+        Button {
+            if isClockedHere {
+                run { _ = await clocks.stop(taskId: task.id, using: client!, store: store) }
+            } else {
+                clocks.start(task: task)
+            }
+        } label: {
+            Label(isClockedHere ? "Clock Out" : "Clock In",
+                  systemImage: isClockedHere ? "stop.circle" : "play.circle")
+        }
+
+        // Pin to My Day
+        Button {
+            run {
+                let value = isPinnedToday ? "" : DateQuery.today()
+                _ = await store.setProperty(
+                    taskId: task.id, file: task.file, pos: task.pos,
+                    key: "PINNED", value: value, using: client!
+                )
+            }
+        } label: {
+            Label(isPinnedToday ? "Unpin from My Day" : "Pin to My Day",
+                  systemImage: isPinnedToday ? "pin.slash" : "pin")
+        }
+    }
+
+    private var isClockedHere: Bool {
+        clocks.isClocked(taskId: task.id)
+    }
+
+    // Fire-and-forget — contextMenu actions must return synchronously, so
+    // every closure spawns a Task. Failures surface via store.lastMutationError
+    // (silent at the row level by design; the user can retry via the sheet
+    // if the action fails).
+    private func run(_ op: @escaping () async throws -> Void) {
+        guard client != nil else { return }
+        Task { try? await op() }
+    }
+
+}
+
+// Thin shim so the contextMenu closure can reuse the store.toggleDone helper
+// without re-implementing the keyword lookup inline.
+private extension APIClient {
+    func _toggleDone(task: any TaskDisplayable, store: TasksStore, doneStates: Set<String>) async throws {
+        _ = await store.toggleDone(task, file: task.file, pos: task.pos, using: self)
+    }
+}
+#endif

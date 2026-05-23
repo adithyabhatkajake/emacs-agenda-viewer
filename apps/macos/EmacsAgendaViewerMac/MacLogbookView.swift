@@ -90,15 +90,7 @@ struct MacLogbookView: View {
     /// store hasn't loaded keywords yet we fall back to a safe pair so
     /// the view isn't empty on first paint.
     private func filter(_ tasks: [OrgTask]) -> [OrgTask] {
-        let done: Set<String> = {
-            let configured = store.keywords?.allDone ?? []
-            if configured.isEmpty { return ["DONE", "KILL"] }
-            return Set(configured.map { $0.uppercased() })
-        }()
-        let doneOnly = tasks.filter { task in
-            guard let s = task.todoState?.uppercased() else { return false }
-            return done.contains(s)
-        }
+        let doneOnly = TaskFilters.doneTasks(from: tasks, keywords: store.keywords)
         guard !searchText.isEmpty else { return doneOnly }
         let needle = searchText.lowercased()
         return doneOnly.filter { task in

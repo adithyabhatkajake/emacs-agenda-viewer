@@ -6,7 +6,7 @@ import Observation
 @Observable
 final class EventKitService {
     let store = EKEventStore()
-    var hasAccess: Bool = false
+    var calendarAccess: CalendarAccess = .denied
     var calendars: [EKCalendar] = []
     var allCalendars: [EKCalendar] = []
     var lastError: String?
@@ -17,23 +17,41 @@ final class EventKitService {
     var hiddenCalendarIds: Set<String> = []
     private var visibleInterval: DateInterval?
 
+    var canRead: Bool { calendarAccess.canRead }
+    var canWrite: Bool { calendarAccess.canWrite }
+
+    /// Tracked so the caller can cancel before re-spawning (prevents pile-up
+    /// when the view's `.task {}` re-fires on identity changes).
+    private var listenTask: Task<Void, Never>?
+
     init() {
         let status = EKEventStore.authorizationStatus(for: .event)
-        if status == .fullAccess || status == .authorized {
-            hasAccess = true
+        calendarAccess = CalendarAccess.access(from: status)
+        if calendarAccess.canRead {
             reloadCalendars()
         }
     }
 
-    /// Start listening for external calendar changes. Call from `.task {}`.
+    /// Start listening for external calendar changes. Cancels any prior
+    /// listener before starting so re-entries don't accumulate. Call from
+    /// `.task {}` — SwiftUI cancels the task when the view disappears.
     func listenForChanges() async {
-        let notifications = NotificationCenter.default.notifications(
-            named: .EKEventStoreChanged, object: store
-        )
-        for await _ in notifications {
-            reloadCalendars()
-            refetchEvents()
+        listenTask?.cancel()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            let notifications = NotificationCenter.default.notifications(
+                named: .EKEventStoreChanged, object: store
+            )
+            for await _ in notifications {
+                guard !Task.isCancelled else { break }
+                await MainActor.run {
+                    self.reloadCalendars()
+                    self.refetchEvents()
+                }
+            }
         }
+        listenTask = task
+        await task.value
     }
 
     /// Query EventKit for events in the given interval and store them.
@@ -42,17 +60,24 @@ final class EventKitService {
         refetchEvents()
     }
 
-    /// Re-query EventKit using the last requested interval.
+    /// Re-query EventKit using the last requested interval. The EKEventStore
+    /// predicate + scan runs on a detached task to avoid blocking @MainActor;
+    /// results are marshalled back before writing `visibleEvents`.
     func refetchEvents() {
-        guard hasAccess, let interval = visibleInterval else { return }
-        let predicate = store.predicateForEvents(
-            withStart: interval.start, end: interval.end, calendars: nil
-        )
-        let all = store.events(matching: predicate)
-        if hiddenCalendarIds.isEmpty {
-            visibleEvents = all
-        } else {
-            visibleEvents = all.filter { !hiddenCalendarIds.contains($0.calendar.calendarIdentifier) }
+        guard canRead, let interval = visibleInterval else { return }
+        let ekStore = store
+        let hidden = hiddenCalendarIds
+        Task.detached {
+            let predicate = ekStore.predicateForEvents(
+                withStart: interval.start, end: interval.end, calendars: nil
+            )
+            let all = ekStore.events(matching: predicate)
+            let filtered = hidden.isEmpty
+                ? all
+                : all.filter { !hidden.contains($0.calendar.calendarIdentifier) }
+            await MainActor.run { [weak self] in
+                self?.visibleEvents = filtered
+            }
         }
     }
 
@@ -72,13 +97,18 @@ final class EventKitService {
             } else {
                 granted = try await store.requestAccess(to: .event)
             }
-            hasAccess = granted
-            if granted {
+            // Re-read the authorization status after the prompt so we correctly
+            // capture whatever the user actually chose (full, write-only, denied).
+            let status = EKEventStore.authorizationStatus(for: .event)
+            calendarAccess = CalendarAccess.access(from: status)
+            if canRead {
                 reloadCalendars()
                 refetchEvents()
+            } else if canWrite && !granted {
+                // Write-only: no calendars to list, but writes are permitted.
             }
         } catch {
-            hasAccess = false
+            calendarAccess = .denied
             lastError = error.localizedDescription
         }
     }
@@ -87,13 +117,12 @@ final class EventKitService {
     /// externally (e.g. via System Settings).
     func refreshAccessIfNeeded() {
         let status = EKEventStore.authorizationStatus(for: .event)
-        let granted = status == .fullAccess || status == .authorized
-        if granted && !hasAccess {
-            hasAccess = true
+        let current = CalendarAccess.access(from: status)
+        let wasRead = canRead
+        calendarAccess = current
+        if canRead && (!wasRead || calendars.isEmpty) {
             reloadCalendars()
             refetchEvents()
-        } else if granted && calendars.isEmpty {
-            reloadCalendars()
         }
     }
 
@@ -156,9 +185,19 @@ final class EventKitService {
             .first
     }
 
-    /// Look up an event by its external identifier, falling back to the local
-    /// EKEvent.eventIdentifier for events that haven't synced an external id yet.
+    /// Look up an event by the id produced by `CalendarGridItem.stableId(of:)`.
+    ///
+    /// Resolution order:
+    ///   1. If it is a "local:" deterministic id, scan `visibleEvents` by reconstructing
+    ///      the same id for each candidate (linear, bounded by the visible date window).
+    ///   2. Try `store.calendarItems(withExternalIdentifier:)` (synced events).
+    ///   3. Try `store.event(withIdentifier:)` (local eventIdentifier).
     func findEvent(stableId: String) -> EKEvent? {
+        if CalendarStableId.isLocalId(stableId) {
+            return visibleEvents.first {
+                CalendarGridItem.stableId(of: $0) == stableId
+            }
+        }
         if let ev = findEvent(externalId: stableId) { return ev }
         return store.event(withIdentifier: stableId)
     }

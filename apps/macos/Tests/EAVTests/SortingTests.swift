@@ -287,4 +287,173 @@ struct SortingTests {
         #expect(result.count == 1)
         #expect(result[0].deadline?.hasTime == true)
     }
+
+    // MARK: - OrgTimestamp.parseDateString (canonical free-string parser)
+
+    @Test("parseDateString parses plain YYYY-MM-DD")
+    func parseDateStringPlain() {
+        let d = OrgTimestamp.parseDateString("2026-04-19")
+        #expect(d != nil)
+        let comps = Calendar.current.dateComponents([.year, .month, .day], from: d!)
+        #expect(comps.year == 2026)
+        #expect(comps.month == 4)
+        #expect(comps.day == 19)
+    }
+
+    @Test("parseDateString parses angle-bracket timestamp with day-name and repeater")
+    func parseDateStringWithRepeater() {
+        let d = OrgTimestamp.parseDateString("<2026-04-19 Sun .+1d -0d>")
+        #expect(d != nil)
+        let comps = Calendar.current.dateComponents([.year, .month, .day], from: d!)
+        #expect(comps.year == 2026)
+        #expect(comps.month == 4)
+        #expect(comps.day == 19)
+    }
+
+    @Test("parseDateString parses habit completion string with time")
+    func parseDateStringWithTime() {
+        // HabitMath.parseOrgDate used to take the first 10 chars; parseDateString
+        // finds the YYYY-MM-DD run anywhere, so "2026-05-11 Mon 14:32" still gives
+        // the correct date and ignores the clock.
+        let d = OrgTimestamp.parseDateString("2026-05-11 Mon 14:32")
+        #expect(d != nil)
+        let comps = Calendar.current.dateComponents([.year, .month, .day], from: d!)
+        #expect(comps.year == 2026)
+        #expect(comps.month == 5)
+        #expect(comps.day == 11)
+    }
+
+    @Test("parseDateString returns nil for empty string")
+    func parseDateStringEmpty() {
+        #expect(OrgTimestamp.parseDateString("") == nil)
+    }
+
+    @Test("parseDateString returns nil for non-date garbage")
+    func parseDateStringGarbage() {
+        #expect(OrgTimestamp.parseDateString("some text without a date") == nil)
+    }
+
+    // MARK: - sortTasks large-input Schwartzian correctness
+
+    @Test("sortTasks large priority input matches reference naive sort")
+    func sortByPriorityLargeInputMatchesReference() {
+        // Generate 200 tasks with randomised priorities to exercise the
+        // Schwartzian transform path. The reference is a naive closure-based
+        // sort that recomputes keys inside the comparator — identical output
+        // proves the transform didn't change the ordering.
+        let priorities: [String?] = ["A", "B", "C", "D", nil]
+        var tasks: [OrgTask] = []
+        for i in 0..<200 {
+            let p = priorities[i % priorities.count]
+            tasks.append(makeTask(id: "t\(i)", priority: p))
+        }
+
+        let schwartzian = sortTasks(tasks, by: .priority)
+
+        // Reference: inline sort with the same logic, no pre-materialization.
+        let reference = tasks.sorted { a, b in
+            let pa = { (p: String?) -> Int in
+                switch p?.uppercased() {
+                case "A": return 0; case "B": return 1
+                case "C": return 2; case "D": return 3; default: return 4
+                }
+            }
+            let cmp = pa(a.priority) - pa(b.priority)
+            return cmp < 0
+        }
+
+        #expect(schwartzian.map(\.id) == reference.map(\.id))
+    }
+
+    @Test("sortTasks large scheduled input matches reference naive sort")
+    func sortByScheduledLargeInputMatchesReference() {
+        // 150 tasks: 50 with timestamps (spread over 30 days), 50 nil.
+        var tasks: [OrgTask] = []
+        for i in 0..<50 {
+            let day = (i % 30) + 1
+            let dayStr = String(format: "%02d", day)
+            let ts = makeTimestamp(
+                raw: "<2026-04-\(dayStr) Sat>",
+                date: "2026-04-\(dayStr)",
+                year: 2026, month: 4, day: day
+            )
+            tasks.append(makeTask(id: "sched\(i)", scheduled: ts))
+        }
+        for i in 0..<50 {
+            tasks.append(makeTask(id: "none\(i)"))
+        }
+
+        let schwartzian = sortTasks(tasks, by: .scheduled)
+
+        let reference = tasks.sorted { a, b in
+            let ad = OrgTimestamp.parseDateString(a.scheduled?.raw ?? "")
+                .map { $0.timeIntervalSince1970 * 1000 } ?? Double.infinity
+            let bd = OrgTimestamp.parseDateString(b.scheduled?.raw ?? "")
+                .map { $0.timeIntervalSince1970 * 1000 } ?? Double.infinity
+            return ad < bd
+        }
+
+        #expect(schwartzian.map(\.id) == reference.map(\.id))
+    }
+
+    @Test("sortTasks large category input matches reference naive sort")
+    func sortByCategoryLargeInputMatchesReference() {
+        let cats = ["Work", "Personal", "Archive", "Inbox", "Research"]
+        var tasks: [OrgTask] = []
+        for i in 0..<150 {
+            tasks.append(makeTask(id: "c\(i)", category: cats[i % cats.count]))
+        }
+
+        let schwartzian = sortTasks(tasks, by: .category)
+        let reference = tasks.sorted {
+            $0.category.localizedCompare($1.category) == .orderedAscending
+        }
+
+        #expect(schwartzian.map(\.id) == reference.map(\.id))
+    }
+
+    // MARK: - groupTasksByClosedDate
+
+    @Test("groupTasksByClosedDate: nil closed goes to Unknown Date")
+    func groupByClosedNilGoesToUnknown() {
+        let task = makeTask(id: "t")
+        let groups = groupTasksByClosedDate([task])
+        let unknown = groups.first(where: { $0.label == "Unknown Date" })
+        #expect(unknown?.items.count == 1)
+    }
+
+    @Test("groupTasksByClosedDate: today's closed timestamp lands in Today bucket")
+    func groupByClosedTodayBucket() {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let fmtr = DateFormatter()
+        fmtr.locale = Locale(identifier: "en_US_POSIX")
+        fmtr.dateFormat = "yyyy-MM-dd"
+        let dateStr = fmtr.string(from: today)
+        let task = makeTaskWithClosed(id: "today", closed: dateStr)
+        let groups = groupTasksByClosedDate([task])
+        let todayGroup = groups.first(where: { $0.label == "Today" })
+        #expect(todayGroup?.items.map(\.id) == ["today"])
+    }
+
+    @Test("groupTasksByClosedDate: DST boundary — spring-forward date still parses correctly")
+    func groupByClosedDSTBoundary() {
+        // 2026-03-08 is US DST spring-forward. Parsing that date should yield
+        // a valid Date in the Today-or-earlier buckets — the test just verifies
+        // it doesn't land in Unknown Date (which would mean parsing failed).
+        let task = makeTaskWithClosed(id: "dst", closed: "2026-03-08")
+        let groups = groupTasksByClosedDate([task])
+        let unknown = groups.first(where: { $0.label == "Unknown Date" })
+        #expect(unknown == nil, "DST spring-forward date should parse successfully")
+    }
+
+    @Test("groupTasksByClosedDate: angle-bracket closed string with day-name parses correctly")
+    func groupByClosedWithDayName() {
+        // Some org configs log CLOSED as "<2026-04-19 Sun>" — the angle brackets
+        // and day-of-week must not confuse the parser.
+        let task = makeTaskWithClosed(id: "bracket", closed: "<2026-04-19 Sun>")
+        let groups = groupTasksByClosedDate([task])
+        let unknown = groups.first(where: { $0.label == "Unknown Date" })
+        #expect(unknown == nil, "Angle-bracket closed timestamp should parse successfully")
+    }
 }

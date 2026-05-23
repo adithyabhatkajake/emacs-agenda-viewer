@@ -399,8 +399,25 @@ async fn patch_state(
     PathParam(_id): PathParam<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let _: serde_json::Value = state.bridge.call("write.set-state", body).await?;
-    Ok(Json(serde_json::json!({ "success": true })))
+    let resp: serde_json::Value = state.bridge.call("write.set-state", body).await?;
+    // The elisp side reports `{"success": false, "error": "..."}` when
+    // `org-todo` silently refused the transition (e.g. blocked by
+    // unfinished sub-tasks with `org-enforce-todo-dependencies` enabled).
+    // Promote that to an HTTP error so the client surfaces a meaningful
+    // message instead of cheerfully reporting success.
+    let success = resp
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    if !success {
+        let err = resp
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("state change refused by org-mode")
+            .to_string();
+        return Err(bad_request(&err));
+    }
+    Ok(Json(resp))
 }
 
 async fn patch_priority(

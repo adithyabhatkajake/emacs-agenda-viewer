@@ -180,22 +180,11 @@ enum HabitMath {
         )
     }
 
-    /// `2026-05-11 Mon 14:32` → 2026-05-11. We don't care about the
-    /// time-of-day for periodization — anything completed inside the
-    /// period counts as that period being done.
+    /// `2026-05-11 Mon 14:32` → 2026-05-11 (midnight, Calendar.current).
+    /// We don't care about the time-of-day for periodization — anything
+    /// completed inside the period counts as that period being done.
     static func parseOrgDate(_ raw: String) -> Date? {
-        // Strip the day-of-week + clock portion: keep only the leading
-        // YYYY-MM-DD. Doing this with substring + scanning avoids the
-        // DateFormatter locale-sensitivity that's burned us before.
-        let prefix = raw.prefix(10)
-        let parts = prefix.split(separator: "-")
-        guard parts.count == 3,
-              let y = Int(parts[0]),
-              let m = Int(parts[1]),
-              let d = Int(parts[2]) else { return nil }
-        var dc = DateComponents()
-        dc.year = y; dc.month = m; dc.day = d
-        return Calendar.current.date(from: dc)
+        OrgTimestamp.parseDateString(raw)
     }
 
     /// First instant of the period containing `date`. For daily cadence
@@ -242,5 +231,71 @@ extension OrgTask {
     var isHabit: Bool {
         guard let v = properties?["STYLE"] else { return false }
         return v.caseInsensitiveCompare("habit") == .orderedSame
+    }
+}
+
+// MARK: - Cadence buckets
+
+/// Cadence-bucketed view of the habits list. The dashboard groups daily
+/// habits under "Today" (their checkpoint is every day), weekly under
+/// "This Week", monthly under "This Month", yearly under "This Year".
+/// Empty buckets are dropped; within a bucket, not-yet-done items come
+/// first so the user can scan the top of each section for what's still
+/// pending today/this week/etc.
+///
+/// Lives in the shared layer so both the Mac dashboard and the iOS
+/// `HabitsView` consume the same grouping logic.
+struct HabitBucket: Equatable {
+    let title: String
+    let habits: [OrgTask]
+}
+
+enum HabitsGrouping {
+    static func buckets(habits: [OrgTask]) -> [HabitBucket] {
+        var daily: [OrgTask] = []
+        var weekly: [OrgTask] = []
+        var monthly: [OrgTask] = []
+        var yearly: [OrgTask] = []
+        var other: [OrgTask] = []
+        for habit in habits {
+            let cadence = HabitCadence.from(habit.scheduled?.repeater
+                                            ?? habit.deadline?.repeater)
+            switch cadence.component {
+            case .day:        daily.append(habit)
+            case .weekOfYear: weekly.append(habit)
+            case .month:      monthly.append(habit)
+            case .year:       yearly.append(habit)
+            default:          other.append(habit)
+            }
+        }
+        let prioritize: ([OrgTask]) -> [OrgTask] = { tasks in
+            tasks.sorted { a, b in
+                let aDone = isDoneThisPeriod(a)
+                let bDone = isDoneThisPeriod(b)
+                if aDone != bDone { return !aDone }
+                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+            }
+        }
+        var out: [HabitBucket] = []
+        if !daily.isEmpty   { out.append(HabitBucket(title: "Today",      habits: prioritize(daily))) }
+        if !weekly.isEmpty  { out.append(HabitBucket(title: "This Week",  habits: prioritize(weekly))) }
+        if !monthly.isEmpty { out.append(HabitBucket(title: "This Month", habits: prioritize(monthly))) }
+        if !yearly.isEmpty  { out.append(HabitBucket(title: "This Year",  habits: prioritize(yearly))) }
+        if !other.isEmpty   { out.append(HabitBucket(title: "Other",      habits: prioritize(other))) }
+        return out
+    }
+
+    /// Whether a habit is settled for its current period. Used by sorters
+    /// and section-header counts.
+    static func isDoneThisPeriod(_ habit: OrgTask) -> Bool {
+        HabitMath.stats(
+            completions: habit.completions,
+            repeater: habit.scheduled?.repeater ?? habit.deadline?.repeater,
+            lastRepeat: habit.properties?["LAST_REPEAT"]
+        ).cells.last == .done
+    }
+
+    static func doneCount(_ habits: [OrgTask]) -> Int {
+        habits.filter { isDoneThisPeriod($0) }.count
     }
 }

@@ -8,6 +8,7 @@ struct MacCalendarView: View {
     let store: TasksStore
 
     @State private var createDraft: CreateEventDraft?
+    @State private var calendarEntries: [AgendaEntry] = []
 
     private var anchor: Date { cal.anchor }
     private var range: CalendarRange { cal.range }
@@ -34,8 +35,8 @@ struct MacCalendarView: View {
         }
         .task(id: settings.serverURLString) { await load() }
         .task { await ek.listenForChanges() }
-        .onChange(of: ek.hasAccess) { _, granted in
-            if granted { Task { await load() } }
+        .onChange(of: ek.calendarAccess) { _, access in
+            if access.canRead { Task { await load() } }
         }
         .onChange(of: cal.anchor) { _, _ in Task { await load() } }
         .onChange(of: cal.range)  { _, _ in Task { await load() } }
@@ -117,8 +118,17 @@ struct MacCalendarView: View {
             .labelsHidden()
 
             Button {
+                // Base on the visible anchor day, not the current clock time,
+                // so creating an event from a past or future view lands on the
+                // right day. Preserve the +1h convention within that day.
+                let visibleDay = days.first ?? anchor
                 let now = Date()
-                let snappedStart = snap(now)
+                let todayDC = Calendar.current.dateComponents([.hour, .minute], from: now)
+                var dc = Calendar.current.dateComponents([.year, .month, .day], from: visibleDay)
+                dc.hour = todayDC.hour
+                dc.minute = todayDC.minute
+                let base = Calendar.current.date(from: dc) ?? visibleDay
+                let snappedStart = snap(base)
                 createDraft = CreateEventDraft(
                     start: snappedStart,
                     end: snappedStart.addingTimeInterval(60 * 60),
@@ -131,8 +141,8 @@ struct MacCalendarView: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut("n", modifiers: .command)
-            .disabled(!ek.hasAccess)
-            .help(ek.hasAccess ? "Create event (⌘N)" : "Grant Calendar access in Settings")
+            .disabled(!ek.canWrite)
+            .help(ek.canWrite ? "Create event (⌘N)" : "Grant Calendar access in System Settings")
 
             Button { Task { await load() } } label: {
                 Image(systemName: "arrow.clockwise")
@@ -155,11 +165,7 @@ struct MacCalendarView: View {
         case .day:
             return [cal.startOfDay(for: anchor)]
         case .week:
-            let weekday = cal.component(.weekday, from: anchor)
-            // Make Monday-first week
-            let offsetToMonday = ((weekday - cal.firstWeekday) + 7) % 7
-            let monday = cal.date(byAdding: .day, value: -offsetToMonday, to: cal.startOfDay(for: anchor))!
-            return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: monday) }
+            return CalendarWeekMath.weekDays(for: anchor, calendar: cal)
         }
     }
 
@@ -171,7 +177,7 @@ struct MacCalendarView: View {
     /// Org-only entries for a day (deduped).
     private func orgEntries(for day: Date) -> [AgendaEntry] {
         let key = DateQuery.string(from: day)
-        let pool = (store.today.value ?? []) + (store.upcoming.value ?? [])
+        let pool = (store.today.value ?? []) + calendarEntries
         let deduped = dedupeAgendaEntries(pool)
 
         return deduped.filter { entry in
@@ -202,7 +208,9 @@ struct MacCalendarView: View {
         var dc = Calendar.current.dateComponents([.year, .month, .day], from: day)
         if let h = hour { dc.hour = h; dc.minute = minute ?? 0 }
         guard let date = Calendar.current.date(from: dc) else { return }
-        let ts = OrgTimestampFormat.string(date: date, includeTime: hour != nil, durationMinutes: durationMinutes)
+        // Duration is only meaningful when a time is set; discard it for all-day drops.
+        let effectiveDuration = hour != nil ? durationMinutes : nil
+        let ts = OrgTimestampFormat.string(date: date, includeTime: hour != nil, durationMinutes: effectiveDuration)
         await store.setScheduled(taskId: taskId, file: file, pos: pos, timestamp: ts, using: client)
     }
 
@@ -212,7 +220,6 @@ struct MacCalendarView: View {
         let snapped = max(startHour * 60, min(endHour * 60 - 30, (totalMin / 30) * 30))
         return (snapped / 60, snapped % 60)
     }
-
 
     // MARK: - Layout
 
@@ -326,7 +333,7 @@ struct MacCalendarView: View {
             let newEnd = newStart.addingTimeInterval(duration)
             ek.updateEvent(stableId: payload.id, title: event.title ?? "", start: newStart, end: newEnd)
         case .org:
-            let pool = (store.today.value ?? []) + (store.upcoming.value ?? [])
+            let pool = (store.today.value ?? []) + calendarEntries
             let entry = pool.first(where: { $0.id == payload.id })
             let dur: Int? = {
                 guard let ts = entry?.scheduled ?? entry?.deadline,
@@ -394,7 +401,7 @@ struct MacCalendarView: View {
     private var hoursGutter: some View {
         // Each hour is its own VStack row of `hourHeight` so ScrollViewReader
         // can target it by id. The label sits at the top-right of the row with
-        // a small negative offset so it straddles the hour rule drawn in DayGrid.
+        // a small negative offset so it straddles the hour rule drawn in CalendarDayGrid.
         VStack(spacing: 0) {
             ForEach(startHour..<endHour, id: \.self) { h in
                 HStack(spacing: 0) {
@@ -415,9 +422,14 @@ struct MacCalendarView: View {
     @ViewBuilder
     private func dayColumnBody(_ day: Date) -> some View {
         let isToday = Calendar.current.isDateInToday(day)
-        let placed = placeItems(timedItems(items(for: day)), on: day)
+        let placed = CalendarOverlap.placeItems(
+            timedItems(items(for: day)),
+            on: day,
+            hourHeight: hourHeight,
+            startHour: startHour
+        )
         VStack(spacing: 0) {
-            DayGrid(
+            CalendarDayGrid(
                 day: day,
                 isToday: isToday,
                 placed: placed,
@@ -468,55 +480,6 @@ struct MacCalendarView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Overlap layout
-
-    struct PlacedItem { let item: CalendarGridItem; let layout: EventLayout; let lane: Int; let groupSize: Int }
-
-    private func placeItems(_ items: [CalendarGridItem], on day: Date) -> [PlacedItem] {
-        let pairs: [(CalendarGridItem, EventLayout)] = items
-            .compactMap { i in computeLayout(i, on: day).map { (i, $0) } }
-            .sorted { $0.1.y < $1.1.y }
-
-        var groups: [[(CalendarGridItem, EventLayout)]] = []
-        var current: [(CalendarGridItem, EventLayout)] = []
-        var groupBottom: CGFloat = -.greatestFiniteMagnitude
-        for pair in pairs {
-            if pair.1.y < groupBottom {
-                current.append(pair)
-                groupBottom = max(groupBottom, pair.1.y + pair.1.height)
-            } else {
-                if !current.isEmpty { groups.append(current) }
-                current = [pair]
-                groupBottom = pair.1.y + pair.1.height
-            }
-        }
-        if !current.isEmpty { groups.append(current) }
-
-        var result: [PlacedItem] = []
-        for group in groups {
-            var laneEnds: [CGFloat] = []
-            var assignments: [(Int, CalendarGridItem, EventLayout)] = []
-            for (i, l) in group {
-                var lane = -1
-                for (idx, end) in laneEnds.enumerated() where end <= l.y {
-                    lane = idx; break
-                }
-                if lane == -1 {
-                    lane = laneEnds.count
-                    laneEnds.append(l.y + l.height)
-                } else {
-                    laneEnds[lane] = l.y + l.height
-                }
-                assignments.append((lane, i, l))
-            }
-            let total = laneEnds.count
-            for (lane, i, l) in assignments {
-                result.append(PlacedItem(item: i, layout: l, lane: lane, groupSize: total))
-            }
-        }
-        return result
-    }
-
     private func dayHeaderText(_ d: Date) -> String {
         let f = DateFormatter(); f.dateFormat = range == .day ? "EEEE, MMM d" : "EEE d"
         return f.string(from: d)
@@ -560,49 +523,6 @@ struct MacCalendarView: View {
         }
     }
 
-    /// Public alias so private helper structs in this file can reference EventLayout.
-    typealias EventLayoutRef = EventLayout
-
-    struct EventLayout { let y: CGFloat; let height: CGFloat; let durationMinutes: Int }
-
-    private func computeLayout(_ item: CalendarGridItem, on day: Date) -> EventLayout? {
-        guard let s = item.startDate else { return nil }
-        let cal = Calendar.current
-        let dayStart = cal.startOfDay(for: day)
-        let startSec = s.timeIntervalSince(dayStart)
-        let startMin = Int(startSec / 60) - startHour * 60
-        let y = CGFloat(startMin) / 60.0 * hourHeight
-
-        if item.isDeadlineOnly {
-            return EventLayout(y: max(0, y), height: 18, durationMinutes: 0)
-        }
-
-        var duration = 60
-        if let e = item.endDate, e > s {
-            let mins = Int(e.timeIntervalSince(s) / 60)
-            if mins > 0 { duration = mins }
-        }
-        let height = max(20, CGFloat(duration) / 60.0 * hourHeight)
-        return EventLayout(y: max(0, y), height: height, durationMinutes: duration)
-    }
-
-    @ViewBuilder
-    private var nowLine: some View {
-        let cal = Calendar.current
-        let now = Date()
-        let hour = cal.component(.hour, from: now)
-        let minute = cal.component(.minute, from: now)
-        let mins = (hour * 60 + minute) - startHour * 60
-        if mins >= 0 && mins <= (endHour - startHour) * 60 {
-            let y = CGFloat(mins) / 60.0 * hourHeight
-            ZStack(alignment: .leading) {
-                Rectangle().fill(Theme.priorityA).frame(height: 1.5)
-                Circle().fill(Theme.priorityA).frame(width: 6, height: 6).offset(x: -3)
-            }
-            .offset(y: y)
-        }
-    }
-
     // MARK: - Actions
 
     private func snap(_ date: Date) -> Date {
@@ -633,337 +553,9 @@ struct MacCalendarView: View {
         let start = DateQuery.string(from: dayStart)
         let end = DateQuery.string(from: cal.startOfDay(for: last))
         do {
-            let entries = try await client.fetchAgendaRange(start: start, end: end)
-            store.upcoming = .loaded(entries)
+            calendarEntries = try await client.fetchAgendaRange(start: start, end: end)
         } catch {
             // ignore — list views surface errors
         }
-    }
-}
-
-private struct DayGrid: View {
-    @Environment(AppSettings.self) private var settings
-    let day: Date
-    let isToday: Bool
-    let placed: [MacCalendarView.PlacedItem]
-    let hourHeight: CGFloat
-    let startHour: Int
-    let endHour: Int
-    let onTapItem: (CalendarGridItem) -> Void
-    let onResize: (CalendarGridItem, Int) -> Void
-    let onDrop: (String, CGFloat) -> Void
-    let onCreateAt: (CGFloat) -> Void
-    let onCreateRange: (CGFloat, CGFloat) -> Void
-    let snapTime: (CGFloat) -> (Int, Int)
-
-    @State private var hoverY: CGFloat?
-    @State private var createDragStart: CGFloat?
-    @State private var createDragEnd: CGFloat?
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .topLeading) {
-                CalendarDropZone(hoverY: $hoverY) { id, point in
-                    onDrop(id, point.y)
-                    return true
-                }
-
-                VStack(spacing: 0) {
-                    ForEach(startHour..<endHour, id: \.self) { _ in
-                        ZStack(alignment: .top) {
-                            Rectangle()
-                                .fill(Theme.background)
-                                .frame(height: hourHeight)
-                            Rectangle()
-                                .frame(height: 0.5)
-                                .foregroundStyle(Theme.borderSubtle)
-                            Rectangle()
-                                .frame(height: 0.5)
-                                .foregroundStyle(Theme.borderSubtle.opacity(0.4))
-                                .offset(y: hourHeight / 2)
-                        }
-                    }
-                }
-                .background(isToday ? Theme.accent.opacity(0.04) : Color.clear)
-                .allowsHitTesting(false)
-
-                Color.clear
-                    .contentShape(Rectangle())
-                    .gesture(SpatialTapGesture(count: 2).onEnded { value in
-                        onCreateAt(value.location.y)
-                    })
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 8)
-                            .onChanged { value in
-                                createDragStart = value.startLocation.y
-                                createDragEnd = value.location.y
-                            }
-                            .onEnded { value in
-                                let startY = value.startLocation.y
-                                let endY = value.location.y
-                                createDragStart = nil
-                                createDragEnd = nil
-                                onCreateRange(startY, endY)
-                            }
-                    )
-
-                ForEach(placed, id: \.item.id) { p in
-                    let laneWidth = max(20, geo.size.width / CGFloat(p.groupSize))
-                    let color = p.item.resolvedColor(using: settings)
-                    if p.item.isDeadlineOnly {
-                        DeadlineMarker(item: p.item, color: color)
-                            .frame(width: geo.size.width - 4, height: 18)
-                            .offset(x: 2, y: p.layout.y)
-                            .onTapGesture { onTapItem(p.item) }
-                            .draggable(p.item.dragPayload) {
-                                DeadlineMarker(item: p.item, color: color).frame(width: 200, height: 18)
-                            }
-                    } else {
-                        ResizableEvent(
-                            item: p.item,
-                            color: color,
-                            layout: p.layout,
-                            hourHeight: hourHeight,
-                            onTap: { onTapItem(p.item) },
-                            onResize: { dur in onResize(p.item, dur) }
-                        )
-                        .frame(width: laneWidth - 2, alignment: .top)
-                        .offset(x: 1 + laneWidth * CGFloat(p.lane), y: p.layout.y)
-                        .draggable(p.item.dragPayload) {
-                            EventChip(item: p.item, color: color, compact: false).frame(width: 200, height: 40)
-                        }
-                    }
-                }
-
-                if isToday {
-                    nowLine(gridWidth: geo.size.width).allowsHitTesting(false)
-                }
-
-                if let y = hoverY {
-                    snapPreview(at: y, gridWidth: geo.size.width)
-                        .allowsHitTesting(false)
-                }
-
-                if let start = createDragStart, let end = createDragEnd {
-                    createRangePreview(from: start, to: end, gridWidth: geo.size.width)
-                        .allowsHitTesting(false)
-                }
-            }
-            .frame(width: geo.size.width)
-        }
-        .frame(height: CGFloat(endHour - startHour) * hourHeight)
-    }
-
-    @ViewBuilder
-    private func nowLine(gridWidth: CGFloat) -> some View {
-        let cal = Calendar.current
-        let now = Date()
-        let hour = cal.component(.hour, from: now)
-        let minute = cal.component(.minute, from: now)
-        let mins = (hour * 60 + minute) - startHour * 60
-        if mins >= 0 && mins <= (endHour - startHour) * 60 {
-            let y = CGFloat(mins) / 60.0 * hourHeight
-            ZStack(alignment: .leading) {
-                Rectangle().fill(Theme.priorityA).frame(width: gridWidth, height: 1.5)
-                Circle().fill(Theme.priorityA).frame(width: 7, height: 7).offset(x: -3)
-            }
-            .offset(y: y - 0.75)
-        }
-    }
-
-    @ViewBuilder
-    private func snapPreview(at y: CGFloat, gridWidth: CGFloat) -> some View {
-        let (h, m) = snapTime(y)
-        let snappedY = CGFloat((h - startHour) * 60 + m) / 60.0 * hourHeight
-        ZStack(alignment: .topLeading) {
-            Rectangle()
-                .fill(Theme.accent)
-                .frame(width: gridWidth, height: 2)
-            Text(String(format: "%02d:%02d", h, m))
-                .font(.system(size: 10, weight: .bold).monospacedDigit())
-                .padding(.horizontal, 5).padding(.vertical, 1)
-                .background(
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Theme.accent)
-                )
-                .foregroundStyle(.white)
-                .offset(x: 4, y: -10)
-        }
-        .offset(y: snappedY - 1)
-    }
-
-    @ViewBuilder
-    private func createRangePreview(from startY: CGFloat, to endY: CGFloat, gridWidth: CGFloat) -> some View {
-        let (sh, sm) = snapTime(min(startY, endY))
-        let (eh, em) = snapTime(max(startY, endY))
-        let topPx = CGFloat((sh - startHour) * 60 + sm) / 60.0 * hourHeight
-        let botPx = CGFloat((eh - startHour) * 60 + em) / 60.0 * hourHeight
-        let height = max(hourHeight / 2, botPx - topPx)
-
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Theme.accent.opacity(0.12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .strokeBorder(Theme.accent.opacity(0.5), lineWidth: 1.5)
-                )
-                .frame(width: gridWidth - 4, height: height)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(String(format: "%02d:%02d", sh, sm))
-                    .font(.system(size: 10, weight: .bold).monospacedDigit())
-                    .foregroundStyle(Theme.accent)
-                Spacer(minLength: 0)
-                Text(String(format: "%02d:%02d", eh, em))
-                    .font(.system(size: 10, weight: .bold).monospacedDigit())
-                    .foregroundStyle(Theme.accent)
-            }
-            .padding(6)
-            .frame(height: height)
-        }
-        .offset(x: 2, y: topPx)
-    }
-}
-
-private struct ResizableEvent: View {
-    let item: CalendarGridItem
-    let color: Color
-    let layout: MacCalendarView.EventLayoutRef
-    let hourHeight: CGFloat
-    let onTap: () -> Void
-    let onResize: (Int) -> Void
-
-    @State private var liveHeightDelta: CGFloat = 0
-    @State private var hovered = false
-
-    var body: some View {
-        let h = max(20, layout.height + liveHeightDelta)
-        ZStack(alignment: .bottom) {
-            EventChip(item: item, color: color, compact: false)
-                .frame(height: h)
-                .onTapGesture(perform: onTap)
-            ResizeHandle(active: hovered || liveHeightDelta != 0)
-                .gesture(resizeGesture)
-                .onHover { hovered = $0 }
-        }
-        .frame(height: h)
-    }
-
-    private var resizeGesture: some Gesture {
-        DragGesture(minimumDistance: 1)
-            .onChanged { value in liveHeightDelta = value.translation.height }
-            .onEnded { value in
-                let newHeight = max(20, layout.height + value.translation.height)
-                let mins = max(15, Int((newHeight / hourHeight) * 60))
-                let snapped = (mins / 15) * 15
-                liveHeightDelta = 0
-                onResize(snapped)
-            }
-    }
-}
-
-private struct ResizeHandle: View {
-    let active: Bool
-    var body: some View {
-        Rectangle()
-            .fill(Color.white.opacity(active ? 0.5 : 0.001)) // near-transparent but hit-testable
-            .frame(height: 8)
-            .overlay(
-                Capsule()
-                    .fill(Color.white.opacity(active ? 0.7 : 0.3))
-                    .frame(width: 28, height: 3)
-            )
-            .contentShape(Rectangle())
-            .help("Drag to resize")
-    }
-}
-
-private struct DeadlineMarker: View {
-    let item: CalendarGridItem
-    let color: Color
-
-    var body: some View {
-        HStack(spacing: 0) {
-            Circle()
-                .fill(color)
-                .frame(width: 7, height: 7)
-            Rectangle()
-                .fill(color)
-                .frame(height: 1.5)
-                .frame(maxWidth: 6)
-            Text(item.title)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(color)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .padding(.horizontal, 4)
-            Rectangle()
-                .fill(color.opacity(0.4))
-                .frame(height: 1)
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .help("Deadline: \(item.title)")
-    }
-}
-
-private struct AllDayChip: View {
-    let item: CalendarGridItem
-    let color: Color
-
-    var body: some View {
-        HStack(spacing: 3) {
-            Rectangle().fill(color).frame(width: 2, height: 10)
-            Text(item.title)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 3).padding(.vertical, 1)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                .fill(color.opacity(0.14))
-        )
-        .help(item.title)
-    }
-}
-
-private struct EventChip: View {
-    let item: CalendarGridItem
-    let color: Color
-    let compact: Bool
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 4) {
-            Rectangle().fill(color).frame(width: 2)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(item.title)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(compact ? 1 : 2)
-                if let t = timeText {
-                    Text(t)
-                        .font(.system(size: 9))
-                        .foregroundStyle(Theme.textSecondary)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 4).padding(.vertical, 2)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(color.opacity(0.18))
-        )
-    }
-
-    private var timeText: String? {
-        guard let start = item.startDate else { return nil }
-        let cal = Calendar.current
-        let h = cal.component(.hour, from: start)
-        let m = cal.component(.minute, from: start)
-        return String(format: "%d:%02d", h, m)
     }
 }

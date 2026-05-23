@@ -1,5 +1,46 @@
 #+title: Changelog
 
+** 0.6.0 (2026-05-23)
+
+*** Added
+
+- iOS: unified Edit sheet — long-press a task and choose "Edit…" to
+  open a single consolidated editor covering title, state, priority,
+  tags, scheduled, deadline, and notes. Replaces the prior scattered
+  per-field flows.
+- Mac: Today view now includes an explicit =OVERDUE= section, pulled
+  from =/api/tasks= and merged with the day agenda (deduped, preferring
+  the entry with a deadline).
+
+*** Changed
+
+- Today view rules are now consistent across iOS, Mac, and web. The
+  canonical implementation is iOS's: upcoming-deadline entries are
+  dropped strictly, done entries are dropped strictly, overdue tasks
+  are pulled from =/api/tasks=, and duplicates are deduped preferring
+  the deadline copy. Shared via a new =TodayClassifier= (Swift) and
+  =src/utils/today.ts= (TS).
+- Mac: removed the "Show completed" and "Show deadlines" Today
+  toggles — Today rules are now uniform and don't branch on user
+  preference.
+- iOS: Inbox now filters by =:CATEGORY: Inbox= (=category == "inbox"=),
+  matching the Mac behavior. Previously used a heuristic that didn't
+  line up with Mac's view.
+
+*** Fixed
+
+- Phase G — senior review punch list: 47 items closed (ship-blocker
+  bugs G1–G8, high-priority G9–G20, refactors G21–G33, polish
+  G34–G47).
+
+*** Internal
+
+- Wire format: =AgendaEntry= gains an =extra= field; =tsDate= and
+  =displayDate= are preserved separately so consumers can distinguish
+  the underlying timestamp from its display rendering.
+- Test counts: 379 Swift tests + 67 vitest tests (up from 149 + prior
+  vitest baseline).
+
 ** 0.5.6 (2026-05-18)
 
 *** Fixed

@@ -271,8 +271,7 @@ struct RootView: View {
         switch item {
         case .pinned:
             guard let tasks = store.allTasks.value else { return nil }
-            let today = DateQuery.today()
-            let count = tasks.filter { $0.properties?["PINNED"] == today }.count
+            let count = tasks.filter { TaskFilters.isPinnedToday($0) }.count
             return count > 0 ? count : nil
         case .today:
             // Match what the view actually renders: dedupe (scheduled +

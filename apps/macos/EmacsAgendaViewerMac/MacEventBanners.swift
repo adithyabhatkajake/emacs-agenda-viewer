@@ -1,12 +1,9 @@
 import SwiftUI
 
-enum AgendaEntryClassification {
-    static let eventTypes: Set<String> = ["timestamp", "block", "sexp"]
-
-    static func isEvent(_ entry: AgendaEntry) -> Bool {
-        eventTypes.contains(entry.agendaType) && (entry.todoState?.isEmpty ?? true)
-    }
-}
+// `AgendaEntryClassification` moved to the shared
+// `EmacsAgendaViewer/Models/AgendaEntryClassification.swift` so iOS list
+// views can partition events vs tasks. Mac code keeps consuming the same
+// symbol.
 
 struct MacEventBanners: View {
     let entries: [AgendaEntry]

@@ -17,6 +17,7 @@ struct TodoStatePill: View {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(background)
             )
+            .accessibilityLabel("State: \(state)")
     }
 
     private var color: Color {

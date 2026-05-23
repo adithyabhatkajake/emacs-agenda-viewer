@@ -37,6 +37,9 @@ final class TasksStore {
 
     /// Last server-side error from a mutation, if any. Surfaced by views.
     var lastMutationError: String?
+    /// Debug: the most recent TODO state passed to org-todo via toggleDone.
+    /// Helps surface what we sent when the round-trip silently returns ok.
+    var lastToggledState: String?
 
     /// Notes cache keyed by "file::pos".
     var notesCache: [String: String] = [:] {
@@ -86,12 +89,43 @@ final class TasksStore {
     /// out from under the user.
     private(set) var allTasksIncludeDone: Bool = false
 
+    /// Bumped after every successful `loadAllTasks` (and after mutation
+    /// refreshes, since `refreshLoaded` calls it). External observers — e.g.
+    /// `NotificationService` — `.task(id: store.allTasksRevision)` to
+    /// re-sync whenever the task set changes.
+    ///
+    /// ## "Refresh on change" convention
+    ///
+    /// The codebase has three patterns for reacting to upstream changes. They
+    /// are intentionally different and should not be collapsed into one:
+    ///
+    /// 1. `.task(id: store.allTasksRevision)` — SwiftUI view modifier used
+    ///    when the reactor is an async function that should cancel-and-restart
+    ///    cleanly on every change (e.g. iOS NotificationService sync). The
+    ///    `id:` form is the idiomatic SwiftUI tool for this; do not replace it
+    ///    with `.onChange` + unstructured Task when cancellation matters.
+    ///
+    /// 2. `.onChange(of: value) { _, new in Task { ... } }` — SwiftUI view
+    ///    modifier used for fire-and-forget async reactions to non-store state
+    ///    (e.g. ClockManager.sessions → LiveActivity sync). The value being
+    ///    observed belongs to a different observable, not TasksStore, so
+    ///    allTasksRevision cannot serve as the trigger.
+    ///
+    /// 3. `Task { @MainActor in ... }` inside EventSubscriber callbacks — the
+    ///    only viable pattern for bridging a synchronous SSE callback to async
+    ///    store methods. EventSubscriber is not a SwiftUI view; `.task` and
+    ///    `.onChange` are unavailable. Do not add an `onInvalidate` closure
+    ///    registry to TasksStore to "unify" this — it would entangle State/
+    ///    with Networking/ and add lifecycle complexity for no gain.
+    private(set) var allTasksRevision: Int = 0
+
     func loadAllTasks(using client: APIClient, includeDone: Bool = false) async {
         allTasksIncludeDone = includeDone
         if allTasks.value == nil { allTasks = .loading }
         do {
             let tasks = try await client.fetchTasks(includeAll: includeDone)
             allTasks = .loaded(tasks)
+            allTasksRevision &+= 1
         } catch {
             allTasks = .failed(error.message)
         }
@@ -148,10 +182,18 @@ final class TasksStore {
         refreshInFlight = true
         var include = includeDone
         repeat {
+            // Snapshot and clear the pending flags before awaiting so any
+            // concurrent caller that sets them during runRefresh triggers
+            // another iteration — and so the accumulated includeDone upgrade
+            // is captured before pendingIncludeDone is zeroed.
+            let nextInclude = pendingIncludeDone
             refreshPending = false
             pendingIncludeDone = false
             await runRefresh(using: client, includeDone: include)
-            include = pendingIncludeDone
+            // Carry forward any includeDone=true upgrade that arrived while
+            // runRefresh was awaiting. Never downgrade: once include is true
+            // it stays true for the remaining iterations.
+            include = include || nextInclude
         } while refreshPending
         refreshInFlight = false
     }
@@ -182,13 +224,15 @@ final class TasksStore {
     @discardableResult
     func toggleDone(_ task: any TaskDisplayable, file: String, pos: Int, using client: APIClient) async -> Bool {
         let isDone = isDoneState(task.todoState)
-        let nextState: String
-        if isDone {
-            // Toggle from done back to first active state, fallback "TODO"
-            nextState = keywords?.allActive.first ?? "TODO"
-        } else {
-            nextState = keywords?.allDone.first ?? "DONE"
-        }
+        // Use the bridge's `@DONE`/`@TODO` sentinels so org-todo advances
+        // to *this task's own* done/todo state. Hand-picking a keyword
+        // ("DONE") from the global allDone list fails silently when the
+        // task lives in a sequence that uses a different done keyword
+        // (e.g. a file-local `#+TODO: TODO | DELIVERED` header, or one of
+        // several `org-todo-keywords` sequences that doesn't include
+        // "DONE"). See `eav-set-todo-state` for the sentinel handling.
+        let nextState = isDone ? "@TODO" : "@DONE"
+        lastToggledState = nextState
         return await setState(taskId: task.id, file: file, pos: pos, state: nextState, using: client)
     }
 
@@ -276,6 +320,10 @@ final class TasksStore {
             return true
         } catch {
             lastMutationError = error.message
+            // Flip the loaded flag even on failure so the view can leave
+            // its "loading…" state and surface an error UI. Otherwise a
+            // bridge 5xx leaves the RefileSheet spinning forever.
+            refileTargetsLoaded = true
             return false
         }
     }
@@ -318,24 +366,40 @@ final class TasksStore {
         notesCache["\(file)::\(pos)"]
     }
 
-    /// Background refresh for a task's notes. Always re-fetches so that views
-    /// reflect the live state even when the cache is stale (e.g., after an
-    /// out-of-band edit in Emacs). De-dupes overlapping requests via an
-    /// in-flight set so scrolling doesn't spam the server.
-    private var notesInFlight: Set<String> = []
+    /// Maximum number of concurrent prefetch tasks. Caps server load when a
+    /// large list renders many rows at once (e.g. scrolling a 500-row view).
+    private static let prefetchConcurrencyLimit = 8
+
+    /// In-flight prefetch tasks keyed by "file::pos". Cancelling via this map
+    /// before inserting a new task prevents stale completions from overwriting
+    /// newer cached values, and bounds memory when tasks are recycled quickly.
+    private var notesInFlight: [String: Task<Void, Never>] = [:]
+
+    /// Background refresh for a task's notes. Skips if the notes are already
+    /// cached. Cancels any existing in-flight request for the same key before
+    /// starting a new one. Bounded to `prefetchConcurrencyLimit` concurrent
+    /// fetches so that scrolling a large list doesn't saturate the server.
     func prefetchNotes(file: String, pos: Int, using client: APIClient) {
         let key = "\(file)::\(pos)"
-        if notesInFlight.contains(key) { return }
-        notesInFlight.insert(key)
-        Task { [weak self] in
+        // Skip when the cache is already warm — callers that want a forced
+        // refresh should use loadNotes(file:pos:using:) directly.
+        if notesCache[key] != nil { return }
+        // Cancel any stale in-flight request so only the latest wins.
+        notesInFlight[key]?.cancel()
+        // Enforce total concurrency bound. Count active (non-cancelled) tasks.
+        if notesInFlight.values.filter({ !$0.isCancelled }).count >= Self.prefetchConcurrencyLimit {
+            return
+        }
+        notesInFlight[key] = Task { [weak self] in
             do {
                 let notes = try await client.fetchNotes(file: file, pos: pos)
                 await MainActor.run {
-                    self?.notesCache[key] = notes
-                    self?.notesInFlight.remove(key)
+                    guard let self else { return }
+                    self.notesCache[key] = notes
+                    self.notesInFlight.removeValue(forKey: key)
                 }
             } catch {
-                await MainActor.run { self?.notesInFlight.remove(key) }
+                _ = await MainActor.run { self?.notesInFlight.removeValue(forKey: key) }
             }
         }
     }

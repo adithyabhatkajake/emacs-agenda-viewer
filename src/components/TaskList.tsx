@@ -6,6 +6,7 @@ import { renderInline } from './NotesRenderer';
 import { type ClockStatus, clockOutApi, loadSettings, updateScheduled, todayYMD } from '../api/tasks';
 import { HabitsView, TodayHabitsGroup } from './HabitsView';
 import { isHabit } from '../utils/habits';
+import { buildTodayItems } from '../utils/today';
 import { EisenhowerView } from './EisenhowerView';
 import { CalendarView } from './CalendarView';
 
@@ -414,24 +415,43 @@ export function TaskList({
   };
 
   // ========== TODAY VIEW ==========
+  // Today's filter is the canonical iOS rule (see
+  // `apps/macos/EmacsAgendaViewer/State/TodayClassifier.swift` and
+  // `src/utils/today.ts`). It hides `upcoming-deadline` and done tasks
+  // unconditionally — the per-view "show deadlines" / "show completed"
+  // toggles do NOT apply here. Other views still honor `showDone` below.
   const { calendarEvents, todaySection } = useMemo(() => {
     if (filter.type !== 'today') return { calendarEvents: [], todaySection: [] };
 
-    const settings = loadSettings();
-    const hideDeadlines = !!settings.hideDeadlinesInToday;
+    // Build the done-state set the classifier expects. `keywords` is null on
+    // first paint — fall back to the org default (DONE/KILL) so the classifier
+    // still drops obvious done states.
+    const doneStates = new Set<string>();
+    if (keywords) {
+      for (const seq of keywords.sequences) {
+        for (const d of seq.done) doneStates.add(d);
+      }
+    } else {
+      doneStates.add('DONE');
+      doneStates.add('KILL');
+    }
 
-    const events = todayEntries.filter(isEventEntry);
-    let todayItems = todayEntries.filter(e =>
-      !isEventEntry(e) && e.agendaType !== 'upcoming-deadline'
+    // Habit hiding: the web settings key `showHabitsInToday` is the inverse
+    // of the iOS/Mac `hideHabits` boolean. Default-off means habits hide.
+    const hideHabits = !loadSettings().showHabitsInToday;
+
+    const { events, main } = buildTodayItems(
+      todayEntries,
+      tasks,
+      doneStates,
+      hideHabits,
     );
-    if (hideDeadlines) todayItems = todayItems.filter(e => e.agendaType !== 'deadline');
-    if (!showDone) todayItems = todayItems.filter(t => !isDoneState(t.todoState));
 
     return {
       calendarEvents: events,
-      todaySection: sortItems(todayItems, sortKey) as AgendaEntry[],
+      todaySection: sortItems(main as DisplayItem[], sortKey),
     };
-  }, [todayEntries, filter.type, sortKey, showDone, isDoneState]);
+  }, [todayEntries, tasks, keywords, filter.type, sortKey]);
 
   // ========== OTHER VIEWS ==========
   const items: DisplayItem[] = useMemo(() => {

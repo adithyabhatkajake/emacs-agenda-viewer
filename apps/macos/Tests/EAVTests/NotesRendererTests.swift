@@ -582,6 +582,57 @@ struct InlineLinkTests {
         let t = text(result)
         #expect(t == "(see https://example.com)")
     }
+
+    // G19: trailing punctuation trim
+
+    // Helper: first link URL in an AttributedString.
+    private func firstLinkURL(_ attr: AttributedString) -> URL? {
+        attr.runs.compactMap { $0[AttributeScopes.FoundationAttributes.LinkAttribute.self] }.first
+    }
+
+    @Test("Bare URL: trailing period stripped (G19)")
+    func bareURLTrailingPeriod() {
+        let result = renderInline("see https://example.com.")
+        #expect(text(result) == "see https://example.com.")
+        #expect(firstLinkURL(result) == URL(string: "https://example.com"),
+                "Trailing period must not be part of the link")
+    }
+
+    @Test("Bare URL inside parens: closing paren stripped (G19)")
+    func bareURLInsideParens() {
+        let result = renderInline("(see https://example.com)")
+        #expect(text(result) == "(see https://example.com)")
+        #expect(firstLinkURL(result) == URL(string: "https://example.com"),
+                "Trailing close-paren must not be part of the link")
+    }
+
+    @Test("Bare URL: query string preserved, only trailing period stripped (G19)")
+    func bareURLQueryStringPreserved() {
+        let result = renderInline("https://example.com/path?x=1&y=2.")
+        #expect(firstLinkURL(result) == URL(string: "https://example.com/path?x=1&y=2"),
+                "Query string must be preserved; only trailing punctuation stripped")
+    }
+
+    @Test("Bare URL: trailing semicolon stripped (G19)")
+    func bareURLTrailingSemicolon() {
+        let result = renderInline("https://example.com;")
+        #expect(firstLinkURL(result) == URL(string: "https://example.com"),
+                "Trailing semicolon must not be part of the link")
+    }
+
+    @Test("Bare URL: no trailing punctuation — link unchanged (G19)")
+    func bareURLNoTrailingPunct() {
+        let result = renderInline("https://example.com")
+        #expect(firstLinkURL(result) == URL(string: "https://example.com"),
+                "URL with no trailing punctuation must be linked as-is")
+    }
+
+    @Test("Bare URL: trailing slash preserved (G19)")
+    func bareURLTrailingSlashPreserved() {
+        let result = renderInline("https://example.com/path/")
+        #expect(firstLinkURL(result) == URL(string: "https://example.com/path/"),
+                "Trailing slash is not punctuation and must be kept in the link")
+    }
 }
 
 // ============================================================================
@@ -749,6 +800,75 @@ struct NotesMutationTests {
 }
 
 // ============================================================================
+// MARK: - Drawer correctness (G14 regression suite)
+// ============================================================================
+
+@Suite("NotesParser — Drawer Correctness")
+struct NotesParserDrawerCorrectnessTests {
+
+    @Test("Custom drawer :PROPERTIES_FOO: is recognized as drawer-start and suppressed")
+    func customDrawerPropertiesFoo() {
+        let input = """
+        :PROPERTIES_FOO:
+        some secret content
+        :END:
+        Visible text
+        """
+        let blocks = NotesParser.parse(input)
+        let texts = blocks.compactMap { inlineText($0) }
+        #expect(!texts.contains { $0.contains("secret") })
+        #expect(texts.contains { $0.contains("Visible") })
+    }
+
+    @Test("Custom drawer :NOTES: is recognized as drawer-start and suppressed")
+    func customDrawerNotes() {
+        let input = """
+        :NOTES:
+        internal notes here
+        :END:
+        After notes
+        """
+        let blocks = NotesParser.parse(input)
+        let texts = blocks.compactMap { inlineText($0) }
+        #expect(!texts.contains { $0.contains("internal notes") })
+        #expect(texts.contains { $0.contains("After notes") })
+    }
+
+    @Test("Nested drawers: inner :END: closes inner; outer :END: closes outer")
+    func nestedDrawersOuterClosesCorrectly() {
+        // :LOGBOOK: contains :PROPERTIES: as a nested drawer (rare but valid).
+        // The line after the outer :END: must be visible.
+        let input = ":LOGBOOK:\n  :PROPERTIES:\n  :END:\n:END:\nVisible after both"
+        let blocks = NotesParser.parse(input)
+        let texts = blocks.compactMap { inlineText($0) }
+        #expect(texts.contains { $0.contains("Visible after both") },
+                "content after outer :END: must not be suppressed")
+        #expect(!texts.contains { $0.contains("LOGBOOK") || $0.contains("PROPERTIES") })
+    }
+
+    @Test("Malformed drawer (no :END:) suppresses rest of buffer without crashing")
+    func unclosedDrawerDoesNotCrash() {
+        let input = ":LOGBOOK:\nCLOCK: stuff\nShould also be hidden"
+        let blocks = NotesParser.parse(input)
+        let texts = blocks.compactMap { inlineText($0) }
+        #expect(!texts.contains { $0.contains("hidden") })
+        // No crash is the primary assertion; reaching here means it held.
+    }
+
+    @Test(":END: without drawer-start is treated as a regular line, no crash")
+    func orphanEndDoesNotCrash() {
+        let input = "Normal line\n:END:\nAnother normal line"
+        let blocks = NotesParser.parse(input)
+        // Both surrounding lines must be visible; :END: is consumed (not rendered).
+        let texts = blocks.compactMap { inlineText($0) }
+        #expect(texts.contains { $0.contains("Normal line") })
+        #expect(texts.contains { $0.contains("Another normal line") })
+        // :END: itself is swallowed (depth saturates at 0, continue fires).
+        #expect(!texts.contains { $0 == ":END:" })
+    }
+}
+
+// ============================================================================
 // MARK: - Edge cases & regression guards
 // ============================================================================
 
@@ -810,5 +930,95 @@ struct NotesParserEdgeCaseTests {
     func dashSpaceOnly() {
         let blocks = NotesParser.parse("- ")
         #expect(blockTypes(blocks) == ["bullet"])
+    }
+}
+
+// ============================================================================
+// MARK: - G15 regression suite: checklist toggle anchored to bullet prefix
+// ============================================================================
+
+@Suite("NotesMutation — G15 Checkbox Anchor")
+struct NotesMutationAnchorTests {
+
+    // TC1: Bullet with literal `[ ]` in the text body.
+    // The bullet's checkbox `[ ]` must be toggled (to `[-]`); the body's
+    // `[ ]` and `[-]` must be left untouched.
+    @Test("TC1: Toggle bullet checkbox, not a [ ] in text body")
+    func tc1_toggleBulletNotBody() {
+        let input = "- [ ] Replace [ ] with [-]"
+        let result = NotesMutation.toggleChecklist(in: input, lineIndex: 0)
+        // Bullet checkbox cycles [ ] → [-]; body bracket expressions unchanged.
+        #expect(result == "- [-] Replace [ ] with [-]")
+    }
+
+    // TC2: Already-checked bullet with `[ ]` in the text body.
+    // Toggling must uncheck the bullet only; the body's `[ ]` stays.
+    @Test("TC2: Unchecked [X] bullet leaves body [ ] intact")
+    func tc2_uncheckBulletLeavesBody() {
+        let input = "- [X] Replace [ ] now"
+        let result = NotesMutation.toggleChecklist(in: input, lineIndex: 0)
+        #expect(result == "- [ ] Replace [ ] now")
+    }
+
+    // TC3a: Numbered-list bullet with dot (1.) and checkbox.
+    @Test("TC3a: Numbered-list '1.' checkbox toggles")
+    func tc3a_numberedDot() {
+        let result = NotesMutation.toggleChecklist(in: "1. [ ] Ordered task", lineIndex: 0)
+        #expect(result == "1. [-] Ordered task")
+    }
+
+    // TC3b: Numbered-list bullet with paren (1)) and checkbox.
+    @Test("TC3b: Numbered-list '1)' checkbox toggles")
+    func tc3b_numberedParen() {
+        let result = NotesMutation.toggleChecklist(in: "1) [ ] Ordered task", lineIndex: 0)
+        #expect(result == "1) [-] Ordered task")
+    }
+
+    // TC4: Indented bullet — 4 leading spaces.
+    @Test("TC4: Indented bullet checkbox toggles correctly")
+    func tc4_indentedBullet() {
+        let result = NotesMutation.toggleChecklist(in: "    - [ ] foo", lineIndex: 0)
+        #expect(result == "    - [-] foo")
+    }
+
+    // TC5: Line without a checkbox bullet at all must return nil (no-op).
+    @Test("TC5: Plain bullet without checkbox is a no-op")
+    func tc5_noBulletCheckbox() {
+        let result = NotesMutation.toggleChecklist(in: "- plain bullet", lineIndex: 0)
+        #expect(result == nil)
+    }
+
+    // TC5b: Paragraph line with `[ ]` in it must also return nil —
+    // there is no bullet prefix so the anchor must not match.
+    @Test("TC5b: Paragraph with [ ] in body is a no-op")
+    func tc5b_paragraphWithBrackets() {
+        let result = NotesMutation.toggleChecklist(
+            in: "Some text with [ ] inside", lineIndex: 0)
+        #expect(result == nil)
+    }
+
+    // Confirm parser also reads state from the bullet prefix only.
+    // A `- [ ]` bullet whose body contains `[X]` must be .notStarted,
+    // not .done.
+    @Test("Parser: state read from bullet prefix, not body text")
+    func parserStateFromPrefix() {
+        let blocks = NotesParser.parse("- [ ] body with [X] inside")
+        #expect(blockTypes(blocks) == ["checklist"])
+        #expect(checklistState(blocks[0]) == .notStarted)
+    }
+
+    @Test("Parser: state .done only when bullet prefix is [X]")
+    func parserStateDoneFromPrefix() {
+        let blocks = NotesParser.parse("- [X] body with [ ] inside")
+        #expect(blockTypes(blocks) == ["checklist"])
+        #expect(checklistState(blocks[0]) == .done)
+    }
+
+    @Test("Parser: body text is preserved unmodified")
+    func parserBodyPreserved() {
+        let blocks = NotesParser.parse("- [ ] Replace [ ] with [-]")
+        #expect(blockTypes(blocks) == ["checklist"])
+        // The inline body should contain the literal text after the prefix.
+        #expect(inlineText(blocks[0]) == "Replace [ ] with [-]")
     }
 }

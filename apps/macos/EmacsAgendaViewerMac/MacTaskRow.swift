@@ -41,6 +41,10 @@ struct MacTaskRow: View {
     var onAppear: (() -> Void)? = nil
     @State private var isHovering = false
     @FocusState private var titleFieldFocused: Bool
+    /// Cached result of `renderInline(task.title)`. Seeded on appear and
+    /// invalidated by `.onChange(of: task.title)` so settings redraws don't
+    /// re-parse unchanged titles.
+    @State private var cachedRenderedTitle: AttributedString = AttributedString()
 
     private var isDone: Bool {
         guard let state = task.todoState else { return false }
@@ -92,7 +96,13 @@ struct MacTaskRow: View {
         .onTapGesture { actions.openInspector() }
         .contextMenu { contextMenuItems }
         .draggable(task.id) { dragPreview }
-        .onAppear { onAppear?() }
+        .onAppear {
+            cachedRenderedTitle = renderInline(task.title)
+            onAppear?()
+        }
+        .onChange(of: task.title) { _, newTitle in
+            cachedRenderedTitle = renderInline(newTitle)
+        }
     }
 
     @ViewBuilder
@@ -265,7 +275,7 @@ struct MacTaskRow: View {
             // Render org-mode emphasis (=verb=, *bold*, /italic/, _under_,
             // +strike+, ~code~) inline in the title via the same path that
             // notes use. `isDone` still applies its own strikethrough on top.
-            Text(renderInline(task.title))
+            Text(cachedRenderedTitle)
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(isDone ? Theme.textTertiary : Theme.textPrimary)
                 .strikethrough(isDone, color: Theme.textTertiary)
@@ -276,7 +286,7 @@ struct MacTaskRow: View {
     private var dragPreview: some View {
         HStack(spacing: 6) {
             Image(systemName: "circle").foregroundStyle(Theme.textTertiary)
-            Text(renderInline(task.title)).lineLimit(1)
+            Text(cachedRenderedTitle).lineLimit(1)
         }
         .padding(8)
         .background(Theme.surface)

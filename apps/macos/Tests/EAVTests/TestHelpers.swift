@@ -65,6 +65,20 @@ func makeTask(
     return try! JSONDecoder().decode(OrgTask.self, from: data)
 }
 
+func makeTaskWithClosed(
+    id: String = "test::task",
+    closed: String?
+) -> OrgTask {
+    var json: [String: Any] = [
+        "id": id, "title": "Test task", "todoState": "DONE",
+        "tags": [String](), "inheritedTags": [String](),
+        "category": "Test", "level": 1, "file": "/test.org", "pos": 1,
+    ]
+    if let c = closed { json["closed"] = c }
+    let data = try! JSONSerialization.data(withJSONObject: json)
+    return try! JSONDecoder().decode(OrgTask.self, from: data)
+}
+
 func makeAgendaEntry(
     id: String = "test::entry",
     title: String = "Test entry",

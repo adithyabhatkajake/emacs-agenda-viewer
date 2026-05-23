@@ -105,14 +105,22 @@ struct SettingsView: View {
             }
 
             Section("Calendar Sync (EventKit)") {
-                if !eventKit.hasAccess {
+                switch eventKit.calendarAccess {
+                case .denied:
                     Text("Connect to macOS Calendar to push events into Apple, Google, or iCloud calendars.")
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
                     Button("Grant Calendar Access") {
                         Task { await eventKit.requestAccess() }
                     }
-                } else {
+                case .writeOnly:
+                    Text("Calendar access is write-only; you can add events but not see existing ones. Grant full access in System Settings > Privacy & Security > Calendars.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                    Button("Grant Full Calendar Access") {
+                        Task { await eventKit.requestAccess() }
+                    }
+                case .fullAccess:
                     Picker("Default calendar", selection: Binding(
                         get: { settings.eventKitCalendarIdentifier ?? "" },
                         set: { settings.eventKitCalendarIdentifier = $0.isEmpty ? nil : $0 }
@@ -134,7 +142,7 @@ struct SettingsView: View {
                 }
             }
 
-            if eventKit.hasAccess {
+            if eventKit.canRead {
                 Section {
                     ForEach(eventKit.allCalendars.sorted(by: { $0.title < $1.title }),
                             id: \.calendarIdentifier) { cal in
@@ -189,12 +197,14 @@ struct SettingsView: View {
                         ForEach(todoStates.active, id: \.self) { state in
                             todoStateRow(state, isDone: false)
                         }
+                        .id(settings.colorRevision)
                     }
                     if !todoStates.done.isEmpty {
                         Text("Done").font(.caption).foregroundStyle(Theme.textSecondary)
                         ForEach(todoStates.done, id: \.self) { state in
                             todoStateRow(state, isDone: true)
                         }
+                        .id(settings.colorRevision)
                     }
                     HStack {
                         Spacer()
@@ -230,6 +240,7 @@ struct SettingsView: View {
                     ForEach(priorityList, id: \.self) { priority in
                         priorityRow(priority)
                     }
+                    .id(settings.colorRevision)
                     HStack {
                         Spacer()
                         Button("Refresh") { Task { await loadStatesAndPriorities() } }
@@ -264,6 +275,7 @@ struct SettingsView: View {
                     ForEach(categories, id: \.self) { cat in
                         categoryRow(cat)
                     }
+                    .id(settings.colorRevision)
                     HStack {
                         Spacer()
                         Button("Refresh") { Task { await loadCategories() } }
@@ -325,119 +337,58 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func categoryRow(_ category: String) -> some View {
-        // Read the revision so the row re-renders when the user changes a color elsewhere.
-        let _ = settings.colorRevision
         let currentHex = settings.categoryColorHex(for: category)
         let currentColor = (currentHex.flatMap { Color(hex: $0) })
             ?? CalendarGridItem.color(forCategory: category)
-
-        HStack {
-            ColorPicker("", selection: Binding(
-                get: { currentColor },
-                set: { newValue in
-                    if let hex = newValue.hexString() {
-                        settings.setCategoryColorHex(hex, for: category)
-                    }
-                }
-            ), supportsOpacity: false)
-                .labelsHidden()
-                .frame(width: 36)
-
+        ColorEditRow(
+            currentHex: currentHex,
+            currentColor: currentColor,
+            defaultIndicator: "auto",
+            pickerLabel: category,
+            onSet: { settings.setCategoryColorHex($0, for: category) },
+            onReset: { settings.setCategoryColorHex(nil, for: category) }
+        ) {
             Text(category)
                 .font(.system(size: 12))
-
-            Spacer()
-
-            if currentHex != nil {
-                Text("custom")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.textTertiary)
-                Button("Reset") { settings.setCategoryColorHex(nil, for: category) }
-                    .controlSize(.small)
-            } else {
-                Text("auto")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.textTertiary)
-            }
         }
     }
 
     @ViewBuilder
     private func todoStateRow(_ state: String, isDone: Bool) -> some View {
-        let _ = settings.colorRevision
         let currentHex = settings.todoStateColorHex(for: state)
         let currentColor = currentHex.flatMap { Color(hex: $0) }
             ?? AppSettings.defaultTodoStateColor(state, isDone: isDone)
-
-        HStack {
-            ColorPicker("", selection: Binding(
-                get: { currentColor },
-                set: { newValue in
-                    if let hex = newValue.hexString() {
-                        settings.setTodoStateColorHex(hex, for: state)
-                    }
-                }
-            ), supportsOpacity: false)
-                .labelsHidden()
-                .frame(width: 36)
-
+        ColorEditRow(
+            currentHex: currentHex,
+            currentColor: currentColor,
+            defaultIndicator: "default",
+            pickerLabel: state,
+            onSet: { settings.setTodoStateColorHex($0, for: state) },
+            onReset: { settings.setTodoStateColorHex(nil, for: state) }
+        ) {
             Text(state)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(currentColor)
-
-            Spacer()
-
-            if currentHex != nil {
-                Text("custom")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.textTertiary)
-                Button("Reset") { settings.setTodoStateColorHex(nil, for: state) }
-                    .controlSize(.small)
-            } else {
-                Text("default")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.textTertiary)
-            }
         }
     }
 
     @ViewBuilder
     private func priorityRow(_ priority: String) -> some View {
-        let _ = settings.colorRevision
         let currentHex = settings.priorityColorHex(for: priority)
         let currentColor = currentHex.flatMap { Color(hex: $0) }
             ?? AppSettings.defaultPriorityColor(priority)
-
-        HStack {
-            ColorPicker("", selection: Binding(
-                get: { currentColor },
-                set: { newValue in
-                    if let hex = newValue.hexString() {
-                        settings.setPriorityColorHex(hex, for: priority)
-                    }
-                }
-            ), supportsOpacity: false)
-                .labelsHidden()
-                .frame(width: 36)
-
+        ColorEditRow(
+            currentHex: currentHex,
+            currentColor: currentColor,
+            defaultIndicator: "default",
+            pickerLabel: "Priority \(priority)",
+            onSet: { settings.setPriorityColorHex($0, for: priority) },
+            onReset: { settings.setPriorityColorHex(nil, for: priority) }
+        ) {
             HStack(spacing: 4) {
                 Circle().fill(currentColor).frame(width: 8, height: 8)
                 Text(priority)
                     .font(.system(size: 12, weight: .semibold))
-            }
-
-            Spacer()
-
-            if currentHex != nil {
-                Text("custom")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.textTertiary)
-                Button("Reset") { settings.setPriorityColorHex(nil, for: priority) }
-                    .controlSize(.small)
-            } else {
-                Text("default")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.textTertiary)
             }
         }
     }

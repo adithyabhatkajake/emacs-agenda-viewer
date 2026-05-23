@@ -19,10 +19,20 @@ struct DateBadge: View {
         HStack(spacing: 3) {
             Image(systemName: kind.icon)
                 .font(.system(size: 9, weight: .semibold))
+                .accessibilityHidden(true)
             Text(formatted)
                 .font(.caption2)
         }
         .foregroundStyle(color)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        switch kind {
+        case .scheduled: return "Scheduled: \(formatted)"
+        case .deadline:  return "Deadline: \(formatted)"
+        }
     }
 
     private var formatted: String {

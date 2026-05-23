@@ -11,7 +11,12 @@ final class CalendarSync {
     let ek: EventKitService
 
     var lastReconciledAt: Date?
-    private var observer: NSObjectProtocol?
+    // nonisolated(unsafe): accessed only from init (MainActor) and deinit;
+    // NSObjectProtocol observer tokens are safe to release from any context.
+    nonisolated(unsafe) private var observer: NSObjectProtocol?
+    // Coalesces rapid EKEventStoreChanged bursts (Google Calendar syncs fire
+    // several notifications per second) into a single reconcile call.
+    private let reconcileDebouncer = Debouncer(interval: .milliseconds(500))
 
     init(store: TasksStore, settings: AppSettings, ek: EventKitService) {
         self.store = store
@@ -22,8 +27,14 @@ final class CalendarSync {
             object: ek.store,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.reconcileFromCalendar() }
+            Task { @MainActor [weak self] in
+                self?.reconcileDebouncer.schedule { await self?.reconcileFromCalendar() }
+            }
         }
+    }
+
+    deinit {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
     }
 
     /// Push the org task's current scheduled time/title to its mirror EKEvent (if any).
@@ -47,7 +58,7 @@ final class CalendarSync {
 
     /// Walk linked tasks and update their org SCHEDULED to match EventKit if drift exists.
     func reconcileFromCalendar() async {
-        guard ek.hasAccess, let client = settings.apiClient else { return }
+        guard ek.canRead, let client = settings.apiClient else { return }
         if store.allTasks.value == nil {
             await store.loadAllTasks(using: client)
         }

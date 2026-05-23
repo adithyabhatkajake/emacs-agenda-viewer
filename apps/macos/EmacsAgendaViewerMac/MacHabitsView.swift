@@ -140,71 +140,9 @@ struct MacHabitsView: View {
     }
 }
 
-/// Cadence-bucketed view of the habits list. The dashboard groups daily
-/// habits under "Today" (their checkpoint is every day), weekly under
-/// "This Week", monthly under "This Month", yearly under "This Year".
-/// Empty buckets are dropped; within a bucket the order preserves the
-/// original `tasks` order so the user's org-file ordering shows through.
-struct HabitBucket: Equatable {
-    let title: String
-    let habits: [OrgTask]
-}
-
-enum HabitsGrouping {
-    static func buckets(habits: [OrgTask]) -> [HabitBucket] {
-        var daily: [OrgTask] = []
-        var weekly: [OrgTask] = []
-        var monthly: [OrgTask] = []
-        var yearly: [OrgTask] = []
-        var other: [OrgTask] = []
-        for habit in habits {
-            let cadence = HabitCadence.from(habit.scheduled?.repeater
-                                            ?? habit.deadline?.repeater)
-            switch cadence.component {
-            case .day:        daily.append(habit)
-            case .weekOfYear: weekly.append(habit)
-            case .month:      monthly.append(habit)
-            case .year:       yearly.append(habit)
-            default:          other.append(habit)
-            }
-        }
-        // Sort each bucket: not-yet-done first (descending streak, then
-        // title), done-this-period last. Lets the user scan the top of
-        // each section for what's still pending today/this week/etc.
-        let prioritize: ([OrgTask]) -> [OrgTask] = { tasks in
-            tasks.sorted { a, b in
-                let aDone = isDoneThisPeriod(a)
-                let bDone = isDoneThisPeriod(b)
-                if aDone != bDone { return !aDone }
-                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
-            }
-        }
-        var out: [HabitBucket] = []
-        if !daily.isEmpty   { out.append(HabitBucket(title: "Today",      habits: prioritize(daily))) }
-        if !weekly.isEmpty  { out.append(HabitBucket(title: "This Week",  habits: prioritize(weekly))) }
-        if !monthly.isEmpty { out.append(HabitBucket(title: "This Month", habits: prioritize(monthly))) }
-        if !yearly.isEmpty  { out.append(HabitBucket(title: "This Year",  habits: prioritize(yearly))) }
-        if !other.isEmpty   { out.append(HabitBucket(title: "Other",      habits: prioritize(other))) }
-        return out
-    }
-
-    /// Convenience for views/sorters that need to know whether a habit
-    /// is settled for its current period without running the full
-    /// HabitStats math themselves.
-    static func isDoneThisPeriod(_ habit: OrgTask) -> Bool {
-        HabitMath.stats(
-            completions: habit.completions,
-            repeater: habit.scheduled?.repeater ?? habit.deadline?.repeater,
-            lastRepeat: habit.properties?["LAST_REPEAT"]
-        ).cells.last == .done
-    }
-
-    /// Count of habits in this bucket that are settled for the current
-    /// period — drives the "3 of 8 done" hint in the section header.
-    static func doneCount(_ habits: [OrgTask]) -> Int {
-        habits.filter { isDoneThisPeriod($0) }.count
-    }
-}
+// `HabitBucket` + `HabitsGrouping` moved to the shared
+// `EmacsAgendaViewer/State/HabitStats.swift` so iOS HabitsView can share
+// the same grouping logic. Mac code keeps using the same symbols.
 
 /// One row on the habits dashboard. Owns nothing — all state lives in
 /// the store + per-habit math runs lazily on render.

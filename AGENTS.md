@@ -1,6 +1,6 @@
 # Agents
 
-This repo uses six specialized Claude Code subagents to keep work scoped to the right surface and to avoid drift across the four languages (Rust, Swift, TypeScript, Elisp) that share one wire format.
+This repo uses ten Claude Code subagents — seven surface specialists (rust-daemon, emacs-bridge, mac-app, ios-app, web-app, contract-keeper, release-conductor) and three meta agents (senior-reviewer, end-user, flow-validator) for cross-cutting audit and QA work.
 
 Definitions live in `.claude/agents/<name>.md`. Each agent has its own tool allowlist, test invocation, and deploy authority. Generic Claude (no agent) is fine for one-off questions; when work touches code, pick a specialist.
 
@@ -10,10 +10,14 @@ Definitions live in `.claude/agents/<name>.md`. Each agent has its own tool allo
 |---|---|---|---|---|
 | `rust-daemon` | `daemon/` (7 crates) | `cargo test --workspace` | No | Parsing, indexing, agenda eval, HTTP routes, SSE, the Rust bridge client. |
 | `emacs-bridge` | `elisp/` (eav.el + eav-bridge.el) | `ert` via batch emacs | No | New bridge methods, org-mode mutations, recursion-depth recovery. |
-| `mac-app` | `apps/macos/` | `swift test`, `xcodebuild` | No | SwiftUI views, @Observable stores, EventKit, DaemonHost. |
+| `mac-app` | `apps/macos/` (shared + Mac-only) | `swift test`, `xcodebuild` | No | SwiftUI views, @Observable stores, EventKit, DaemonHost. |
+| `ios-app` | iOS-only files under `apps/macos/EmacsAgendaViewer/Views/` + `App.swift` + `InlineRendererStub.swift` | `xcodebuild` + `devicectl` install | No | iOS NavigationStack/TabView/sheets, UIKit bridging, iPhone gestures. |
 | `web-app` | `src/`, `tests/e2e/` | `tsc`, Playwright, `vite build` | No | React components, hooks, API client, Playwright. |
 | `contract-keeper` | wire types in 4 files | rust dump + tsc + swift build | No | Adding/changing fields on `OrgTask` / `AgendaEntry` / `OrgTimestamp` / any eav-core type. |
 | `release-conductor` | `deploy*.sh`, `scripts/install-daemon.sh`, CI, `CHANGELOG.org` | n/a — runs the deploy | **Yes** | Version bump, `./deploy.sh`, visa-nonsoe sync, GitHub release. |
+| `senior-reviewer` | read-only audit of any surface | runs verifications (build/test) but never writes | No | Want a second pair of eyes before shipping; auditing a surface that's been moving fast. |
+| `end-user` | read-only flow enumeration | none | No | Generate 10–20 plausible user journeys for QA / regression sweep planning. |
+| `flow-validator` | read-only flow tracing | builds and inspects to validate | No | Given a flow from `end-user`, trace it against the code and report PASS/FAIL/RISK per step. |
 
 ## Decision tree
 

@@ -9,7 +9,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "0.5.6"
+    MARKETING_VERSION: "0.6.0"
     CURRENT_PROJECT_VERSION: "1"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: minimal
@@ -19,6 +19,9 @@ targets:
     platform: iOS
     sources:
       - path: EmacsAgendaViewer
+    dependencies:
+      - target: ClockLiveActivity
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hermitsage.EmacsAgendaViewer
@@ -27,6 +30,19 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         INFOPLIST_FILE: EmacsAgendaViewer/Info.plist
+  ClockLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ClockLiveActivity
+      - path: EmacsAgendaViewer/State/ClockActivityAttributes.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hermitsage.EmacsAgendaViewer.ClockLiveActivity
+        PRODUCT_NAME: ClockLiveActivity
+        INFOPLIST_FILE: ClockLiveActivity/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ClockLiveActivity/ClockLiveActivity.entitlements
+        SKIP_INSTALL: NO
   EmacsAgendaViewerMac:
     type: application
     platform: macOS
@@ -35,6 +51,8 @@ targets:
       - path: EmacsAgendaViewer/Networking
       - path: EmacsAgendaViewer/State
       - path: EmacsAgendaViewer/Theme.swift
+      - path: EmacsAgendaViewer/Color+Hex.swift
+      - path: EmacsAgendaViewer/InlineRendererStub.swift
       - path: EmacsAgendaViewer/Views/Components
       - path: EmacsAgendaViewer/Views/ContentStates.swift
       - path: EmacsAgendaViewer/Assets.xcassets

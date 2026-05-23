@@ -1,278 +1,5 @@
 import SwiftUI
 
-// MARK: - Template Parser
-
-struct ParsedTemplate {
-    var headingLevel: Int = 1
-    var todoState: String?
-    var priority: String?
-    var titlePattern: String = "%?"
-    var tags: [String] = []
-    var scheduledInBody: Bool = false
-    var deadlineInBody: Bool = false
-    var bodyLines: [String] = []
-    var entryType: String = "entry"
-}
-
-private enum TemplateParser {
-    static func parse(_ tpl: CaptureTemplate, keywords: TodoKeywords?) -> ParsedTemplate {
-        var result = ParsedTemplate()
-        result.entryType = tpl.type ?? "entry"
-
-        guard let raw = tpl.template else { return result }
-        let lines = raw.components(separatedBy: "\n")
-
-        guard let heading = lines.first else { return result }
-
-        if result.entryType == "entry" {
-            parseHeadingLine(heading, into: &result, keywords: keywords)
-        } else {
-            result.titlePattern = heading
-        }
-
-        for line in lines.dropFirst() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("SCHEDULED:") {
-                result.scheduledInBody = true
-            } else if trimmed.hasPrefix("DEADLINE:") {
-                result.deadlineInBody = true
-            }
-            result.bodyLines.append(line)
-        }
-
-        return result
-    }
-
-    private static func parseHeadingLine(_ line: String, into result: inout ParsedTemplate, keywords: TodoKeywords?) {
-        var remaining = line[line.startIndex...]
-
-        // Stars
-        let stars = remaining.prefix(while: { $0 == "*" })
-        if !stars.isEmpty {
-            result.headingLevel = stars.count
-            remaining = remaining.dropFirst(stars.count)
-            remaining = remaining.drop(while: { $0 == " " })
-        }
-
-        // Tags at end: :tag1:tag2:
-        if let tagRange = remaining.range(of: #"\s+(:[a-zA-Z0-9_@#%:]+:)\s*$"#, options: .regularExpression) {
-            let tagStr = String(remaining[tagRange]).trimmingCharacters(in: .whitespaces)
-            result.tags = tagStr.split(separator: ":").map(String.init).filter { !$0.isEmpty }
-            remaining = remaining[remaining.startIndex..<tagRange.lowerBound]
-        }
-
-        let rest = String(remaining)
-        let allKeywords = (keywords?.allActive ?? ["TODO"]) + (keywords?.allDone ?? ["DONE"])
-
-        // TODO state
-        for kw in allKeywords {
-            if rest.hasPrefix(kw + " ") || rest.hasPrefix(kw + "\t") || rest == kw {
-                result.todoState = kw
-                remaining = remaining.dropFirst(kw.count)
-                remaining = remaining.drop(while: { $0 == " " })
-                break
-            }
-        }
-
-        // Priority [#X]
-        let priStr = String(remaining)
-        if let match = priStr.range(of: #"^\[#([A-Z])\]\s*"#, options: .regularExpression) {
-            let inner = priStr[priStr.index(priStr.startIndex, offsetBy: 2)..<priStr.index(priStr.startIndex, offsetBy: 3)]
-            result.priority = String(inner)
-            remaining = remaining.dropFirst(priStr.distance(from: priStr.startIndex, to: match.upperBound))
-        }
-
-        result.titlePattern = String(remaining)
-    }
-}
-
-// MARK: - Entry Builder
-
-private enum EntryBuilder {
-    static func build(
-        parsed: ParsedTemplate,
-        title: String,
-        todoState: String?,
-        priority: String?,
-        tags: [String],
-        scheduled: String?,
-        deadline: String?,
-        promptAnswers: [String],
-        prompts: [CapturePrompt]
-    ) -> String {
-        var lines: [String] = []
-
-        if parsed.entryType == "entry" {
-            let stars = String(repeating: "*", count: parsed.headingLevel)
-            var heading = stars
-            if let state = todoState, !state.isEmpty {
-                heading += " \(state)"
-            }
-            if let pri = priority, !pri.isEmpty {
-                heading += " [#\(pri)]"
-            }
-            heading += " \(title)"
-            if !tags.isEmpty {
-                heading += " :\(tags.joined(separator: ":")):"
-            }
-            lines.append(heading)
-        } else if parsed.entryType == "checkitem" {
-            lines.append("- [ ] \(title)")
-        } else if parsed.entryType == "item" {
-            lines.append("- \(title)")
-        } else {
-            lines.append(title)
-        }
-
-        // Properties from prompts
-        var properties: [(String, String)] = []
-        for (idx, prompt) in prompts.enumerated() where prompt.type == "property" {
-            let value = idx < promptAnswers.count ? promptAnswers[idx] : ""
-            if !value.isEmpty && !prompt.name.isEmpty {
-                properties.append((prompt.name, value))
-            }
-        }
-        if !properties.isEmpty {
-            lines.append("  :PROPERTIES:")
-            for (key, value) in properties {
-                lines.append("  :\(key): \(value)")
-            }
-            lines.append("  :END:")
-        }
-
-        if let sch = scheduled, !sch.isEmpty, !parsed.scheduledInBody {
-            lines.append("  SCHEDULED: \(sch)")
-        }
-        if let dl = deadline, !dl.isEmpty, !parsed.deadlineInBody {
-            lines.append("  DEADLINE: \(dl)")
-        }
-
-        for line in parsed.bodyLines {
-            let expanded = expandLine(line, promptAnswers: promptAnswers, prompts: prompts,
-                                      scheduled: scheduled, deadline: deadline)
-            let stripped = expanded.trimmingCharacters(in: .whitespaces)
-            if stripped.isEmpty { continue }
-            lines.append(expanded)
-        }
-
-        // Inactive timestamp if body had %u/%U and nothing else added it
-        return lines.joined(separator: "\n")
-    }
-
-    private static func expandLine(
-        _ line: String,
-        promptAnswers: [String],
-        prompts: [CapturePrompt],
-        scheduled: String?,
-        deadline: String?
-    ) -> String {
-        var result = line
-
-        // %^{...} prompts — replace in order
-        var promptIdx = 0
-        while let range = result.range(of: #"%\^(?:\{[^}]*\})?[gGtTuUpCL]?"#, options: .regularExpression) {
-            let match = String(result[range])
-            let answer = promptIdx < promptAnswers.count ? promptAnswers[promptIdx] : ""
-            promptIdx += 1
-
-            if match.hasSuffix("p") {
-                result = result.replacingCharacters(in: range, with: "")
-                continue
-            }
-            if match.hasSuffix("g") || match.hasSuffix("G") {
-                result = result.replacingCharacters(in: range, with: "")
-                continue
-            }
-            if match.hasSuffix("t") || match.hasSuffix("T") {
-                let ts = answer.isEmpty ? orgTimestamp(active: true) : "<\(answer)>"
-                result = result.replacingCharacters(in: range, with: ts)
-                continue
-            }
-            if match.hasSuffix("u") || match.hasSuffix("U") {
-                let ts = answer.isEmpty ? orgTimestamp(active: false) : "[\(answer)]"
-                result = result.replacingCharacters(in: range, with: ts)
-                continue
-            }
-            result = result.replacingCharacters(in: range, with: answer)
-        }
-
-        // SCHEDULED: / DEADLINE: lines with their own timestamp
-        if result.trimmingCharacters(in: .whitespaces).hasPrefix("SCHEDULED:") {
-            if let sch = scheduled, !sch.isEmpty {
-                result = "  SCHEDULED: \(sch)"
-            } else {
-                result = "  SCHEDULED: \(orgTimestamp(active: true))"
-            }
-            return result
-        }
-        if result.trimmingCharacters(in: .whitespaces).hasPrefix("DEADLINE:") {
-            if let dl = deadline, !dl.isEmpty {
-                result = "  DEADLINE: \(dl)"
-            } else {
-                result = "  DEADLINE: \(orgTimestamp(active: true))"
-            }
-            return result
-        }
-
-        // %<format> — Emacs format-time-string patterns
-        while let range = result.range(of: #"%<[^>]+>"#, options: .regularExpression) {
-            let pattern = String(result[range])
-            let fmt = String(pattern.dropFirst(2).dropLast(1))
-            let expanded = emacsFormatTime(fmt)
-            result = result.replacingCharacters(in: range, with: expanded)
-        }
-
-        // Non-interactive codes
-        result = result.replacingOccurrences(of: "%?", with: "")
-        result = result.replacingOccurrences(of: "%U", with: orgTimestamp(active: false, includeTime: true))
-        result = result.replacingOccurrences(of: "%u", with: orgTimestamp(active: false))
-        result = result.replacingOccurrences(of: "%T", with: orgTimestamp(active: true, includeTime: true))
-        result = result.replacingOccurrences(of: "%t", with: orgTimestamp(active: true))
-        result = result.replacingOccurrences(of: "%a", with: "")
-        result = result.replacingOccurrences(of: "%i", with: "")
-
-        return result
-    }
-
-    static func emacsFormatTime(_ fmt: String, date: Date = Date()) -> String {
-        let cal = Calendar.current
-        let dc = cal.dateComponents([.year, .month, .day, .hour, .minute, .second, .weekday], from: date)
-        let shortDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-        let fullDays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-        let shortMonths = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-        let fullMonths = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
-
-        var result = fmt
-        result = result.replacingOccurrences(of: "%Y", with: String(format: "%04d", dc.year!))
-        result = result.replacingOccurrences(of: "%m", with: String(format: "%02d", dc.month!))
-        result = result.replacingOccurrences(of: "%d", with: String(format: "%02d", dc.day!))
-        result = result.replacingOccurrences(of: "%H", with: String(format: "%02d", dc.hour!))
-        result = result.replacingOccurrences(of: "%M", with: String(format: "%02d", dc.minute!))
-        result = result.replacingOccurrences(of: "%S", with: String(format: "%02d", dc.second!))
-        result = result.replacingOccurrences(of: "%a", with: shortDays[(dc.weekday! - 1)])
-        result = result.replacingOccurrences(of: "%A", with: fullDays[(dc.weekday! - 1)])
-        result = result.replacingOccurrences(of: "%b", with: shortMonths[(dc.month! - 1)])
-        result = result.replacingOccurrences(of: "%B", with: fullMonths[(dc.month! - 1)])
-        result = result.replacingOccurrences(of: "%e", with: String(format: "%2d", dc.day!))
-        return result
-    }
-
-    static func orgTimestamp(active: Bool, includeTime: Bool = false, date: Date = Date()) -> String {
-        let cal = Calendar.current
-        let dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-        let dc = cal.dateComponents([.year, .month, .day, .hour, .minute, .weekday], from: date)
-        let day = dayNames[(dc.weekday ?? 1) - 1]
-        let open = active ? "<" : "["
-        let close = active ? ">" : "]"
-        if includeTime {
-            return String(format: "%@%04d-%02d-%02d %@ %02d:%02d%@",
-                          open, dc.year!, dc.month!, dc.day!, day, dc.hour!, dc.minute!, close)
-        }
-        return String(format: "%@%04d-%02d-%02d %@%@",
-                      open, dc.year!, dc.month!, dc.day!, day, close)
-    }
-}
-
 // MARK: - Capture Sheet
 
 struct CaptureSheet: View {
@@ -568,7 +295,9 @@ struct CaptureSheet: View {
         HStack(spacing: 8) {
             if binding.wrappedValue.isEmpty {
                 Button("Pick date") {
-                    binding.wrappedValue = EntryBuilder.orgTimestamp(active: true, date: Date())
+                    // Strip angle brackets — daemon accepts bare date strings for %^{...} prompts.
+                    let ts = OrgTimestampFormat.string(date: Date(), includeTime: false)
+                    binding.wrappedValue = ts
                         .replacingOccurrences(of: "<", with: "")
                         .replacingOccurrences(of: ">", with: "")
                 }
@@ -708,10 +437,10 @@ struct CaptureSheet: View {
     }
 
     private func submit() async {
-        guard let client = settings.apiClient, let tpl = selected, let p = parsed else { return }
+        guard let client = settings.apiClient, let tpl = selected else { return }
         let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
         guard !trimmedTitle.isEmpty else { return }
-        guard let file = tpl.targetFile else { return }
+        guard tpl.targetFile != nil else { return }
 
         submitting = true
         errorMessage = nil
@@ -723,31 +452,19 @@ struct CaptureSheet: View {
             OrgTimestampFormat.string(date: $0, includeTime: deadlineHasTime)
         }
 
-        let tagList = tags.split(separator: ":").map(String.init).filter { !$0.isEmpty }
-
-        let entryText = EntryBuilder.build(
-            parsed: p,
-            title: trimmedTitle,
-            todoState: todoState.isEmpty ? nil : todoState,
-            priority: priority.isEmpty ? nil : priority,
-            tags: tagList,
-            scheduled: sch,
-            deadline: dl,
-            promptAnswers: promptValues,
-            prompts: tpl.prompts ?? []
-        )
-
-        let targetType = tpl.targetType ?? "file"
-
-        // For file+olp, the headline field contains just the first heading;
-        // deeper paths aren't exposed yet, so use headline for file+headline.
-        let headline = tpl.targetHeadline
-        let olp: [String]? = nil
+        let expectedPrompts = tpl.prompts?.count ?? 0
+        var answers = promptValues
+        while answers.count < expectedPrompts { answers.append("") }
+        if answers.count > expectedPrompts { answers = Array(answers.prefix(expectedPrompts)) }
 
         do {
-            try await client.insertEntry(
-                file: file, targetType: targetType, entryText: entryText,
-                headline: headline, olp: olp
+            try await client.captureTask(
+                templateKey: tpl.key,
+                title: trimmedTitle,
+                priority: priority.isEmpty ? nil : priority,
+                scheduled: sch,
+                deadline: dl,
+                promptAnswers: expectedPrompts == 0 ? nil : answers
             )
             submitting = false
             onCaptured()

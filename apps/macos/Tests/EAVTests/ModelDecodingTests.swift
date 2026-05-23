@@ -94,13 +94,58 @@ struct ModelDecodingTests {
         #expect(entry.category == "Work")
     }
 
-    @Test("AgendaEntry falls back to tsDate when displayDate absent")
+    @Test("AgendaEntry keeps displayDate and tsDate separate; effectiveDate falls back")
     func agendaEntryTsDateFallback() throws {
         let entries: [AgendaEntry] = try decodeFixture("agenda-entries.json")
         let entry = entries[3]
 
         #expect(entry.title == "Team sync")
-        #expect(entry.displayDate == "2026-04-19")
+        #expect(entry.displayDate == nil)
+        #expect(entry.tsDate == "2026-04-19")
+        #expect(entry.effectiveDate == "2026-04-19")
+    }
+
+    @Test("AgendaEntry preserves displayDate vs tsDate across encode/decode round-trip")
+    func agendaEntryDisplayDateRoundTrip() throws {
+        // tsDate-only: re-encoding must NOT promote tsDate into displayDate.
+        let tsOnlyJSON = #"""
+        {
+          "id": "x::y", "title": "ts-only", "agendaType": "timestamp",
+          "tags": [], "inheritedTags": [],
+          "category": "C", "level": 1, "file": "/x.org", "pos": 1,
+          "tsDate": "2026-04-19"
+        }
+        """#.data(using: .utf8)!
+        let tsOnly = try JSONDecoder().decode(AgendaEntry.self, from: tsOnlyJSON)
+        #expect(tsOnly.displayDate == nil)
+        #expect(tsOnly.tsDate == "2026-04-19")
+        #expect(tsOnly.effectiveDate == "2026-04-19")
+
+        let reEncoded = try JSONEncoder().encode(tsOnly)
+        let reDecoded = try JSONDecoder().decode(AgendaEntry.self, from: reEncoded)
+        #expect(reDecoded.displayDate == nil)
+        #expect(reDecoded.tsDate == "2026-04-19")
+        #expect(reDecoded.effectiveDate == "2026-04-19")
+
+        // Both populated: both must survive.
+        let bothJSON = #"""
+        {
+          "id": "x::y", "title": "both", "agendaType": "scheduled",
+          "tags": [], "inheritedTags": [],
+          "category": "C", "level": 1, "file": "/x.org", "pos": 1,
+          "displayDate": "2026-04-18",
+          "tsDate": "2026-04-20"
+        }
+        """#.data(using: .utf8)!
+        let both = try JSONDecoder().decode(AgendaEntry.self, from: bothJSON)
+        #expect(both.displayDate == "2026-04-18")
+        #expect(both.tsDate == "2026-04-20")
+        #expect(both.effectiveDate == "2026-04-18")
+
+        let bothEncoded = try JSONEncoder().encode(both)
+        let bothDecoded = try JSONDecoder().decode(AgendaEntry.self, from: bothEncoded)
+        #expect(bothDecoded.displayDate == "2026-04-18")
+        #expect(bothDecoded.tsDate == "2026-04-20")
     }
 
     @Test("AgendaEntry decodes string level as character count")
@@ -116,6 +161,22 @@ struct ModelDecodingTests {
         let entries: [AgendaEntry] = try decodeFixture("agenda-entries.json")
 
         #expect(entries[0].level == 2)
+    }
+
+    @Test("AgendaEntry decodes extra offset descriptor")
+    func agendaEntryExtra() throws {
+        let entries: [AgendaEntry] = try decodeFixture("agenda-entries.json")
+        #expect(entries[1].extra == "In 3 d.:")
+        #expect(entries[0].extra == nil)
+    }
+
+    @Test("AgendaEntry extra survives encode/decode round-trip")
+    func agendaEntryExtraRoundTrip() throws {
+        let entries: [AgendaEntry] = try decodeFixture("agenda-entries.json")
+        let encoded = try JSONEncoder().encode(entries)
+        let decoded = try JSONDecoder().decode([AgendaEntry].self, from: encoded)
+        #expect(decoded[1].extra == "In 3 d.:")
+        #expect(decoded[0].extra == nil)
     }
 
     @Test("AgendaEntry with repeater on scheduled timestamp")

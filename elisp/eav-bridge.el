@@ -208,10 +208,16 @@ Iterates `org-agenda-files', evaluating only `:sexp' entries via
     (vconcat (nreverse results))))
 
 (defun eav-bridge--write-set-state (params)
-  (eav-set-todo-state (eav-bridge--p params "file")
-                      (eav-bridge--p-int params "pos")
-                      (eav-bridge--p params "state"))
-  '((success . t)))
+  ;; `eav-set-todo-state' returns a JSON string — `{"success":true}` on a
+  ;; real state change or `{"success":false,"error":"..."}` when org-mode
+  ;; refused the transition (e.g. `org-enforce-todo-dependencies` and the
+  ;; task is blocked by unfinished sub-tasks). We have to decode + return
+  ;; the decoded alist; the previous hard-coded `'((success . t))` masked
+  ;; the failure all the way up to the HTTP client.
+  (eav-bridge--decode
+   (eav-set-todo-state (eav-bridge--p params "file")
+                       (eav-bridge--p-int params "pos")
+                       (eav-bridge--p params "state"))))
 
 (defun eav-bridge--write-set-priority (params)
   (eav-set-priority (eav-bridge--p params "file")

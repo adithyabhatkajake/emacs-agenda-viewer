@@ -4,10 +4,13 @@ struct AllTasksView: View {
     @Environment(AppSettings.self) private var settings
     let store: TasksStore
 
+    @State private var expandedIds: Set<String> = []
+
     @State private var includeDone = false
     @State private var searchText = ""
 
     var body: some View {
+        @Bindable var bindable = settings
         NavigationStack {
             content
                 .navigationTitle("All Tasks")
@@ -16,6 +19,7 @@ struct AllTasksView: View {
                 .background(Theme.background)
                 .searchable(text: $searchText, prompt: "Search tasks")
                 .toolbar {
+                    SortMenuToolbar(options: SortKey.listOptions, selection: $bindable.listSort)
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             Toggle("Include completed", isOn: $includeDone)
@@ -29,6 +33,7 @@ struct AllTasksView: View {
                     Task { await load() }
                 }
         }
+        .captureFAB(store: store)
         .task(id: settings.serverURLString) { await loadIfNeeded() }
     }
 
@@ -64,11 +69,15 @@ struct AllTasksView: View {
 
     private func list(_ tasks: [OrgTask]) -> some View {
         let doneStates = Set((store.keywords?.allDone ?? []).map { $0.uppercased() })
-        return List(tasks) { task in
-            TaskRow(task: task, doneStates: doneStates)
-                .listRowBackground(Theme.background)
-                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-                .listRowSeparatorTint(Theme.borderSubtle)
+        let sorted = sortTasks(tasks, by: settings.listSort)
+        return List(sorted) { task in
+            TaskRowItem(
+                task: task, doneStates: doneStates, store: store,
+                expandedIds: $expandedIds
+            )
+            .listRowBackground(Theme.background)
+            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+            .listRowSeparatorTint(Theme.borderSubtle)
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)

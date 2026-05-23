@@ -44,14 +44,15 @@ struct CalendarDropZone: NSViewRepresentable {
         }
 
         override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-            DispatchQueue.main.async {
-                self.coordinator?.hoverY.wrappedValue = nil
-            }
             guard let payload = sender.draggingPasteboard.string(forType: .string) else {
                 return false
             }
             let pt = locationFromTopLeft(sender)
-            return coordinator?.onDrop(payload, pt) ?? false
+            Task { @MainActor [coordinator] in
+                coordinator?.hoverY.wrappedValue = nil
+                _ = coordinator?.onDrop(payload, pt)
+            }
+            return true
         }
 
         private func publish(_ sender: NSDraggingInfo) {
