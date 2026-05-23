@@ -768,16 +768,25 @@ Replaces only the user-visible body text."
                 (forward-line 1)))
              ;; User content line — mark region
              (t
-              (let ((region-start (line-beginning-position)))
+              (let ((region-start (copy-marker (line-beginning-position))))
                 ;; Advance through consecutive user lines
                 (while (and (< (point) body-end)
                             (not (looking-at "^[ \t]*\\(SCHEDULED\\|DEADLINE\\|CLOSED\\):"))
                             (not (looking-at "^[ \t]*:[A-Z_]+:[ \t]*$")))
                   (forward-line 1))
-                (push (cons region-start (point)) user-regions)))))
-          ;; Delete user regions in reverse order (to preserve positions)
-          (dolist (region (nreverse user-regions))
-            (delete-region (car region) (cdr region)))
+                (push (cons region-start (copy-marker (point))) user-regions)))))
+          ;; Delete user regions. Markers auto-adjust as the buffer shrinks,
+          ;; so iteration order is safe either way. We iterate in push order
+          ;; (= bottom-up, since `push' prepends and we scanned top-down)
+          ;; for defensive belt-and-suspenders. The previous implementation
+          ;; used raw integer positions plus a stray `nreverse', which deleted
+          ;; top-down and shifted every subsequent region's offset — that
+          ;; sliced drawers in half and duplicated body content. See
+          ;; G48 in todo.org.
+          (dolist (region user-regions)
+            (delete-region (car region) (cdr region))
+            (set-marker (car region) nil)
+            (set-marker (cdr region) nil))
           ;; Insert new notes at the position of the first deleted region,
           ;; or after the last drawer/planning line
           (goto-char contents-begin)

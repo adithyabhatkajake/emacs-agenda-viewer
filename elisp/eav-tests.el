@@ -335,5 +335,74 @@ against that heading's :EXPECTED: property."
  eav-nested-mixed-bullet-styles
  "mixed bullet styles in one list")
 
+;; ---------------------------------------------------------------------------
+;; eav-set-heading-notes (G48: deletion-order race)
+;; ---------------------------------------------------------------------------
+;;
+;; The pre-fix implementation built a list of user-text (start . end) integer
+;; positions and deleted them top-down. Each deletion shifted subsequent
+;; positions, so the next delete-region sliced through a drawer marker or
+;; an adjacent user region — producing the personal.org corruption that
+;; inflated the file from 7.5KB to 7.5MB. The fix uses markers (auto-adjust
+;; with buffer mutation) and iterates in push order (bottom-up).
+;;
+;; These tests pin the invariants:
+;; - drawers survive intact
+;; - planning lines (SCHEDULED/DEADLINE/CLOSED) survive intact
+;; - the heading line itself is untouched
+;; - the new user body replaces ONLY the user-text regions
+
+(defun eav-tests--read-file (file)
+  "Read FILE contents as a string. Bypasses any cached buffers."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (buffer-string)))
+
+(ert-deftest eav-set-notes-preserves-logbook-and-properties ()
+  "Writing new notes must not damage :PROPERTIES: or :LOGBOOK: drawers."
+  (let* ((file (eav-tests--copy-fixture "set-notes.org"))
+         (title "Multi-region body (G48 regression)")
+         (pos  (eav-tests--find-heading file title)))
+    (should pos)
+    (eav-set-heading-notes file pos "- [X] replaced")
+    (let ((body (eav-tests--read-file file)))
+      ;; Each drawer marker appears once per heading; fixture has 2 headings.
+      (should (= 2 (count-matches-in-string ":PROPERTIES:" body)))
+      (should (= 2 (count-matches-in-string ":LOGBOOK:"    body)))
+      ;; Four :END: markers (two per heading). Corruption replaced one :END:
+      ;; with :LOGBOOK:, so this assertion catches a regression.
+      (should (= 4 (count-matches-in-string ":END:"        body)))
+      ;; Planning line preserved.
+      (should (string-match-p "SCHEDULED: <2026-05-22 Fri>" body))
+      ;; Custom ID preserved (inside PROPERTIES).
+      (should (string-match-p ":CUSTOM_ID: g48-multi-region" body))
+      ;; New user content appears exactly once.
+      (should (= 1 (count-matches-in-string "- [X] replaced" body)))
+      ;; Old user content from the first heading is gone (the regression
+      ;; duplicated it across the buffer).
+      (should-not (string-match-p "first user-text region item" body))
+      ;; Second heading's body must remain untouched.
+      (should (string-match-p "only region" body)))))
+
+(ert-deftest eav-set-notes-no-duplication ()
+  "Writing notes a single time must NOT duplicate existing body."
+  (let* ((file (eav-tests--copy-fixture "set-notes.org"))
+         (title "Single user region")
+         (pos  (eav-tests--find-heading file title)))
+    (eav-set-heading-notes file pos "- [X] new only line")
+    (let ((body (eav-tests--read-file file)))
+      (should (= 1 (count-matches-in-string "- [X] new only line" body)))
+      (should-not (string-match-p "only region" body)))))
+
+(defun count-matches-in-string (needle haystack)
+  "Return the number of NON-overlapping NEEDLE occurrences in HAYSTACK."
+  (let ((case-fold-search nil)
+        (count 0)
+        (start 0))
+    (while (string-match (regexp-quote needle) haystack start)
+      (setq count (1+ count)
+            start (match-end 0)))
+    count))
+
 (provide 'eav-tests)
 ;;; eav-tests.el ends here

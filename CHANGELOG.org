@@ -1,5 +1,25 @@
 #+title: Changelog
 
+** 0.6.1 (2026-05-23)
+
+*** Fixed
+
+- *Critical data-corruption hotfix.* =eav-set-heading-notes= was
+  deleting user-text regions top-down using stale integer buffer
+  positions. When a task had multiple user-text regions separated by
+  drawers (=:LOGBOOK:=, =:PROPERTIES:=, etc.), each deletion shifted
+  every subsequent region's recorded start/end, so later deletions
+  cut at the wrong offsets — duplicating content, tearing text
+  mid-word, and in one observed case inflating a single Weekly Review
+  task in =personal.org= from a small block to 7.5MB. The fix uses
+  buffer markers (which auto-adjust as the buffer shrinks) and
+  iterates regions bottom-up so each deletion only affects offsets
+  above already-processed regions. Two new ert tests
+  (=eav-set-notes-no-duplication=,
+  =eav-set-notes-preserves-logbook-and-properties=) pin the
+  invariant; new fixture =elisp/tests/fixtures/set-notes.org=. All
+  users on =0.6.0= should upgrade immediately.
+
 ** 0.6.0 (2026-05-23)
 
 *** Added

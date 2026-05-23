@@ -1,0 +1,20 @@
+#+TITLE: Fixtures for eav-set-heading-notes
+
+* TODO Multi-region body (G48 regression)
+SCHEDULED: <2026-05-22 Fri>
+:PROPERTIES:
+:CUSTOM_ID: g48-multi-region
+:END:
+:LOGBOOK:
+- State "DONE"       from "TODO"       [2026-05-16 Sat 23:29]
+:END:
+- [ ] first user-text region item
+- [ ] second item in the same region
+
+* TODO Single user region
+:PROPERTIES:
+:END:
+:LOGBOOK:
+- State "DONE"       from "TODO"       [2026-05-16 Sat 23:29]
+:END:
+- [ ] only region
