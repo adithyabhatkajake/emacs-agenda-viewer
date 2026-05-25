@@ -1,5 +1,15 @@
 import Foundation
 
+/// Live-connection state of the SSE subscriber, surfaced so the UI can show a
+/// "connecting / offline" banner while still rendering last-good data.
+/// `connecting` covers both the very first attempt and every reconnect/backoff
+/// gap; `connected` means the stream is open and we are receiving pushes.
+enum SSEConnectionState: Sendable, Equatable {
+    case connecting
+    case connected
+    case disconnected
+}
+
 /// Subscribes to the daemon's SSE event channel (`GET /api/events`) and
 /// forwards events to the app via a callback.
 ///
@@ -25,7 +35,18 @@ import Foundation
 final class EventSubscriber {
     private let baseURL: URL
     private var task: Task<Void, Never>?
-    private(set) var isConnected: Bool = false
+
+    /// Current connection state. Mutating it fires `onStateChange` on a real
+    /// transition so observers (RootView → TasksStore) can drive a banner.
+    private(set) var state: SSEConnectionState = .disconnected {
+        didSet {
+            guard oldValue != state else { return }
+            onStateChange?(state)
+        }
+    }
+
+    /// Notified on every state transition. Set by the owner before `start`.
+    var onStateChange: (@MainActor (SSEConnectionState) -> Void)?
 
     // Dedicated session so we never mutate URLSession.shared.
     // 5-minute request timeout: long enough to avoid spurious drops on idle
@@ -64,6 +85,10 @@ final class EventSubscriber {
             while !Task.isCancelled {
                 guard let self else { return }
 
+                // Attempting/awaiting a connection — surface as "connecting" so
+                // the UI shows a reconnect banner during backoff gaps too.
+                self.state = .connecting
+
                 let delay = EventSubscriber.backoffDelay(
                     attempt: self.failedAttempts,
                     retryHintMs: self.retryHintMs
@@ -96,7 +121,7 @@ final class EventSubscriber {
     func stop() {
         task?.cancel()
         task = nil
-        isConnected = false
+        state = .disconnected
     }
 
     // MARK: - Backoff
@@ -142,10 +167,10 @@ final class EventSubscriber {
         do {
             let (bytes, response) = try await EventSubscriber.session.bytes(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                self.isConnected = false
+                self.state = .disconnected
                 return .failure
             }
-            self.isConnected = true
+            self.state = .connected
 
             var parser = SSEParser()
             for try await line in bytes.lines {
@@ -158,10 +183,10 @@ final class EventSubscriber {
                     }
                 }
             }
-            self.isConnected = false
+            self.state = .disconnected
             return .success
         } catch {
-            self.isConnected = false
+            self.state = .disconnected
             return .failure
         }
     }

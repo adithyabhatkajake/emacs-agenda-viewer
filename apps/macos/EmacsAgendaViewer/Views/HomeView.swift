@@ -296,8 +296,17 @@ struct HomeView: View {
         store.today.isLoading || store.allTasks.isLoading || store.upcoming.isLoading
     }
 
+    private var hasAnyContent: Bool {
+        store.today.value != nil || store.allTasks.value != nil || store.upcoming.value != nil
+    }
+
+    /// Escalate to a full-screen error only on a true cold failure — when no
+    /// slice has any cached content. With stale-while-revalidate, a refresh
+    /// failure keeps last-good content loaded and surfaces via the RootView
+    /// connection/staleness banner instead of blanking the whole feed.
     private var firstError: String? {
-        store.today.error ?? store.allTasks.error ?? store.upcoming.error
+        guard !hasAnyContent else { return nil }
+        return store.today.error ?? store.allTasks.error ?? store.upcoming.error
     }
 
     private func isEventHidden(_ entry: AgendaEntry) -> Bool {

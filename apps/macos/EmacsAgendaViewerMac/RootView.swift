@@ -110,6 +110,9 @@ struct RootView: View {
             // /api/events (i.e. the legacy Express server).
             eventSubscriber?.stop()
             let sub = EventSubscriber(baseURLString: settings.serverURLString)
+            sub?.onStateChange = { [weak store] state in
+                store?.connectionState = state
+            }
             sub?.start { [weak store] event in
                 guard let store else { return }
                 Task { @MainActor in

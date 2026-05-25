@@ -37,6 +37,27 @@ final class TasksStore {
 
     /// Last server-side error from a mutation, if any. Surfaced by views.
     var lastMutationError: String?
+
+    /// Non-destructive transient-error channel for *refreshes*. Set when a
+    /// background refetch of an already-loaded slice fails (we keep the stale
+    /// data rather than blanking the screen — stale-while-revalidate). Cleared
+    /// on the next fully-successful refresh. Distinct from a slice's
+    /// `LoadState.failed`, which is reserved for cold-load failure.
+    private(set) var lastRefreshError: String?
+
+    /// Live SSE connection state, fed by the owning view from EventSubscriber.
+    /// Drives the "connecting / offline — showing last update" banner so the
+    /// user knows the displayed data may be behind the server (e.g. right after
+    /// the app wakes and before the reconnect+refresh completes).
+    var connectionState: SSEConnectionState = .disconnected {
+        didSet { if connectionState == .connected { sseEverConnected = true } }
+    }
+
+    /// True once the SSE stream has connected at least once this session. Used
+    /// to gate the "reconnecting" banner so it doesn't flash on cold launch
+    /// (before the first connect) or sit forever on the legacy Express backend,
+    /// which has no `/api/events` endpoint to connect to.
+    private(set) var sseEverConnected = false
     /// Debug: the most recent TODO state passed to org-todo via toggleDone.
     /// Helps surface what we sent when the round-trip silently returns ok.
     var lastToggledState: String?
@@ -65,7 +86,7 @@ final class TasksStore {
             let entries = try await client.fetchAgendaDay(DateQuery.today())
             today = .loaded(entries)
         } catch {
-            today = .failed(error.message)
+            recordLoadFailure(into: &today, error: error)
         }
     }
 
@@ -77,7 +98,20 @@ final class TasksStore {
             let entries = try await client.fetchAgendaRange(start: start, end: end)
             upcoming = .loaded(entries)
         } catch {
-            upcoming = .failed(error.message)
+            recordLoadFailure(into: &upcoming, error: error)
+        }
+    }
+
+    /// Stale-while-revalidate failure handling. If the slice already holds a
+    /// loaded value, this was a *refresh* — keep the last-good value and only
+    /// record `lastRefreshError`, so the UI shows stale data + a banner instead
+    /// of blanking to a full-screen error. Only a cold load (no cached value)
+    /// transitions to `.failed`.
+    private func recordLoadFailure<T>(into slice: inout LoadState<T>, error: Error) {
+        if slice.value != nil {
+            lastRefreshError = error.message
+        } else {
+            slice = .failed(error.message)
         }
     }
 
@@ -127,7 +161,7 @@ final class TasksStore {
             allTasks = .loaded(tasks)
             allTasksRevision &+= 1
         } catch {
-            allTasks = .failed(error.message)
+            recordLoadFailure(into: &allTasks, error: error)
         }
     }
 
@@ -199,6 +233,10 @@ final class TasksStore {
     }
 
     private func runRefresh(using client: APIClient, includeDone: Bool) async {
+        // Optimistically clear; any slice that fails this round re-sets it via
+        // recordLoadFailure. Because the task group awaits all loads before we
+        // resume, lastRefreshError is non-nil after this iff a refresh failed.
+        lastRefreshError = nil
         await withTaskGroup(of: Void.self) { group in
             if today.value != nil {
                 group.addTask { await self.loadToday(using: client) }
