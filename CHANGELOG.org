@@ -1,6 +1,6 @@
 #+title: Changelog
 
-** 0.6.2 (2026-05-23)
+** 0.6.3 (2026-05-24)
 
 *** Changed
 
@@ -27,6 +27,10 @@
   =:LOGBOOK:= drawers) were flushed to disk. The new write-on-stop
   model never holds an open clock in the buffer, eliminating the
   dangling/empty-drawer corruption.
+
+** 0.6.2 (2026-05-23)
+
+*** Fixed
 
 - *Critical hotfix for repeating tasks.* Marking a SCHEDULED or
   DEADLINE task with a repeater (=+1w=, =+1d=, =.+1m=, etc.) as Done
