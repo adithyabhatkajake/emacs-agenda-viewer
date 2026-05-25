@@ -304,24 +304,12 @@ final class TasksStore {
         // nil for "clear" (going to-do) and the first known done keyword for
         // "mark done". The reconcile after the round-trip always corrects it.
         let optimisticState: String? = isDone ? nil : (keywords?.allDone.first ?? "DONE")
-        // Capture pin status before the mutation: a repeating task completed
-        // via @DONE resets to TODO and keeps its :PINNED: property, so it would
-        // otherwise linger in My Day after completion.
-        let wasPinnedToday = allTasks.value?.first { $0.id == task.id }
-            .map(TaskFilters.isPinnedToday) ?? false
-        let ok = await setState(
+        // setState handles unpinning on completion (shared by every completion
+        // path); @TODO is not a completion so un-completing won't re-pin.
+        return await setState(
             taskId: task.id, file: file, pos: pos, state: nextState,
             optimisticTodoState: optimisticState, using: client
         )
-        // Completing a pinned task unpins it (leaves My Day). Un-completing
-        // does not re-pin — the user re-pins manually if they want it back.
-        if ok, !isDone, wasPinnedToday {
-            _ = await setProperty(
-                taskId: task.id, file: file, pos: pos,
-                key: "PINNED", value: "", using: client
-            )
-        }
-        return ok
     }
 
     @discardableResult
@@ -333,10 +321,26 @@ final class TasksStore {
     @discardableResult
     private func setState(taskId: String, file: String, pos: Int, state: String,
                           optimisticTodoState: String?, using client: APIClient) async -> Bool {
+        // Capture pin status before the mutation: completing a task should
+        // unpin it from My Day. A repeating task resets to TODO and keeps its
+        // :PINNED: property, so we key off the *requested* state (a completion
+        // intent) rather than the resolved post-repeat state.
+        let wasPinnedToday = allTasks.value?.first { $0.id == taskId }
+            .map(TaskFilters.isPinnedToday) ?? false
         let pre = applyOptimistic(taskId: taskId, .todoState(optimisticTodoState))
-        return await runMutation(client: client, preImage: pre) {
+        let ok = await runMutation(client: client, preImage: pre) {
             try await client.setState(taskId: taskId, file: file, pos: pos, state: state)
         }
+        // Any completion path (checkbox/swipe via "@DONE", or an explicit done
+        // keyword from the state picker) unpins. Moving to a non-done state or
+        // clearing the state does not re-pin.
+        if ok, wasPinnedToday, state == "@DONE" || isDoneState(state) {
+            _ = await setProperty(
+                taskId: taskId, file: file, pos: pos,
+                key: "PINNED", value: "", using: client
+            )
+        }
+        return ok
     }
 
     @discardableResult
