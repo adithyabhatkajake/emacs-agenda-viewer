@@ -7,7 +7,7 @@ enum SortKey: String, CaseIterable, Identifiable, Sendable {
 
     var label: String {
         switch self {
-        case .default:   return "Default"
+        case .default:   return "Agenda"
         case .priority:  return "Priority"
         case .state:     return "State"
         case .deadline:  return "Deadline"

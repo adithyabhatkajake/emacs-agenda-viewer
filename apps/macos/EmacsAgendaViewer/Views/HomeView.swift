@@ -78,9 +78,9 @@ struct HomeView: View {
         let visibleEvents = classified.events.filter { !isEventHidden($0) }
         let mainSorted = sortTodayItems(classified.main, by: settings.agendaSort)
 
-        let pinnedTasks = sortTasks(
+        let pinnedTasks = sortPinnedItems(
             allTasks.filter { TaskFilters.isPinnedToday($0) },
-            by: settings.listSort
+            by: settings.agendaSort
         )
         let pinnedIds = Set(pinnedTasks.map { $0.id })
 
@@ -318,13 +318,50 @@ struct HomeView: View {
         return doneStates.contains(s.uppercased())
     }
 
-    /// Sort the mixed Today list with overdue items always floating to the top.
+    /// Sort the mixed Today list.
+    ///
+    /// .default ("Agenda"): overdue items first (by scheduled time), then the
+    /// rest also by scheduled time. This mirrors the classic org-agenda view.
+    ///
+    /// Any other key: sort the entire list flat — no overdue-floats-to-top
+    /// special case — so Priority/Category/etc. work across the whole set.
     private func sortTodayItems(_ items: [any TaskDisplayable], by key: SortKey) -> [any TaskDisplayable] {
-        let overdue = items.filter { TodayClassifier.isOverdue($0) }
-        let due = items.filter { !TodayClassifier.isOverdue($0) }
-        let overdueSorted = overdue.sorted { ($0.scheduled?.raw ?? "") < ($1.scheduled?.raw ?? "") }
-        let dueSorted = sortByKey(due, key: key)
-        return overdueSorted + dueSorted
+        if key == .default {
+            let overdue = items.filter { TodayClassifier.isOverdue($0) }
+            let due = items.filter { !TodayClassifier.isOverdue($0) }
+            let byScheduled: (any TaskDisplayable, any TaskDisplayable) -> Bool = { a, b in
+                let at = scheduledMs(a)
+                let bt = scheduledMs(b)
+                return at < bt
+            }
+            return overdue.sorted(by: byScheduled) + due.sorted(by: byScheduled)
+        }
+        return sortByKey(items, key: key)
+    }
+
+    /// Sort pinned tasks by the agenda sort key.
+    ///
+    /// Pinned items have no overdue concept (they are pinned, not overdue-floated),
+    /// so .default falls through to a scheduled-time sort for a sensible stable order.
+    private func sortPinnedItems(_ items: [OrgTask], by key: SortKey) -> [OrgTask] {
+        if key == .default {
+            return items.sorted { scheduledMs($0) < scheduledMs($1) }
+        }
+        return sortByKey(items, key: key).compactMap { $0 as? OrgTask }
+    }
+
+    /// Milliseconds since epoch for an item's scheduled (or deadline) timestamp.
+    /// Returns .infinity for items with no timestamp so they sort last.
+    private func scheduledMs(_ item: any TaskDisplayable) -> Double {
+        if let raw = item.scheduled?.raw, !raw.isEmpty,
+           let d = OrgTimestamp.parseDateString(raw) {
+            return d.timeIntervalSince1970 * 1000
+        }
+        if let raw = item.deadline?.raw, !raw.isEmpty,
+           let d = OrgTimestamp.parseDateString(raw) {
+            return d.timeIntervalSince1970 * 1000
+        }
+        return .infinity
     }
 
     private func sortByKey(_ items: [any TaskDisplayable], key: SortKey) -> [any TaskDisplayable] {

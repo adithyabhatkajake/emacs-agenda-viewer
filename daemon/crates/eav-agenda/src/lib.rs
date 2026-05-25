@@ -84,6 +84,31 @@ pub fn evaluate_day(
                     &display_date,
                     "Scheduled:",
                 ));
+            } else if !is_done_task && target == today {
+                // Per org-agenda-get-scheduled (org-agenda.el:6734-6737,6755-6756):
+                //   (if (and todayp pastschedp) (format past diff) first)
+                //   'type (if pastschedp "past-scheduled" "scheduled")
+                //   'date (if pastschedp schedule date)
+                // where `past` = org-agenda-scheduled-leaders second element
+                // = "Sched.%2dx: " and `diff` = (- current schedule).
+                // Only today's view surfaces overdue scheduled items; querying
+                // an arbitrary future day does not.
+                let past = previous_occurrence_on_or_before(sched, target).filter(|p| *p < target);
+                if let Some(prev) = past {
+                    let diff = (target - prev).num_days();
+                    // Emacs `format "Sched.%2dx: "` right-justifies in a
+                    // field of width 2: single-digit counts get a leading
+                    // space (e.g. " 1"), two-or-more digits fill naturally.
+                    let extra = format!("Sched.{diff:2}x:");
+                    out.entries.push(make_entry_with_extra(
+                        task,
+                        prev,
+                        sched,
+                        agenda_type::PAST_SCHEDULED,
+                        &display_date,
+                        &extra,
+                    ));
+                }
             }
         }
 
@@ -561,6 +586,82 @@ mod tests {
         assert_eq!(day.entries.len(), 1);
         assert_eq!(day.entries[0].agenda_type, "deadline");
         assert_eq!(day.entries[0].extra.as_deref(), Some("2 d. ago:"));
+    }
+
+    // ---- overdue scheduled (past-scheduled) tests --------------------------------
+
+    #[test]
+    fn overdue_scheduled_non_repeating_surfaces_on_today() {
+        // Task scheduled 2026-05-20 queried on 2026-05-24 (today).
+        // diff = 4 → extra = "Sched. 4x:" (right-justified width 2 → " 4").
+        let mut t = task("os1", "overdue task");
+        t.scheduled = Some(ts(2026, 5, 20));
+        let day = evaluate_day(
+            &[t],
+            NaiveDate::from_ymd_opt(2026, 5, 24).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 5, 24).unwrap(),
+            &AgendaConfig::default(),
+        );
+        assert_eq!(day.entries.len(), 1);
+        assert_eq!(day.entries[0].agenda_type, "past-scheduled");
+        assert_eq!(day.entries[0].extra.as_deref(), Some("Sched. 4x:"));
+        // ts_date carries the past scheduled date, not today.
+        assert_eq!(day.entries[0].ts_date.as_deref(), Some("2026-05-20"));
+    }
+
+    #[test]
+    fn overdue_scheduled_repeating_habit_surfaces_on_today() {
+        // Habit scheduled 2026-05-23 .+2d: last occurrence ≤ today was 05-23.
+        // Next occurrence via .+ would be 05-25. Today = 05-24 → occurs_on
+        // returns false, but previous_occurrence is 05-23, diff = 1.
+        // extra = "Sched. 1x:" (single digit → " 1").
+        let mut t = task("os2", "morning run");
+        let mut s = ts(2026, 5, 23);
+        s.repeater = Some(Repeater {
+            kind: ".+".into(),
+            value: 2,
+            unit: "d".into(),
+        });
+        t.scheduled = Some(s);
+        let day = evaluate_day(
+            &[t],
+            NaiveDate::from_ymd_opt(2026, 5, 24).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 5, 24).unwrap(),
+            &AgendaConfig::default(),
+        );
+        assert_eq!(day.entries.len(), 1);
+        assert_eq!(day.entries[0].agenda_type, "past-scheduled");
+        assert_eq!(day.entries[0].extra.as_deref(), Some("Sched. 1x:"));
+        assert_eq!(day.entries[0].ts_date.as_deref(), Some("2026-05-23"));
+    }
+
+    #[test]
+    fn overdue_scheduled_done_task_not_surfaced() {
+        let mut t = task("os3", "finished work");
+        t.todo_state = Some("DONE".into());
+        t.scheduled = Some(ts(2026, 5, 20));
+        let day = evaluate_day(
+            &[t],
+            NaiveDate::from_ymd_opt(2026, 5, 24).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 5, 24).unwrap(),
+            &AgendaConfig::default(),
+        );
+        assert!(day.entries.is_empty());
+    }
+
+    #[test]
+    fn overdue_scheduled_not_shown_on_arbitrary_future_day() {
+        // Task scheduled 2026-05-20; querying 2026-05-22 (not today = 05-24).
+        // org-agenda only surfaces past-scheduled items on today's view.
+        let mut t = task("os4", "overdue task");
+        t.scheduled = Some(ts(2026, 5, 20));
+        let day = evaluate_day(
+            &[t],
+            NaiveDate::from_ymd_opt(2026, 5, 22).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 5, 24).unwrap(),
+            &AgendaConfig::default(),
+        );
+        assert!(day.entries.is_empty());
     }
 
     #[test]

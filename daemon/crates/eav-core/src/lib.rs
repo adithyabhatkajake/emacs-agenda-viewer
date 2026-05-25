@@ -15,6 +15,10 @@ pub mod agenda_type {
     //! used by org-agenda's text-property `'type`.
     //! See `org-agenda-get-day-entries` (org-agenda.el:5526).
     pub const SCHEDULED: &str = "scheduled";
+    /// org-agenda sets `'type "past-scheduled"` when `pastschedp` is true
+    /// (org-agenda-get-scheduled, org-agenda.el:6755). Overdue scheduled items
+    /// queried on today carry this type and a `"Sched.%2dx: "` extra prefix.
+    pub const PAST_SCHEDULED: &str = "past-scheduled";
     pub const DEADLINE: &str = "deadline";
     pub const UPCOMING_DEADLINE: &str = "upcoming-deadline";
     pub const TIMESTAMP: &str = "timestamp";
