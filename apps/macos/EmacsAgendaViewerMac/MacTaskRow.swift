@@ -531,9 +531,13 @@ struct MacTaskRow: View {
             Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 16, weight: .regular))
                 .foregroundStyle(color)
+                // 28pt hit target around the 16pt glyph; negative padding keeps
+                // the row's compact footprint (net 16pt) and original alignment.
+                .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .padding(-6)
         .help(isDone ? "Mark as not done" : "Mark as done")
     }
 
