@@ -119,6 +119,8 @@ struct AgendaEntry: Codable, Hashable, Identifiable, Sendable {
     /// views filter habit-driven rows from Today/Upcoming without
     /// cross-referencing `/api/tasks`.
     let isHabit: Bool
+    /// Heading body content, mirroring `OrgTask.notes`. Nil when unset.
+    let notes: String?
 
     /// Legacy flatten: prefer `displayDate`, fall back to `tsDate`. Use
     /// from UI grouping/filter sites that previously read `displayDate`
@@ -128,7 +130,7 @@ struct AgendaEntry: Codable, Hashable, Identifiable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, title, agendaType, todoState, priority, tags, inheritedTags
         case scheduled, deadline, category, level, file, pos
-        case effort, warntime, timeOfDay, displayDate, tsDate, extra, isHabit
+        case effort, warntime, timeOfDay, displayDate, tsDate, extra, isHabit, notes
     }
 
     init(from decoder: Decoder) throws {
@@ -161,6 +163,7 @@ struct AgendaEntry: Codable, Hashable, Identifiable, Sendable {
         tsDate = try c.decodeIfPresent(String.self, forKey: .tsDate)
         extra = try c.decodeIfPresent(String.self, forKey: .extra)
         isHabit = (try? c.decodeIfPresent(Bool.self, forKey: .isHabit)) ?? false
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -185,6 +188,7 @@ struct AgendaEntry: Codable, Hashable, Identifiable, Sendable {
         try c.encodeIfPresent(tsDate, forKey: .tsDate)
         try c.encodeIfPresent(extra, forKey: .extra)
         if isHabit { try c.encode(true, forKey: .isHabit) }
+        try c.encodeIfPresent(notes, forKey: .notes)
     }
 }
 

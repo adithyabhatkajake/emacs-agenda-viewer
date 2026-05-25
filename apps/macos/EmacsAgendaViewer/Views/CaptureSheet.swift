@@ -38,6 +38,7 @@ struct CaptureSheet: View {
     @State private var isSaving: Bool = false
     @State private var errorMessage: String?
     @FocusState private var titleFocused: Bool
+    @FocusState private var anyFieldFocused: Bool
 
     private var client: APIClient? { settings.apiClient }
 
@@ -115,31 +116,23 @@ struct CaptureSheet: View {
                         .pickerStyle(.segmented)
                     }
 
-                    Section("Scheduled") {
-                        Toggle("Add scheduled date", isOn: $includeScheduled)
-                            .tint(Theme.accent)
-                        if includeScheduled {
-                            DatePicker("Date", selection: $scheduledDate, displayedComponents: .date)
-                            Toggle("Include time", isOn: $includeScheduledTime)
-                                .tint(Theme.accent)
-                            if includeScheduledTime {
-                                DatePicker("Time", selection: $scheduledDate, displayedComponents: .hourAndMinute)
-                            }
-                        }
-                    }
+                    TimestampField(
+                        label: "Scheduled",
+                        toggleLabel: "Add scheduled date",
+                        isEnabled: $includeScheduled,
+                        date: $scheduledDate,
+                        time: $scheduledDate,
+                        includeTime: $includeScheduledTime
+                    )
 
-                    Section("Deadline") {
-                        Toggle("Add deadline", isOn: $includeDeadline)
-                            .tint(Theme.accent)
-                        if includeDeadline {
-                            DatePicker("Date", selection: $deadlineDate, displayedComponents: .date)
-                            Toggle("Include time", isOn: $includeDeadlineTime)
-                                .tint(Theme.accent)
-                            if includeDeadlineTime {
-                                DatePicker("Time", selection: $deadlineDate, displayedComponents: .hourAndMinute)
-                            }
-                        }
-                    }
+                    TimestampField(
+                        label: "Deadline",
+                        toggleLabel: "Add deadline",
+                        isEnabled: $includeDeadline,
+                        date: $deadlineDate,
+                        time: $deadlineDate,
+                        includeTime: $includeDeadlineTime
+                    )
 
                     if let err = errorMessage {
                         Section {
@@ -150,6 +143,9 @@ struct CaptureSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(Theme.background)
+            // Interactive dismiss so the user can scroll to Save without
+            // manually tapping outside the keyboard first.
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("New Task")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -158,6 +154,13 @@ struct CaptureSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { Task { await save() } }.disabled(!canSave)
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        titleFocused = false
+                        anyFieldFocused = false
+                    }
                 }
             }
         }

@@ -83,6 +83,8 @@ export interface AgendaEntry {
    * for non-habit entries.
    */
   isHabit?: boolean;
+  /** Heading body content, mirroring `OrgTask.notes`. Omitted when unset. */
+  notes?: string;
 }
 
 export interface OrgConfig {

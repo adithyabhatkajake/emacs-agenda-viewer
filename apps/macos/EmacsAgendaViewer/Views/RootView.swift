@@ -9,25 +9,14 @@ struct RootView: View {
     @State private var liveActivities = ClockLiveActivityCoordinator()
     @State private var errorBanner: String?
     @State private var errorBannerDismissTask: Task<Void, Never>?
+    @State private var eventSubscriber: EventSubscriber?
 
     var body: some View {
         TabView {
-            TodayView(store: store)
-                .tabItem { Label("Today", systemImage: "star.fill") }
+            // Exactly 5 tabs — all visible on iPhone with no auto "More".
+            HomeView(store: store)
+                .tabItem { Label("Home", systemImage: "house.fill") }
 
-            PinnedView(store: store)
-                .tabItem { Label("Pinned", systemImage: "pin.fill") }
-
-            InboxView(store: store)
-                .tabItem { Label("Inbox", systemImage: "tray.fill") }
-
-            UpcomingView(store: store)
-                .tabItem { Label("Upcoming", systemImage: "calendar") }
-
-            // iOS auto-collapses the remaining tabs under a "More" tab
-            // (TabView shows 5 visible + auto More on iPhone). Most-used
-            // views go first; secondary views (All Tasks, Habits, Logbook,
-            // Settings) land under More.
             AllTasksView(store: store)
                 .tabItem { Label("All Tasks", systemImage: "list.bullet") }
 
@@ -57,6 +46,9 @@ struct RootView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: errorBanner)
+        // Fire error haptic whenever the banner transitions from nil to a
+        // message — one pulse per error, not per render.
+        .sensoryFeedback(.error, trigger: errorBanner)
         .onChange(of: store.lastMutationError) { _, new in
             guard let msg = new, !msg.isEmpty else { return }
             errorBanner = msg
@@ -70,7 +62,33 @@ struct RootView: View {
         }
         .task(id: settings.serverURLString) {
             guard let client = settings.apiClient else { return }
-            await store.loadMetadata(using: client)
+            // Fix #3: pass settings so syncFromServer fires and initialized
+            // flips to true on normal launch, not only after Settings is opened.
+            await store.loadMetadata(using: client, settings: settings)
+
+            // Fix #2: attach the SSE subscriber so daemon-driven events
+            // (task edits in Emacs, file saves, clock changes) refresh the
+            // iOS UI without requiring a manual pull-to-refresh.
+            // Mirror of EmacsAgendaViewerMac/RootView.swift:108-130.
+            eventSubscriber?.stop()
+            let sub = EventSubscriber(baseURLString: settings.serverURLString)
+            sub?.start { [weak store] event in
+                guard let store else { return }
+                Task { @MainActor in
+                    guard let client = settings.apiClient else { return }
+                    switch event {
+                    case .taskChanged(_, let file, let pos):
+                        await store.invalidate(taskId: "\(file)::\(pos)", file: file, pos: pos, using: client)
+                    case .fileChanged(let file):
+                        await store.invalidate(file: file, using: client)
+                    case .clockChanged:
+                        await store.refreshClock(using: client)
+                    case .configChanged:
+                        await store.invalidateConfig(using: client, settings: settings)
+                    }
+                }
+            }
+            eventSubscriber = sub
         }
         // Re-sync notifications whenever the task set changes (load completes,
         // SSE invalidation fires, user toggles a task done, etc.).
@@ -94,6 +112,11 @@ struct RootView: View {
                     await notifications.refreshAuthStatus()
                     await syncNotifications()
                 }
+            } else if newPhase == .background {
+                // Tear down the SSE connection when backgrounded so the OS
+                // doesn't terminate us for holding an open network socket.
+                eventSubscriber?.stop()
+                eventSubscriber = nil
             }
         }
         // Live Activities — pair iOS-owned Activities with the local

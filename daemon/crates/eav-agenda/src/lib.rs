@@ -294,6 +294,7 @@ fn make_entry(
             .and_then(|p| p.get("STYLE"))
             .filter(|v| v.eq_ignore_ascii_case("habit"))
             .map(|_| true),
+        notes: task.notes.clone(),
     }
 }
 
@@ -412,6 +413,7 @@ mod tests {
             active_timestamps: None,
             properties: None,
             completions: None,
+            is_habit: None,
         }
     }
 

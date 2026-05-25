@@ -120,7 +120,7 @@ export function buildTodayItems(
   const todayIds = new Set(byId.keys());
 
   const overdue: OrgTask[] = all.filter((task) => {
-    if (isHabitTask(task)) return false;
+    if (hideHabits && isHabitTask(task)) return false;
     const comp = task.scheduled?.start;
     if (!isPast(comp)) return false;
     if (todayIds.has(task.id)) return false;

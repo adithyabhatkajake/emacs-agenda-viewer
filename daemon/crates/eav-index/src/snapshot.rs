@@ -180,6 +180,7 @@ mod tests {
             active_timestamps: None,
             properties: Some(BTreeMap::new()),
             completions: None,
+            is_habit: None,
         }
     }
 

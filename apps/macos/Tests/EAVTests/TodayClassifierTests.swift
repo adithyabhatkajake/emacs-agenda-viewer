@@ -183,11 +183,21 @@ struct TodayClassifierTests {
         #expect(result.main.first?.id == "dup")
     }
 
-    @Test("Habit task in `all` is never pulled in as overdue")
-    func habitNotPulledAsOverdue() {
+    @Test("Overdue habit in `all` is pulled in when hideHabits is false")
+    func overdueHabitPulledInWhenShown() {
         let habit = makeHabitTask(id: "habit-overdue", scheduled: yesterday())
         let result = TodayClassifier.buildItems(
             today: [], all: [habit], doneStates: ["DONE"], hideHabits: false
+        )
+        #expect(result.main.count == 1)
+        #expect(result.main.first?.id == "habit-overdue")
+    }
+
+    @Test("Overdue habit in `all` is dropped when hideHabits is true")
+    func overdueHabitDroppedWhenHidden() {
+        let habit = makeHabitTask(id: "habit-overdue", scheduled: yesterday())
+        let result = TodayClassifier.buildItems(
+            today: [], all: [habit], doneStates: ["DONE"], hideHabits: true
         )
         #expect(result.main.isEmpty)
     }

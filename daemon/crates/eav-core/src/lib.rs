@@ -127,6 +127,12 @@ pub struct OrgTask {
     /// inside the brackets, e.g. `2026-05-11 Mon 14:32`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completions: Option<Vec<String>>,
+    /// Mirrors `:STYLE: habit` on the underlying heading. Lets the
+    /// Habits view and Today/Upcoming filters identify habit headings
+    /// from the /api/tasks payload. Omitted (decoded as nil) for
+    /// non-habit tasks, matching AgendaEntry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_habit: Option<bool>,
 }
 
 // ----------------------------------------------------------------------------
@@ -216,6 +222,11 @@ pub struct AgendaEntry {
     /// Omitted (and decoded as nil) for non-habit entries.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_habit: Option<bool>,
+    /// Heading body content, mirroring `OrgTask::notes`. Lets clients
+    /// surface notes directly on the agenda row instead of cross-
+    /// referencing `/api/tasks`. Omitted (decoded as None) when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
 }
 
 // ----------------------------------------------------------------------------
@@ -429,6 +440,7 @@ mod tests {
             active_timestamps: None,
             properties: None,
             completions: None,
+            is_habit: None,
         };
         let json = serde_json::to_string(&task).unwrap();
         assert!(!json.contains("priority"));

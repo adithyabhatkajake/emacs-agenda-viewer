@@ -18,6 +18,8 @@ struct TaskRowMenu: View {
 
     @Environment(AppSettings.self) private var settings
     @Environment(ClockManager.self) private var clocks
+    var onClockToggle: (() -> Void)? = nil
+    var onPinToggle: (() -> Void)? = nil
     private var client: APIClient? { settings.apiClient }
 
     private var isDone: Bool {
@@ -59,6 +61,7 @@ struct TaskRowMenu: View {
         // sessions can run in parallel; stop writes a finished CLOCK: line
         // to the task's LOGBOOK drawer).
         Button {
+            onClockToggle?()
             if isClockedHere {
                 run { _ = await clocks.stop(taskId: task.id, using: client!, store: store) }
             } else {
@@ -69,15 +72,11 @@ struct TaskRowMenu: View {
                   systemImage: isClockedHere ? "stop.circle" : "play.circle")
         }
 
-        // Pin to My Day
+        // Pin to My Day — delegates to TaskQuickActions so the swipe and
+        // context-menu paths stay on the same store call.
         Button {
-            run {
-                let value = isPinnedToday ? "" : DateQuery.today()
-                _ = await store.setProperty(
-                    taskId: task.id, file: task.file, pos: task.pos,
-                    key: "PINNED", value: value, using: client!
-                )
-            }
+            onPinToggle?()
+            TaskQuickActions(task: task, store: store, client: client).togglePin()
         } label: {
             Label(isPinnedToday ? "Unpin from My Day" : "Pin to My Day",
                   systemImage: isPinnedToday ? "pin.slash" : "pin")

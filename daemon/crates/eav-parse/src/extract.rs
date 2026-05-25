@@ -425,14 +425,16 @@ fn walk_headlines(
                 Some(props_map)
             };
 
+            let is_habit_flag = properties
+                .as_ref()
+                .and_then(|p| p.get("STYLE"))
+                .is_some_and(|v| v.eq_ignore_ascii_case("habit"));
+
             // Habit completions: mine the LOGBOOK only when the heading
             // is flagged as a habit, so the API payload doesn't grow
             // for every regular task that's ever been retried.
-            let completions = properties
-                .as_ref()
-                .and_then(|p| p.get("STYLE"))
-                .filter(|v| v.eq_ignore_ascii_case("habit"))
-                .map(|_| extract_logbook_completions(&raw_section_text))
+            let completions = is_habit_flag
+                .then(|| extract_logbook_completions(&raw_section_text))
                 .filter(|v| !v.is_empty());
 
             let task = OrgTask {
@@ -459,6 +461,7 @@ fn walk_headlines(
                 },
                 properties,
                 completions,
+                is_habit: is_habit_flag.then_some(true),
             };
             out.push(task);
         }

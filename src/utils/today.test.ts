@@ -147,13 +147,24 @@ describe('buildTodayItems', () => {
     expect(main).toHaveLength(0);
   });
 
-  it('does not pull a habit OrgTask as overdue', () => {
+  it('pulls an overdue habit OrgTask when hideHabits is false', () => {
     const t = task({
       id: 'habit-overdue',
       scheduled: ts(yesterdayComp()),
       properties: { STYLE: 'habit' },
     });
     const { main } = buildTodayItems([], [t], DONE_STATES, false);
+    expect(main).toHaveLength(1);
+    expect(main[0].id).toBe('habit-overdue');
+  });
+
+  it('drops an overdue habit OrgTask when hideHabits is true', () => {
+    const t = task({
+      id: 'habit-overdue',
+      scheduled: ts(yesterdayComp()),
+      properties: { STYLE: 'habit' },
+    });
+    const { main } = buildTodayItems([], [t], DONE_STATES, true);
     expect(main).toHaveLength(0);
   });
 

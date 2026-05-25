@@ -49,7 +49,7 @@ struct AllTasksView: View {
                 list(filtered)
             }
         } else if store.allTasks.isLoading {
-            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            DelayedProgressView()
         } else if let msg = store.allTasks.error {
             ErrorStateView(message: msg) { Task { await load() } }
         } else {
@@ -58,9 +58,22 @@ struct AllTasksView: View {
     }
 
     private func filter(_ tasks: [OrgTask]) -> [OrgTask] {
-        guard !searchText.isEmpty else { return tasks }
+        let doneStates = Set((store.keywords?.allDone ?? []).map { $0.uppercased() })
+        // The shared allTasks array may have been fetched with includeDone=true
+        // by the Logbook view. Filter done tasks out here at display time so
+        // the toggle is always honored regardless of how the array was loaded.
+        let base: [OrgTask]
+        if includeDone {
+            base = tasks
+        } else {
+            base = tasks.filter { task in
+                guard let state = task.todoState else { return true }
+                return !doneStates.contains(state.uppercased())
+            }
+        }
+        guard !searchText.isEmpty else { return base }
         let needle = searchText.lowercased()
-        return tasks.filter { task in
+        return base.filter { task in
             task.title.lowercased().contains(needle)
                 || task.tags.contains(where: { $0.lowercased().contains(needle) })
                 || task.category.lowercased().contains(needle)

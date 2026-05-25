@@ -28,7 +28,9 @@ import Foundation
 /// - Dedupe by task id. When the daemon emits both a scheduled-today AND a
 ///   deadline-today entry for the same heading, the deadline variant wins.
 /// - Overdue tasks not already present in `today` are pulled in from the
-///   `all` task list (the /api/tasks fetch). Habits and done tasks are skipped.
+///   `all` task list (the /api/tasks fetch). Done tasks are always skipped;
+///   habits are skipped from the overdue pull only when `hideHabits == true`,
+///   matching how habit agenda entries are filtered above.
 ///
 /// The classifier is intentionally pure — no SwiftUI, no settings access, no
 /// network. Caller is responsible for fetching both inputs and for any
@@ -88,7 +90,7 @@ enum TodayClassifier {
         let todayIds = Set(byId.keys)
 
         let overdue: [OrgTask] = all.filter { task in
-            guard !task.isHabit,
+            guard (!hideHabits || !task.isHabit),
                   let comp = task.scheduled?.start,
                   isPast(comp),
                   !todayIds.contains(task.id),

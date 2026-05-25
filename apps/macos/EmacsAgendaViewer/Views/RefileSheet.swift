@@ -19,6 +19,12 @@ struct RefileSheet: View {
     @State private var searchText = ""
     @State private var isMutating = false
     @State private var errorMessage: String?
+    // Tracks a failure from the refile-target load specifically. Using the
+    // store-wide lastMutationError is wrong because any unrelated successful
+    // mutation clears it (TasksStore.runMutation always resets it on entry),
+    // leaving refileTargets empty but the error nil — which rendered as the
+    // misleading "No refile targets — configure org-refile-targets" state.
+    @State private var loadError: String?
 
     private var client: APIClient? { settings.apiClient }
 
@@ -55,8 +61,10 @@ struct RefileSheet: View {
                 }
             }
             .task {
-                if !store.refileTargetsLoaded, let client {
-                    _ = await store.loadRefileTargets(using: client)
+                guard !store.refileTargetsLoaded, let client else { return }
+                let ok = await store.loadRefileTargets(using: client)
+                if !ok {
+                    loadError = store.lastMutationError ?? "Couldn't load refile targets"
                 }
             }
         }
@@ -67,7 +75,7 @@ struct RefileSheet: View {
         if !store.refileTargetsLoaded {
             ProgressView("Loading targets\u{2026}")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if store.refileTargets.isEmpty, let err = store.lastMutationError {
+        } else if store.refileTargets.isEmpty, let err = loadError {
             // Bridge / network failure (e.g. one of the agenda buffers in
             // org-refile-get-targets is in a non-org major mode). Surface
             // the error and let the user retry without dismissing the sheet.
@@ -80,7 +88,11 @@ struct RefileSheet: View {
                     Task {
                         guard let client else { return }
                         store.refileTargetsLoaded = false
-                        _ = await store.loadRefileTargets(using: client)
+                        loadError = nil
+                        let ok = await store.loadRefileTargets(using: client)
+                        if !ok {
+                            loadError = store.lastMutationError ?? "Couldn't load refile targets"
+                        }
                     }
                 }
                 .buttonStyle(.borderedProminent)

@@ -29,6 +29,13 @@ struct ExpandableTaskRow: View {
     @State private var blocks: [NoteBlock] = []
     @State private var showEditor: Bool = false
     @State private var showEditSheet: Bool = false
+    @State private var showScheduleSheet: Bool = false
+
+    // Haptic triggers — one Bool per action type. Flipped to true to fire
+    // the feedback, then reset so the same gesture can re-trigger next time.
+    @State private var hapticDone: Bool = false
+    @State private var hapticPin: Bool = false
+    @State private var hapticClock: Bool = false
 
     /// Cached parse result. `blocks` is seeded from `sourceNotes()` on
     /// appear (via `.task(id:)`) and kept up to date by every mutation path,
@@ -105,6 +112,42 @@ struct ExpandableTaskRow: View {
                     .padding(.bottom, 10)
             }
         }
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button {
+                // Reuses the same mutation path as the checkbox so the two
+                // entry points stay in sync through a single code path.
+                toggleDone()
+            } label: {
+                let isDone: Bool = {
+                    guard let s = task.todoState else { return false }
+                    return doneStates.contains(s.uppercased())
+                }()
+                Label(isDone ? "Reopen" : "Done",
+                      systemImage: isDone ? "arrow.uturn.backward.circle" : "checkmark.circle")
+            }
+            .tint(Theme.doneGreen)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button {
+                showScheduleSheet = true
+            } label: {
+                Label("Schedule", systemImage: "calendar.badge.plus")
+            }
+            .tint(Theme.accent)
+
+            Button {
+                makeActions().togglePin()
+                hapticPin.toggle()
+            } label: {
+                let pinned = makeActions().isPinnedToday
+                Label(pinned ? "Unpin" : "Pin",
+                      systemImage: pinned ? "pin.slash" : "pin")
+            }
+            .tint(Theme.priorityB)
+        }
+        .sensoryFeedback(.success, trigger: hapticDone)
+        .sensoryFeedback(.impact, trigger: hapticPin)
+        .sensoryFeedback(.impact, trigger: hapticClock)
         .contextMenu {
             TaskRowMenu(
                 task: task, store: store, doneStates: doneStates,
@@ -115,8 +158,13 @@ struct ExpandableTaskRow: View {
                     // can fire without ensureNotesLoaded running).
                     if notesText.isEmpty { notesText = sourceNotes() }
                     showEditor = true
-                }
+                },
+                onClockToggle: { hapticClock.toggle() },
+                onPinToggle: { hapticPin.toggle() }
             )
+        }
+        .sheet(isPresented: $showScheduleSheet) {
+            SchedulePickerSheet(task: task, store: store)
         }
         .sheet(isPresented: $showEditSheet) {
             EditTaskSheet(task: task, store: store)
@@ -142,6 +190,10 @@ struct ExpandableTaskRow: View {
                 blocks = NotesParser.parse(text)
             }
         }
+    }
+
+    private func makeActions() -> TaskQuickActions {
+        TaskQuickActions(task: task, store: store, client: client)
     }
 
     @ViewBuilder
@@ -191,6 +243,7 @@ struct ExpandableTaskRow: View {
 
     private func toggleDone() {
         guard let client else { return }
+        hapticDone.toggle()
         Task {
             _ = await store.toggleDone(task, file: task.file, pos: task.pos, using: client)
             // On failure store.lastMutationError is set (e.g. blocked-by-sub-tasks
@@ -216,10 +269,13 @@ struct ExpandableTaskRow: View {
     }
 
     /// Best-effort notes lookup that doesn't trigger a network fetch —
-    /// uses the inline `notes` field from `/api/tasks` (already present on
-    /// most rows). Used to seed the optimistic toggle path.
+    /// reads the inline `notes` field directly from the task value.
+    /// Resolution order: OrgTask.notes → AgendaEntry.notes → allTasks
+    /// cross-reference (last-resort for surfaces where the daemon hasn't
+    /// populated notes yet).
     private func sourceNotes() -> String {
         if let org = task as? OrgTask, let n = org.notes { return n }
+        if let entry = task as? AgendaEntry, let n = entry.notes { return n }
         if let match = store.allTasks.value?.first(where: { $0.id == task.id }),
            let n = match.notes { return n }
         return ""

@@ -7,6 +7,8 @@ struct LogbookView: View {
     @Environment(AppSettings.self) private var settings
     let store: TasksStore
 
+    @State private var expandedIds: Set<String> = []
+
     var body: some View {
         NavigationStack {
             content
@@ -31,7 +33,7 @@ struct LogbookView: View {
                 groupedList(filtered)
             }
         } else if store.allTasks.isLoading {
-            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            DelayedProgressView()
         } else if let msg = store.allTasks.error {
             ErrorStateView(message: msg) { Task { await load() } }
         } else {
@@ -50,11 +52,10 @@ struct LogbookView: View {
             ForEach(groups, id: \.id) { group in
                 Section {
                     ForEach(group.items, id: \.id) { task in
-                        NavigationLink {
-                            TaskDetailView(task: task, doneStates: doneStates, store: store)
-                        } label: {
-                            TaskRow(task: task, doneStates: doneStates)
-                        }
+                        LogbookRow(
+                            task: task, doneStates: doneStates, store: store,
+                            expandedIds: $expandedIds
+                        )
                         .listRowBackground(Theme.background)
                         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                         .listRowSeparatorTint(Theme.borderSubtle)
@@ -81,6 +82,53 @@ struct LogbookView: View {
         let alreadyHasDone = store.allTasks.value?.contains(where: { store.isDoneState($0.todoState) }) ?? false
         if store.allTasks.value == nil || !alreadyHasDone {
             await load()
+        }
+    }
+}
+
+/// Single logbook row: `TaskRowItem` interaction (tap = expand, long-press =
+/// context menu with Reopen + Archive). Archive is gated here and not surfaced
+/// anywhere else because `org-archive-subtree` is destructive — the heading
+/// moves to the `.org_archive` file and disappears from every eavd index view.
+private struct LogbookRow: View {
+    let task: OrgTask
+    let doneStates: Set<String>
+    let store: TasksStore
+    @Binding var expandedIds: Set<String>
+
+    @Environment(AppSettings.self) private var settings
+    @State private var showArchiveConfirm = false
+
+    private var client: APIClient? { settings.apiClient }
+
+    var body: some View {
+        TaskRowItem(
+            task: task, doneStates: doneStates, store: store,
+            expandedIds: $expandedIds
+        )
+        .contextMenu {
+            TaskRowMenu(
+                task: task, store: store, doneStates: doneStates
+            )
+            Divider()
+            Button(role: .destructive) {
+                showArchiveConfirm = true
+            } label: {
+                Label("Archive\u{2026}", systemImage: "archivebox")
+            }
+        }
+        .confirmationDialog(
+            "Archive this task?",
+            isPresented: $showArchiveConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Archive", role: .destructive) {
+                guard let client else { return }
+                Task { _ = await store.archive(task, using: client) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The heading will be moved to the org archive file. This cannot be undone from the app.")
         }
     }
 }

@@ -191,6 +191,11 @@ Returns a list of parsed timestamp alists. Uses org's own parser so
       (when notes (push (cons 'notes notes) result))
       (when active-timestamps
         (push (cons 'activeTimestamps (vconcat active-timestamps)) result))
+      ;; Mirror eav-core's OrgTask.is_habit: only emit when :STYLE: habit,
+      ;; so non-habit tasks carry no isHabit key (matches skip_serializing_if).
+      (let ((style (org-entry-get nil "STYLE")))
+        (when (and style (string-equal-ignore-case style "habit"))
+          (push (cons 'isHabit t) result)))
       ;; Custom properties (skip the org built-ins already surfaced separately).
       (let* ((all-props (org-entry-properties nil 'standard))
              (skip '("CATEGORY" "ID" "EFFORT"))
@@ -415,6 +420,7 @@ a., a), A., A) are valid list markers."
          ;; Get additional heading data from the marker
          (scheduled-str nil)
          (deadline-str nil)
+         (notes nil)
          (id nil))
     ;; Visit the original heading to get scheduling/deadline/ID
     (when marker
@@ -423,6 +429,7 @@ a., a), A., A) are valid list markers."
           (goto-char pos)
           (setq scheduled-str (org-entry-get nil "SCHEDULED"))
           (setq deadline-str (org-entry-get nil "DEADLINE"))
+          (setq notes (eav--get-heading-content))
           (setq id (org-entry-get nil "ID")))))
     ;; Build result
     (let ((result (list (cons 'id (or id (format "%s::%d" file pos)))
@@ -449,6 +456,7 @@ a., a), A., A) are valid list markers."
               result))
       (when extra (push (cons 'extra extra) result))
       (when ts-date-str (push (cons 'tsDate ts-date-str) result))
+      (when notes (push (cons 'notes notes) result))
       result)))
 
 (defun eav--date-to-calendar (date-string)

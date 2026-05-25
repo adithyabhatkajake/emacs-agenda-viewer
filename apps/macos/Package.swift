@@ -78,6 +78,7 @@ let package = Package(
                 "EmacsAgendaViewer/State/OrgInlineCore.swift",
                 "EmacsAgendaViewer/State/Sorting.swift",
                 "EmacsAgendaViewer/State/TaskFilters.swift",
+                "EmacsAgendaViewer/State/OptimisticPatch.swift",
                 "EmacsAgendaViewer/State/TasksStore.swift",
                 "EmacsAgendaViewer/State/TodayClassifier.swift",
                 "EmacsAgendaViewer/Theme.swift",

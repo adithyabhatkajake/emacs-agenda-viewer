@@ -97,6 +97,8 @@ struct EditTaskSheet: View {
         )
     }
 
+    @FocusState private var keyboardFocused: Bool
+
     var body: some View {
         PickerSheetScaffold(
             title: "Edit Task",
@@ -160,33 +162,23 @@ struct EditTaskSheet: View {
                         .textInputAutocapitalization(.never)
                 }
 
-                Section("Scheduled") {
-                    Toggle("Schedule this task", isOn: $includeScheduled)
-                        .tint(Theme.accent)
-                    if includeScheduled {
-                        DatePicker("Date", selection: $scheduledDate, displayedComponents: .date)
-                            .datePickerStyle(.graphical)
-                        Toggle("Include time", isOn: $includeScheduledTime)
-                            .tint(Theme.accent)
-                        if includeScheduledTime {
-                            DatePicker("Time", selection: $scheduledTime, displayedComponents: .hourAndMinute)
-                        }
-                    }
-                }
+                TimestampField(
+                    label: "Scheduled",
+                    toggleLabel: "Schedule this task",
+                    isEnabled: $includeScheduled,
+                    date: $scheduledDate,
+                    time: $scheduledTime,
+                    includeTime: $includeScheduledTime
+                )
 
-                Section("Deadline") {
-                    Toggle("Set deadline", isOn: $includeDeadline)
-                        .tint(Theme.accent)
-                    if includeDeadline {
-                        DatePicker("Date", selection: $deadlineDate, displayedComponents: .date)
-                            .datePickerStyle(.graphical)
-                        Toggle("Include time", isOn: $includeDeadlineTime)
-                            .tint(Theme.accent)
-                        if includeDeadlineTime {
-                            DatePicker("Time", selection: $deadlineTime, displayedComponents: .hourAndMinute)
-                        }
-                    }
-                }
+                TimestampField(
+                    label: "Deadline",
+                    toggleLabel: "Set deadline",
+                    isEnabled: $includeDeadline,
+                    date: $deadlineDate,
+                    time: $deadlineTime,
+                    includeTime: $includeDeadlineTime
+                )
 
                 Section {
                     if notesLoading {
@@ -202,6 +194,7 @@ struct EditTaskSheet: View {
                             .frame(minHeight: 120)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.sentences)
+                            .focused($keyboardFocused)
                     }
                 } header: {
                     Text("Notes")
@@ -213,6 +206,15 @@ struct EditTaskSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(Theme.background)
+            // Interactive dismiss so the user can reach the Save button by
+            // scrolling even while the TextEditor notes field has focus.
+            .scrollDismissesKeyboard(.interactively)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { keyboardFocused = false }
+                }
+            }
         }
         .task { await setup() }
     }

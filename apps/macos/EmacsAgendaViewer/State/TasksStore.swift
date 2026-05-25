@@ -219,6 +219,71 @@ final class TasksStore {
         }
     }
 
+    // MARK: - Optimistic patch helpers
+
+    /// Describes one field-level change to apply immediately to cached arrays.
+    /// Sentinel strings use `@TODO`/`@DONE` conventions from the org bridge,
+    /// but the optimistic layer never maps sentinels — it only stores the
+    /// concrete display value the caller chose. Sentinels appear only in the
+    /// wire request, not in the cache patch.
+    enum OptimisticField {
+        case todoState(String?)
+        case priority(String?)
+        case scheduled(OrgTimestamp?)
+        case deadline(OrgTimestamp?)
+        /// Key-value pair for the `properties` dict on OrgTask. Absent from
+        /// AgendaEntry, so patching today/upcoming is a no-op for this case.
+        case property(key: String, value: String)
+    }
+
+    /// Pre-image snapshots saved before an optimistic write, keyed by task id.
+    /// Used for rollback when the network call fails.
+    private struct PreImage {
+        var todayEntries: [AgendaEntry]?
+        var upcomingEntries: [AgendaEntry]?
+        var allTasksList: [OrgTask]?
+    }
+
+    /// Apply `field` to every element matching `taskId` in the loaded arrays,
+    /// returning a pre-image for rollback. The sentinel strings `@TODO`/`@DONE`
+    /// are never passed here — callers resolve them (or leave them unresolved)
+    /// before deciding which concrete field value to optimistically show. For
+    /// `toggleDone` we use `nil` so the state clears instantly (correct for
+    /// the toggle-off case; less precise for toggle-on, but the reconcile
+    /// after the round-trip corrects it).
+    private func applyOptimistic(taskId: String, _ field: OptimisticField) -> PreImage {
+        let pre = PreImage(
+            todayEntries: today.value,
+            upcomingEntries: upcoming.value,
+            allTasksList: allTasks.value
+        )
+        if case .loaded(let entries) = today {
+            today = .loaded(entries.map { e in
+                guard e.id == taskId else { return e }
+                return e.patching(field)
+            })
+        }
+        if case .loaded(let entries) = upcoming {
+            upcoming = .loaded(entries.map { e in
+                guard e.id == taskId else { return e }
+                return e.patching(field)
+            })
+        }
+        if case .loaded(let tasks) = allTasks {
+            allTasks = .loaded(tasks.map { t in
+                guard t.id == taskId else { return t }
+                return t.patching(field)
+            })
+        }
+        return pre
+    }
+
+    private func rollback(_ pre: PreImage) {
+        if let entries = pre.todayEntries { today = .loaded(entries) }
+        if let entries = pre.upcomingEntries { upcoming = .loaded(entries) }
+        if let tasks = pre.allTasksList { allTasks = .loaded(tasks) }
+    }
+
     // MARK: - Mutations
 
     @discardableResult
@@ -233,19 +298,51 @@ final class TasksStore {
         // "DONE"). See `eav-set-todo-state` for the sentinel handling.
         let nextState = isDone ? "@TODO" : "@DONE"
         lastToggledState = nextState
-        return await setState(taskId: task.id, file: file, pos: pos, state: nextState, using: client)
+        // Optimistically clear / set the done indicator so the row reacts
+        // before the daemon round-trip. We can't know the resolved keyword
+        // (the bridge picks it from the heading's own sequence), so we use
+        // nil for "clear" (going to-do) and the first known done keyword for
+        // "mark done". The reconcile after the round-trip always corrects it.
+        let optimisticState: String? = isDone ? nil : (keywords?.allDone.first ?? "DONE")
+        // Capture pin status before the mutation: a repeating task completed
+        // via @DONE resets to TODO and keeps its :PINNED: property, so it would
+        // otherwise linger in My Day after completion.
+        let wasPinnedToday = allTasks.value?.first { $0.id == task.id }
+            .map(TaskFilters.isPinnedToday) ?? false
+        let ok = await setState(
+            taskId: task.id, file: file, pos: pos, state: nextState,
+            optimisticTodoState: optimisticState, using: client
+        )
+        // Completing a pinned task unpins it (leaves My Day). Un-completing
+        // does not re-pin — the user re-pins manually if they want it back.
+        if ok, !isDone, wasPinnedToday {
+            _ = await setProperty(
+                taskId: task.id, file: file, pos: pos,
+                key: "PINNED", value: "", using: client
+            )
+        }
+        return ok
     }
 
     @discardableResult
     func setState(taskId: String, file: String, pos: Int, state: String, using client: APIClient) async -> Bool {
-        await runMutation(client: client) {
+        await setState(taskId: taskId, file: file, pos: pos, state: state,
+                       optimisticTodoState: state, using: client)
+    }
+
+    @discardableResult
+    private func setState(taskId: String, file: String, pos: Int, state: String,
+                          optimisticTodoState: String?, using client: APIClient) async -> Bool {
+        let pre = applyOptimistic(taskId: taskId, .todoState(optimisticTodoState))
+        return await runMutation(client: client, preImage: pre) {
             try await client.setState(taskId: taskId, file: file, pos: pos, state: state)
         }
     }
 
     @discardableResult
     func setPriority(taskId: String, file: String, pos: Int, priority: String, using client: APIClient) async -> Bool {
-        await runMutation(client: client) {
+        let pre = applyOptimistic(taskId: taskId, .priority(priority.isEmpty ? nil : priority))
+        return await runMutation(client: client, preImage: pre) {
             try await client.setPriority(taskId: taskId, file: file, pos: pos, priority: priority)
         }
     }
@@ -278,21 +375,32 @@ final class TasksStore {
 
     @discardableResult
     func setScheduled(taskId: String, file: String, pos: Int, timestamp: String, using client: APIClient) async -> Bool {
-        await runMutation(client: client) {
+        let parsed = OrgTimestamp.parseDateString(timestamp).flatMap { _ in
+            // Build a minimal OrgTimestamp from the raw string so the row
+            // shows the new date immediately. Full parse happens on reconcile.
+            OrgTimestamp(rawString: timestamp)
+        }
+        let pre = applyOptimistic(taskId: taskId, .scheduled(parsed))
+        return await runMutation(client: client, preImage: pre) {
             try await client.setScheduled(taskId: taskId, file: file, pos: pos, timestamp: timestamp)
         }
     }
 
     @discardableResult
     func setDeadline(taskId: String, file: String, pos: Int, timestamp: String, using client: APIClient) async -> Bool {
-        await runMutation(client: client) {
+        let parsed = OrgTimestamp.parseDateString(timestamp).flatMap { _ in
+            OrgTimestamp(rawString: timestamp)
+        }
+        let pre = applyOptimistic(taskId: taskId, .deadline(parsed))
+        return await runMutation(client: client, preImage: pre) {
             try await client.setDeadline(taskId: taskId, file: file, pos: pos, timestamp: timestamp)
         }
     }
 
     @discardableResult
     func setProperty(taskId: String, file: String, pos: Int, key: String, value: String, using client: APIClient) async -> Bool {
-        await runMutation(client: client) {
+        let pre = applyOptimistic(taskId: taskId, .property(key: key, value: value))
+        return await runMutation(client: client, preImage: pre) {
             try await client.setProperty(taskId: taskId, file: file, pos: pos, key: key, value: value)
         }
     }
@@ -432,13 +540,21 @@ final class TasksStore {
     /// on entry so callers reading it after this call see ONLY this
     /// mutation's outcome — without this, a stale error from an earlier
     /// failed mutation would block dismissal of a successful sheet.
-    private func runMutation(client: APIClient, _ op: () async throws -> Void) async -> Bool {
+    ///
+    /// When `preImage` is supplied the arrays were already patched
+    /// optimistically; on failure the pre-image is restored before surfacing
+    /// the error so the UI snaps back atomically.
+    @discardableResult
+    private func runMutation(client: APIClient,
+                             preImage: PreImage? = nil,
+                             _ op: () async throws -> Void) async -> Bool {
         lastMutationError = nil
         do {
             try await op()
             await refreshLoaded(using: client)
             return true
         } catch {
+            if let pre = preImage { rollback(pre) }
             lastMutationError = error.message
             return false
         }

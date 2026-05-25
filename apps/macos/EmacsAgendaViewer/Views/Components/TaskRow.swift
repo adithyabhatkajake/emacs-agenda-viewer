@@ -43,11 +43,21 @@ struct TaskRow: View {
                 }
 
                 let repeatLabel = RepeaterFormatter.label(task.scheduled?.repeater ?? task.deadline?.repeater)
+                let isOverdue = TodayClassifier.isOverdue(task)
                 let hasMeta = task.scheduled != nil || task.deadline != nil
                     || !task.tags.isEmpty || !task.inheritedTags.isEmpty
                     || !task.category.isEmpty || repeatLabel != nil
+                    || isOverdue
                 if hasMeta {
                     HStack(spacing: 8) {
+                        // Non-color overdue signal so the row is distinguishable
+                        // without relying on colour alone (accessibility).
+                        if isOverdue {
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.caption2)
+                                .foregroundStyle(Theme.priorityA)
+                                .accessibilityLabel("Overdue")
+                        }
                         if !task.category.isEmpty {
                             Text(task.category)
                                 .font(.caption2)
