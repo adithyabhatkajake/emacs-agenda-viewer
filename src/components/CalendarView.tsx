@@ -13,8 +13,8 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { OrgTask, TodoKeywords } from '../types';
-import type { ClockStatus } from '../api/tasks';
 import { updateScheduled } from '../api/tasks';
+import type { ClockManager } from '../hooks/useClockManager';
 import { TaskItem } from './TaskItem';
 import { renderInline } from './NotesRenderer';
 
@@ -89,7 +89,7 @@ interface DayPopoverProps {
   anchorRect: DOMRect;
   keywords: TodoKeywords | null;
   isDoneState: (s: string | undefined) => boolean;
-  clockStatus: ClockStatus;
+  clockManager: ClockManager;
   allTags: string[];
   onRefresh: () => void;
   onRefreshClock: () => void;
@@ -97,7 +97,7 @@ interface DayPopoverProps {
 }
 
 function DayPopover({
-  ymd, tasks, anchorRect, keywords, isDoneState, clockStatus, allTags,
+  ymd, tasks, anchorRect, keywords, isDoneState, clockManager, allTags,
   onRefresh, onRefreshClock, onClose,
 }: DayPopoverProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -151,7 +151,8 @@ function DayPopover({
               task={task}
               keywords={keywords}
               isDoneState={isDoneState}
-              clockStatus={clockStatus}
+              clockManager={clockManager}
+              allTasksForClock={tasks}
               allTags={allTags}
               onRefresh={() => { onRefresh(); onClose(); }}
               onRefreshClock={onRefreshClock}
@@ -172,14 +173,14 @@ interface CalendarViewProps {
   tasks: OrgTask[];
   keywords: TodoKeywords | null;
   isDoneState: (state: string | undefined) => boolean;
-  clockStatus: ClockStatus;
+  clockManager: ClockManager;
   allTags: string[];
   onRefresh: () => void;
   onRefreshClock: () => void;
 }
 
 export function CalendarView({
-  tasks, keywords, isDoneState, clockStatus, allTags, onRefresh, onRefreshClock,
+  tasks, keywords, isDoneState, clockManager, allTags, onRefresh, onRefreshClock,
 }: CalendarViewProps) {
   const today = todayStr();
   const todayDate = new Date();
@@ -351,7 +352,7 @@ export function CalendarView({
           anchorRect={popover.rect}
           keywords={keywords}
           isDoneState={isDoneState}
-          clockStatus={clockStatus}
+          clockManager={clockManager}
           allTags={allTags}
           onRefresh={onRefresh}
           onRefreshClock={onRefreshClock}

@@ -5,6 +5,7 @@ import { CaptureModal } from './components/CaptureModal';
 import { SettingsModal } from './components/SettingsModal';
 import { ClockDock } from './components/ClockDock';
 import { useTasks } from './hooks/useTasks';
+import { useClockManager } from './hooks/useClockManager';
 import { useTheme } from './hooks/useTheme';
 import type { ViewFilter } from './types';
 
@@ -36,6 +37,8 @@ export default function App() {
     refresh,
     refreshClock,
   } = useTasks();
+
+  const clockManager = useClockManager();
 
   const isMobile = useIsMobile();
   const [filter, setFilter] = useState<ViewFilter>({ type: 'today' });
@@ -155,6 +158,7 @@ export default function App() {
         keywords={keywords}
         isDoneState={isDoneState}
         clockStatus={clockStatus}
+        clockManager={clockManager}
         allTags={allTags}
         onRefresh={refresh}
         onRefreshClock={refreshClock}
@@ -177,7 +181,8 @@ export default function App() {
       )}
       <ClockDock
         clockStatus={clockStatus}
-        onClockOut={refreshClock}
+        clockManager={clockManager}
+        tasks={tasks}
         onReveal={handleReveal}
       />
     </>

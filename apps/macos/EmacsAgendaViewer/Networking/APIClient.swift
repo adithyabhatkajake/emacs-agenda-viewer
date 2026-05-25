@@ -224,15 +224,6 @@ struct APIClient {
         try await patchTask(taskId, path: "property", body: Body(file: file, pos: pos, key: key, value: value))
     }
 
-    func clockIn(file: String, pos: Int) async throws {
-        struct Body: Encodable { let file: String; let pos: Int }
-        try await send("POST", "/api/clock/in", body: Body(file: file, pos: pos))
-    }
-
-    func clockOut() async throws {
-        try await send("POST", "/api/clock/out", body: EmptyBody())
-    }
-
     /// Appends a completed `CLOCK: [start]--[end] => H:MM` line to the task's LOGBOOK.
     /// `start` and `end` are Unix epoch seconds.
     func logClockEntry(file: String, pos: Int, start: Int, end: Int) async throws {

@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import type { OrgTask, AgendaEntry, ViewFilter, TodoKeywords } from '../types';
 import { TaskItem } from './TaskItem';
 import { renderInline } from './NotesRenderer';
-import { type ClockStatus, clockOutApi, loadSettings, updateScheduled, todayYMD } from '../api/tasks';
+import { type ClockStatus, loadSettings, updateScheduled, todayYMD } from '../api/tasks';
+import type { ClockManager } from '../hooks/useClockManager';
 import { HabitsView, TodayHabitsGroup } from './HabitsView';
 import { isHabit } from '../utils/habits';
 import { buildTodayItems } from '../utils/today';
@@ -20,6 +21,7 @@ interface TaskListProps {
   keywords: TodoKeywords | null;
   isDoneState: (state: string | undefined) => boolean;
   clockStatus: ClockStatus;
+  clockManager: ClockManager;
   allTags: string[];
   onRefresh: () => void;
   onRefreshClock: () => void;
@@ -263,12 +265,13 @@ const DRAG_KEY = 'eav-drag-task-id';
 
 /** Recursively render grouped items with collapsible headers */
 function RenderGroups({
-  nodes, keywords, isDoneState, clockStatus, allTags, onRefresh, onRefreshClock, makeDraggable,
+  nodes, keywords, isDoneState, clockManager, allTasksForClock, allTags, onRefresh, onRefreshClock, makeDraggable,
 }: {
   nodes: GroupNode[];
   keywords: TodoKeywords | null;
   isDoneState: (s: string | undefined) => boolean;
-  clockStatus: ClockStatus;
+  clockManager: ClockManager;
+  allTasksForClock: (OrgTask | AgendaEntry)[];
   allTags: string[];
   onRefresh: () => void;
   onRefreshClock: () => void;
@@ -305,7 +308,7 @@ function RenderGroups({
             )}
             {!isCollapsed && (
               node.children.length > 0 ? (
-                <RenderGroups nodes={node.children} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} makeDraggable={makeDraggable} />
+                <RenderGroups nodes={node.children} keywords={keywords} isDoneState={isDoneState} clockManager={clockManager} allTasksForClock={allTasksForClock} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} makeDraggable={makeDraggable} />
               ) : (
                 node.items.map(task => {
                   const itemKey = task.id + ('agendaType' in task ? (task as AgendaEntry).agendaType : '');
@@ -315,7 +318,8 @@ function RenderGroups({
                       task={task}
                       keywords={keywords}
                       isDoneState={isDoneState}
-                      clockStatus={clockStatus}
+                      clockManager={clockManager}
+                      allTasksForClock={allTasksForClock}
                       allTags={allTags}
                       onRefresh={onRefresh}
                       onRefreshClock={onRefreshClock}
@@ -356,8 +360,9 @@ function formatElapsed(seconds: number): string {
 }
 
 export function TaskList({
-  tasks, todayEntries, upcomingEntries, filter, keywords, isDoneState, clockStatus, allTags, onRefresh, onRefreshClock, onCapture, sidebarOpen, onToggleSidebar, warningDays = 14,
+  tasks, todayEntries, upcomingEntries, filter, keywords, isDoneState, clockStatus, clockManager, allTags, onRefresh, onRefreshClock, onCapture, sidebarOpen, onToggleSidebar, warningDays = 14,
 }: TaskListProps) {
+  const allTasksForClock: (OrgTask | AgendaEntry)[] = tasks;
   const [controlsOpen, setControlsOpen] = useState(false);
   const [controlsAnchor, setControlsAnchor] = useState<{ top: number; right: number } | null>(null);
   const controlsBtnRef = useRef<HTMLButtonElement>(null);
@@ -602,11 +607,7 @@ export function TaskList({
             <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] px-2 py-[3px] rounded-full bg-done-green/10 text-done-green border border-done-green/20 self-center">
               <span className="w-1.5 h-1.5 rounded-full bg-done-green animate-pulse" />
               <span className="max-w-[160px] truncate">{renderInline(clockStatus.heading)}</span>
-              <button
-                onClick={async () => { try { await clockOutApi(); onRefreshClock(); } catch (err) { console.error('Failed to clock out:', err); } }}
-                className="text-done-green hover:brightness-125"
-                title="Stop clock"
-              >{'\u23F9'}</button>
+              <span className="text-[9px] text-done-green/70 italic">Emacs</span>
             </span>
           )}
         </div>
@@ -652,7 +653,7 @@ export function TaskList({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        {/* Clock banner */}
+        {/* Emacs clock banner (read-only indicator) */}
         {clockStatus.clocking && clockStatus.heading && (
           <div className="mx-3 md:mx-5 mt-3 mb-1 px-3 md:px-4 py-2 rounded-lg bg-done-green/10 border border-done-green/20 flex items-center gap-3">
             <span className="w-2 h-2 rounded-full bg-done-green animate-pulse flex-shrink-0" />
@@ -662,15 +663,7 @@ export function TaskList({
             <span className="text-[13px] text-done-green font-bold tabular-nums">
               {formatElapsed(clockElapsed)}
             </span>
-            <button
-              onClick={async () => {
-                try { await clockOutApi(); onRefreshClock(); }
-                catch (err) { console.error('Failed to clock out:', err); }
-              }}
-              className="text-[10px] px-2 py-0.5 rounded bg-done-green/20 text-done-green hover:bg-done-green/30 transition-colors font-medium"
-            >
-              Stop
-            </button>
+            <span className="text-[10px] text-done-green/70 italic">Emacs</span>
           </div>
         )}
 
@@ -680,10 +673,8 @@ export function TaskList({
             tasks={tasks}
             keywords={keywords}
             isDoneState={isDoneState}
-            clockStatus={clockStatus}
             allTags={allTags}
             onRefresh={onRefresh}
-            onRefreshClock={onRefreshClock}
           />
 
         ) : filter.type === 'eisenhower' ? (
@@ -692,7 +683,7 @@ export function TaskList({
             tasks={tasks}
             keywords={keywords}
             isDoneState={isDoneState}
-            clockStatus={clockStatus}
+            clockManager={clockManager}
             allTags={allTags}
             onRefresh={onRefresh}
             onRefreshClock={onRefreshClock}
@@ -705,7 +696,7 @@ export function TaskList({
             tasks={tasks}
             keywords={keywords}
             isDoneState={isDoneState}
-            clockStatus={clockStatus}
+            clockManager={clockManager}
             allTags={allTags}
             onRefresh={onRefresh}
             onRefreshClock={onRefreshClock}
@@ -753,7 +744,8 @@ export function TaskList({
                     nodes={multiGroup(todaySection, activeGroups)}
                     keywords={keywords}
                     isDoneState={isDoneState}
-                    clockStatus={clockStatus}
+                    clockManager={clockManager}
+                    allTasksForClock={allTasksForClock}
                     allTags={allTags}
                     onRefresh={onRefresh}
                     onRefreshClock={onRefreshClock}
@@ -825,7 +817,7 @@ export function TaskList({
                 <EventBanners events={dayEvents} />
                 {dayTasks.length > 0 && (
                   <div className="task-card">
-                    <RenderGroups nodes={grouped} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} makeDraggable />
+                    <RenderGroups nodes={grouped} keywords={keywords} isDoneState={isDoneState} clockManager={clockManager} allTasksForClock={allTasksForClock} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} makeDraggable />
                   </div>
                 )}
               </div>
@@ -844,7 +836,8 @@ export function TaskList({
                     task={task}
                     keywords={keywords}
                     isDoneState={isDoneState}
-                    clockStatus={clockStatus}
+                    clockManager={clockManager}
+                    allTasksForClock={allTasksForClock}
                     allTags={allTags}
                     onRefresh={onRefresh}
                     onRefreshClock={onRefreshClock}
@@ -860,10 +853,10 @@ export function TaskList({
           <div className="task-card">
             {topLevel.map(task => (
               <div key={task.id}>
-                <TaskItem task={task} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
+                <TaskItem task={task} keywords={keywords} isDoneState={isDoneState} clockManager={clockManager} allTasksForClock={allTasksForClock} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
                 {children.get(task.id)?.map(child => (
                   <div key={child.id} className="pl-8">
-                    <TaskItem task={child} keywords={keywords} isDoneState={isDoneState} clockStatus={clockStatus} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
+                    <TaskItem task={child} keywords={keywords} isDoneState={isDoneState} clockManager={clockManager} allTasksForClock={allTasksForClock} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
                   </div>
                 ))}
               </div>
@@ -877,7 +870,8 @@ export function TaskList({
               nodes={multiGroup(items, activeGroups)}
               keywords={keywords}
               isDoneState={isDoneState}
-              clockStatus={clockStatus}
+              clockManager={clockManager}
+              allTasksForClock={allTasksForClock}
               allTags={allTags}
               onRefresh={onRefresh}
               onRefreshClock={onRefreshClock}

@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { OrgTask, AgendaEntry, OrgTimestamp, TodoKeywords } from '../types';
-import { updateTodoState, updatePriority, updateScheduled, updateDeadline, updateTitle, updateTags, setEffort, setPinned, todayYMD, fetchRefileTargets, refileTask, archiveTask, fetchNotes, saveNotes, clockIn, clockOutApi, type ClockStatus, type RefileTarget } from '../api/tasks';
+import { updateTodoState, updatePriority, updateScheduled, updateDeadline, updateTitle, updateTags, setEffort, setPinned, todayYMD, fetchRefileTargets, refileTask, archiveTask, fetchNotes, saveNotes, type RefileTarget } from '../api/tasks';
+import type { ClockManager } from '../hooks/useClockManager';
 import { TagPicker } from './TagPicker';
 import { EffortPicker } from './EffortPicker';
 import { ScheduleTray } from './ScheduleTray';
@@ -39,7 +40,8 @@ interface TaskItemProps {
   task: DisplayItem;
   keywords: TodoKeywords | null;
   isDoneState: (state: string | undefined) => boolean;
-  clockStatus: ClockStatus;
+  clockManager: ClockManager;
+  allTasksForClock: (OrgTask | AgendaEntry)[];
   onRefresh: () => void;
   onRefreshClock: () => void;
   agendaType?: string;
@@ -122,7 +124,7 @@ function isOverdue(ts: { raw: string } | undefined): boolean {
   return date < today;
 }
 
-export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, onRefreshClock, agendaType, allTags, allowArchive }: TaskItemProps) {
+export function TaskItem({ task, keywords, isDoneState, clockManager, allTasksForClock, onRefresh, onRefreshClock, agendaType, allTags, allowArchive }: TaskItemProps) {
   const [updating, setUpdating] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [notes, setNotes] = useState<string | null>(null);
@@ -261,7 +263,7 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
   const effectiveAgendaType = agendaType || agendaEntry?.agendaType;
   const orgExtra = agendaEntry?.extra;
   const tsDate = agendaEntry?.tsDate;
-  const isClocked = clockStatus.clocking && clockStatus.file === task.file && clockStatus.pos === task.pos;
+  const isClocked = clockManager.isClocked(task.id);
 
   // Next-repeat chip: only for OrgTask (not AgendaEntry), not done
   const nextRepeatDate = (!isAgenda && !done)
@@ -585,19 +587,15 @@ export function TaskItem({ task, keywords, isDoneState, clockStatus, onRefresh, 
             />
             {task.todoState && (
               <button
-                onClick={async () => {
-                  try {
-                    if (isClocked) {
-                      await clockOutApi();
-                    } else {
-                      await clockIn(task.file, task.pos);
-                    }
-                    onRefreshClock();
-                  } catch (err) {
-                    console.error('Clock error:', err);
+                onClick={() => {
+                  if (isClocked) {
+                    clockManager.stop(task.id, allTasksForClock);
+                  } else {
+                    clockManager.start(task);
                   }
                 }}
-                className={`flex items-center gap-1.5 text-[11px] rounded-md px-2 py-[3px] border transition-all ${
+                disabled={clockManager.sessions.find(s => s.id === task.id)?.stoppingSince != null}
+                className={`flex items-center gap-1.5 text-[11px] rounded-md px-2 py-[3px] border transition-all disabled:opacity-40 ${
                   isClocked
                     ? 'bg-done-green/15 text-done-green border-done-green/20 hover:bg-done-green/25'
                     : 'bg-things-surface text-text-tertiary border-things-border hover:text-text-secondary'

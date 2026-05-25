@@ -534,39 +534,6 @@ Uses org-agenda's own machinery to determine which entries appear."
                        (elapsed . ,elapsed))))
     (json-encode '((clocking . :json-false)))))
 
-(defun eav-clock-in (file pos)
-  "Clock in to the heading at POS in FILE.
-
-NOTE: we still override `org-clock-into-drawer' to \"LOGBOOK\". The
-daemon's clock-line scanner looks specifically at the LOGBOOK
-drawer; respecting a `nil' (clocks scatter in body) or arbitrary
-custom drawer setting would require a parser rework. The user's
-default is `t' which already resolves to LOGBOOK, so this is a
-no-op for them — flagged here so future-us can revisit when we
-generalise the parser."
-  (require 'org-clock)
-  (with-current-buffer (find-file-noselect file)
-    (goto-char pos)
-    (let ((org-clock-into-drawer "LOGBOOK"))
-      (org-clock-in))
-    (run-hooks 'post-command-hook))
-  (json-encode '((success . t))))
-
-(defun eav-clock-out ()
-  "Clock out of the current task.
-
-`run-hooks' flushes any clock-out note queued by
-`org-log-note-clock-out' (when set to `note', org prompts and the
-flush will pop *Org Note* — programmatic callers should set that to
-`nil' or `time' if they want the bridge to round-trip without a
-prompt). Same drawer caveat as `eav-clock-in'."
-  (require 'org-clock)
-  (when (org-clocking-p)
-    (let ((org-clock-into-drawer "LOGBOOK"))
-      (org-clock-out))
-    (run-hooks 'post-command-hook))
-  (json-encode '((success . t))))
-
 (defun eav--format-clock-stamp (epoch)
   "Format EPOCH (integer seconds) as an inactive org timestamp string."
   (format-time-string "[%Y-%m-%d %a %H:%M]" (seconds-to-time epoch)))

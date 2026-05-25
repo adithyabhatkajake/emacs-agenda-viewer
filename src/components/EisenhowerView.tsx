@@ -13,8 +13,8 @@
 
 import { useState } from 'react';
 import type { OrgTask, TodoKeywords } from '../types';
-import type { ClockStatus } from '../api/tasks';
 import { updatePriority, updateScheduled } from '../api/tasks';
+import type { ClockManager } from '../hooks/useClockManager';
 import { TaskItem } from './TaskItem';
 
 // ---------------------------------------------------------------------------
@@ -185,7 +185,7 @@ interface QuadrantCellProps {
   allTasks: OrgTask[];      // full list for drag-source lookup
   keywords: TodoKeywords | null;
   isDoneState: (s: string | undefined) => boolean;
-  clockStatus: ClockStatus;
+  clockManager: ClockManager;
   allTags: string[];
   onRefresh: () => void;
   onRefreshClock: () => void;
@@ -194,7 +194,7 @@ interface QuadrantCellProps {
 }
 
 function QuadrantCell({
-  meta, tasks, allTasks, keywords, isDoneState, clockStatus, allTags,
+  meta, tasks, allTasks, keywords, isDoneState, clockManager, allTags,
   onRefresh, onRefreshClock, isMobile, warningDays,
 }: QuadrantCellProps) {
   const [collapsed, setCollapsed] = useState(false);
@@ -265,7 +265,8 @@ function QuadrantCell({
                   task={task}
                   keywords={keywords}
                   isDoneState={isDoneState}
-                  clockStatus={clockStatus}
+                  clockManager={clockManager}
+                  allTasksForClock={allTasks}
                   allTags={allTags}
                   onRefresh={onRefresh}
                   onRefreshClock={onRefreshClock}
@@ -287,7 +288,7 @@ interface EisenhowerViewProps {
   tasks: OrgTask[];
   keywords: TodoKeywords | null;
   isDoneState: (state: string | undefined) => boolean;
-  clockStatus: ClockStatus;
+  clockManager: ClockManager;
   allTags: string[];
   onRefresh: () => void;
   onRefreshClock: () => void;
@@ -295,7 +296,7 @@ interface EisenhowerViewProps {
 }
 
 export function EisenhowerView({
-  tasks, keywords, isDoneState, clockStatus, allTags, onRefresh, onRefreshClock, warningDays,
+  tasks, keywords, isDoneState, clockManager, allTags, onRefresh, onRefreshClock, warningDays,
 }: EisenhowerViewProps) {
   const isMobile = window.innerWidth < 768;
 
@@ -325,7 +326,7 @@ export function EisenhowerView({
             allTasks={activeTasks}
             keywords={keywords}
             isDoneState={isDoneState}
-            clockStatus={clockStatus}
+            clockManager={clockManager}
             allTags={allTags}
             onRefresh={onRefresh}
             onRefreshClock={onRefreshClock}
@@ -348,7 +349,7 @@ export function EisenhowerView({
           allTasks={activeTasks}
           keywords={keywords}
           isDoneState={isDoneState}
-          clockStatus={clockStatus}
+          clockManager={clockManager}
           allTags={allTags}
           onRefresh={onRefresh}
           onRefreshClock={onRefreshClock}

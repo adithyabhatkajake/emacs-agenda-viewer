@@ -9,7 +9,6 @@
 
 import { useState } from 'react';
 import type { OrgTask, TodoKeywords } from '../types';
-import type { ClockStatus } from '../api/tasks';
 import { updateTodoState } from '../api/tasks';
 import {
   isHabit,
@@ -27,10 +26,8 @@ interface HabitsViewProps {
   tasks: OrgTask[];
   keywords: TodoKeywords | null;
   isDoneState: (state: string | undefined) => boolean;
-  clockStatus: ClockStatus;
   allTags: string[];
   onRefresh: () => void;
-  onRefreshClock: () => void;
 }
 
 // ---------------------------------------------------------------------------

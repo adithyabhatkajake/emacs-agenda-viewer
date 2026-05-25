@@ -448,20 +448,6 @@ final class TasksStore {
     }
 
     @discardableResult
-    func clockIn(file: String, pos: Int, using client: APIClient) async -> Bool {
-        await runMutation(client: client) {
-            try await client.clockIn(file: file, pos: pos)
-        }
-    }
-
-    @discardableResult
-    func clockOut(using client: APIClient) async -> Bool {
-        await runMutation(client: client) {
-            try await client.clockOut()
-        }
-    }
-
-    @discardableResult
     func loadRefileTargets(using client: APIClient) async -> Bool {
         lastMutationError = nil
         do {

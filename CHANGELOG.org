@@ -2,7 +2,31 @@
 
 ** 0.6.2 (2026-05-23)
 
+*** Changed
+
+- *Clocking reworked to a local multi-timer model.* Clock-in now
+  writes nothing to disk; only a complete =CLOCK: [start]--[end]=
+  entry is persisted on stop via =POST /api/clock/log= →
+  =eav-add-clock-entry=. The web client gained a new
+  =useClockManager= hook (localStorage-backed, supporting multiple
+  concurrent timers). The org-clock status is retained read-only as
+  an "in Emacs" indicator.
+
+*** Removed
+
+- Deleted the leaky org-clock write path: =eav-clock-in=/=eav-clock-out=,
+  the =write.clock-in=/=write.clock-out= bridge methods, the
+  =POST /api/clock/in= and =POST /api/clock/out= routes, and the dead
+  Swift store/APIClient =clockIn=/=clockOut= calls.
+
 *** Fixed
+
+- *LOGBOOK corruption from in-buffer org-clock.* =org-clock-in=
+  mutated the shared buffer and left a half-open clock; when another
+  writer saved the buffer, the dangling =CLOCK:= line (and empty
+  =:LOGBOOK:= drawers) were flushed to disk. The new write-on-stop
+  model never holds an open clock in the buffer, eliminating the
+  dangling/empty-drawer corruption.
 
 - *Critical hotfix for repeating tasks.* Marking a SCHEDULED or
   DEADLINE task with a repeater (=+1w=, =+1d=, =.+1m=, etc.) as Done

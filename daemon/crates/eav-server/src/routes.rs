@@ -34,8 +34,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/notes", get(get_notes).put(put_notes))
         .route("/api/outline", get(get_outline))
         .route("/api/clock", get(get_clock_status))
-        .route("/api/clock/in", post(post_clock_in))
-        .route("/api/clock/out", post(post_clock_out))
         .route("/api/clock/log", post(post_clock_log))
         .route("/api/clock/tidy", post(post_clock_tidy))
         .route("/api/agenda/day/:date", get(get_agenda_day))
@@ -319,24 +317,6 @@ async fn put_notes(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let _: serde_json::Value = state.bridge.call("write.set-notes", body).await?;
-    Ok(Json(serde_json::json!({ "success": true })))
-}
-
-async fn post_clock_in(
-    State(state): State<AppState>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let _: serde_json::Value = state.bridge.call("write.clock-in", body).await?;
-    Ok(Json(serde_json::json!({ "success": true })))
-}
-
-async fn post_clock_out(
-    State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let _: serde_json::Value = state
-        .bridge
-        .call("write.clock-out", serde_json::json!({}))
-        .await?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 

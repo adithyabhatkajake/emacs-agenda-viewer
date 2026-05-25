@@ -97,18 +97,19 @@ export async function fetchClockStatus(): Promise<ClockStatus> {
   return res.json();
 }
 
-export async function clockIn(file: string, pos: number): Promise<void> {
-  const res = await fetch(`${getApiBase()}/clock/in`, {
+export async function logClockEntry(
+  apiBase: string,
+  file: string,
+  pos: number,
+  start: number,
+  end: number,
+): Promise<void> {
+  const res = await fetch(`${apiBase}/clock/log`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ file, pos }),
+    body: JSON.stringify({ file, pos, start, end }),
   });
-  if (!res.ok) throw new Error('Failed to clock in');
-}
-
-export async function clockOutApi(): Promise<void> {
-  const res = await fetch(`${getApiBase()}/clock/out`, { method: 'POST' });
-  if (!res.ok) throw new Error('Failed to clock out');
+  if (!res.ok) throw new Error('Failed to log clock entry');
 }
 
 export async function saveNotes(file: string, pos: number, notes: string): Promise<string> {

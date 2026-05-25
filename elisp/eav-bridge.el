@@ -98,8 +98,6 @@
     ("write.archive"          . eav-bridge--write-archive)
     ("write.capture"          . eav-bridge--write-capture)
     ("write.insert-entry"     . eav-bridge--write-insert-entry)
-    ("write.clock-in"         . eav-bridge--write-clock-in)
-    ("write.clock-out"        . eav-bridge--write-clock-out)
     ("write.clock-log"        . eav-bridge--write-clock-log)
     ("write.clock-tidy"       . eav-bridge--write-clock-tidy)
 
@@ -299,15 +297,6 @@ Iterates `org-agenda-files', evaluating only `:sexp' entries via
                             ((vectorp olp) (append olp nil))
                             (t nil))
                       (eav-bridge--p params "prepend")))
-  '((success . t)))
-
-(defun eav-bridge--write-clock-in (params)
-  (eav-clock-in (eav-bridge--p params "file")
-                (eav-bridge--p-int params "pos"))
-  '((success . t)))
-
-(defun eav-bridge--write-clock-out (_params)
-  (eav-clock-out)
   '((success . t)))
 
 (defun eav-bridge--write-clock-log (params)
