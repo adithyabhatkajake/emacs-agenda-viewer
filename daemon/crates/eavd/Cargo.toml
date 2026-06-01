@@ -15,6 +15,7 @@ eav-index.workspace = true
 eav-agenda.workspace = true
 eav-bridge.workspace = true
 eav-server.workspace = true
+eav-mcp.workspace = true
 eav-parse.workspace = true
 axum.workspace = true
 tokio.workspace = true

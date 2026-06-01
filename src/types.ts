@@ -54,6 +54,16 @@ export interface OrgTask {
   completions?: string[];
 }
 
+export interface Clock {
+  id: number;
+  taskId: string;
+  file?: string;
+  title?: string;
+  start: number;
+  end?: number;
+  note?: string;
+}
+
 export interface AgendaEntry {
   id: string;
   title: string;
@@ -122,6 +132,41 @@ export interface CaptureTemplate {
   templateIsFunction?: boolean;
   prompts?: CapturePrompt[];
   webSupported: boolean;
+}
+
+export interface HabitCadenceSpec {
+  /** One of `+`, `++`, `.+`. */
+  kind: string;
+  /** The "due" interval value. */
+  value: number;
+  /** One of `d`, `w`, `m`, `y`. */
+  unit: string;
+  /** Relaxed-range upper interval value (the `/2w` in `.+1w/2w`). */
+  maxValue?: number;
+  /** Unit for the upper interval; can differ from `unit` (e.g. `+5d/3w`). */
+  maxUnit?: string;
+}
+
+export interface Habit {
+  /** Server-generated UUID. */
+  id: string;
+  title: string;
+  cadence: HabitCadenceSpec;
+  category?: string;
+  priority?: string;
+  tags: string[];
+  notes?: string;
+  /** `YYYY-MM-DD`, the base date for `+`/`++` cycle math. */
+  anchorDate?: string;
+  active: boolean;
+  /** When true, the habit's checklist resets on each completion. */
+  resetChecklistOnComplete: boolean;
+  /** Completion timestamps as org-style strings (`YYYY-MM-DD Day HH:MM`). */
+  completions: string[];
+  /** Server-computed `YYYY-MM-DD` of the next due date. */
+  nextDue?: string;
+  /** Server-computed `due` | `overdue` | `ok`. */
+  state?: string;
 }
 
 export type ViewFilter =

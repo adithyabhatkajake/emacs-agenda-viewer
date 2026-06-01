@@ -1,4 +1,4 @@
-import type { OrgTask, OrgTimestamp, AgendaEntry, AgendaFile, TodoKeywords, OrgConfig, CaptureTemplate } from '../types';
+import type { OrgTask, OrgTimestamp, AgendaEntry, AgendaFile, TodoKeywords, OrgConfig, CaptureTemplate, Clock, Habit, HabitCadenceSpec } from '../types';
 
 const FALLBACK_BASE = '/api';
 
@@ -110,6 +110,132 @@ export async function logClockEntry(
     body: JSON.stringify({ file, pos, start, end }),
   });
   if (!res.ok) throw new Error('Failed to log clock entry');
+}
+
+export async function clockIn(file: string, pos: number, title?: string): Promise<Clock> {
+  const res = await fetch(`${getApiBase()}/clock/in`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file, pos, title }),
+  });
+  if (!res.ok) throw new Error('Failed to clock in');
+  return res.json();
+}
+
+export async function clockInHabit(id: string, title?: string): Promise<Clock> {
+  const res = await fetch(`${getApiBase()}/clock/in`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taskId: id, title }),
+  });
+  if (!res.ok) throw new Error('Failed to clock in habit');
+  return res.json();
+}
+
+export async function clockOut(id: number): Promise<void> {
+  const res = await fetch(`${getApiBase()}/clock/out`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+  if (!res.ok) throw new Error('Failed to clock out');
+}
+
+export async function fetchActiveClocks(): Promise<Clock[]> {
+  const res = await fetch(`${getApiBase()}/clock/active`);
+  if (!res.ok) throw new Error('Failed to fetch active clocks');
+  return res.json();
+}
+
+export async function cancelClock(id: number): Promise<void> {
+  const res = await fetch(`${getApiBase()}/clock/${id}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error('Failed to cancel clock');
+}
+
+export interface CreateHabitBody {
+  title: string;
+  cadence: HabitCadenceSpec;
+  category?: string;
+  priority?: string;
+  tags?: string[];
+  notes?: string;
+  anchorDate?: string;
+  resetChecklistOnComplete?: boolean;
+}
+
+export async function fetchHabits(): Promise<Habit[]> {
+  const res = await fetch(`${getApiBase()}/habits`);
+  if (!res.ok) throw new Error('Failed to fetch habits');
+  return res.json();
+}
+
+export async function createHabit(body: CreateHabitBody): Promise<Habit> {
+  const res = await fetch(`${getApiBase()}/habits`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error('Failed to create habit');
+  return res.json();
+}
+
+export async function updateHabit(id: string, body: Partial<CreateHabitBody>): Promise<Habit> {
+  const res = await fetch(`${getApiBase()}/habits/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error('Failed to update habit');
+  return res.json();
+}
+
+export async function deleteHabit(id: string): Promise<void> {
+  const res = await fetch(`${getApiBase()}/habits/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error('Failed to delete habit');
+}
+
+export async function completeHabit(id: string, ts?: string): Promise<Habit> {
+  const res = await fetch(`${getApiBase()}/habits/${encodeURIComponent(id)}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(ts ? { ts } : {}),
+  });
+  if (!res.ok) throw new Error('Failed to complete habit');
+  return res.json();
+}
+
+export async function uncompleteHabit(id: string, ts: string): Promise<Habit> {
+  const res = await fetch(`${getApiBase()}/habits/${encodeURIComponent(id)}/uncomplete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ts }),
+  });
+  if (!res.ok) throw new Error('Failed to uncomplete habit');
+  return res.json();
+}
+
+export async function skipHabit(id: string): Promise<Habit> {
+  const res = await fetch(`${getApiBase()}/habits/${encodeURIComponent(id)}/skip`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) throw new Error('Failed to skip habit');
+  return res.json();
+}
+
+export async function rescheduleHabit(id: string, date: string): Promise<Habit> {
+  const res = await fetch(`${getApiBase()}/habits/${encodeURIComponent(id)}/reschedule`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date }),
+  });
+  if (!res.ok) throw new Error('Failed to reschedule habit');
+  return res.json();
 }
 
 export async function saveNotes(file: string, pos: number, notes: string): Promise<string> {

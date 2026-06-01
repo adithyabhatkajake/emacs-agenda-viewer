@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Stop, X } from '@phosphor-icons/react';
 import type { ClockStatus } from '../api/tasks';
 import type { ClockManager, ClockSession } from '../hooks/useClockManager';
 import { formatElapsed } from '../hooks/useClockManager';
@@ -57,15 +58,16 @@ function SessionRow({
   onCancel: () => void;
   onReveal: () => void;
 }) {
-  const [elapsed, setElapsed] = useState(Date.now() - session.startedAt);
+  // session.start is epoch seconds from the server
+  const [elapsed, setElapsed] = useState(Date.now() - session.start * 1000);
   const stopping = session.stoppingSince != null;
 
   useEffect(() => {
-    const id = setInterval(() => setElapsed(Date.now() - session.startedAt), 1000);
+    const id = setInterval(() => setElapsed(Date.now() - session.start * 1000), 1000);
     return () => clearInterval(id);
-  }, [session.startedAt]);
+  }, [session.start]);
 
-  const heading = truncate(session.title, 24);
+  const heading = truncate(session.title ?? session.taskId, 24);
 
   return (
     <div className="flex items-center gap-2 py-1 border-t border-things-border/40 first:border-t-0">
@@ -99,9 +101,9 @@ function SessionRow({
         disabled={stopping}
         className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full hover:bg-priority-a/20 text-priority-a transition-colors disabled:opacity-40"
         title="Stop and log"
-        aria-label="Stop clock"
+        aria-label="Clock Out"
       >
-        <span className="text-[11px]" aria-hidden>{'⏹'}</span>
+        <Stop size={11} weight="fill" aria-hidden />
       </button>
 
       {/* Cancel (discard) */}
@@ -113,7 +115,7 @@ function SessionRow({
         title="Discard (no log)"
         aria-label="Cancel clock"
       >
-        <span className="text-[10px]" aria-hidden>{'✕'}</span>
+        <X size={10} weight="regular" aria-hidden />
       </button>
     </div>
   );
@@ -125,6 +127,15 @@ export function ClockDock({ clockStatus, clockManager, tasks, onReveal }: ClockD
   const hasEmacsSession = clockStatus.clocking;
 
   if (!hasActiveSessions && !hasEmacsSession) return null;
+
+  function revealSession(session: ClockSession) {
+    // Look up pos from the task list by taskId or by matching file+title
+    const match = tasks.find(t => t.id === session.taskId)
+      ?? tasks.find(t => session.file && t.file === session.file && t.title === session.title);
+    const file = session.file ?? match?.file ?? '';
+    const pos = match?.pos ?? 0;
+    onReveal(file, pos);
+  }
 
   return (
     <div
@@ -142,9 +153,9 @@ export function ClockDock({ clockStatus, clockManager, tasks, onReveal }: ClockD
         <SessionRow
           key={session.id}
           session={session}
-          onStop={() => stop(session.id, tasks)}
+          onStop={() => stop(session.id)}
           onCancel={() => cancel(session.id)}
-          onReveal={() => onReveal(session.file, session.pos)}
+          onReveal={() => revealSession(session)}
         />
       ))}
       <EmacsClock clockStatus={clockStatus} />

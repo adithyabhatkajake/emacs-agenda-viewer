@@ -11,6 +11,14 @@ struct RootView: View {
     @State private var errorBannerDismissTask: Task<Void, Never>?
     @State private var eventSubscriber: EventSubscriber?
 
+    // Debouncers collapse burst SSE events so rapid Emacs edits result in
+    // one reload rather than one per event. 200 ms covers typical multi-file
+    // save bursts. clock-changed uses the same window. config-changed is NOT
+    // debounced: it is rare and must reload metadata promptly.
+    private let refreshDebouncer = Debouncer(interval: .milliseconds(200))
+    private let habitsDebouncer  = Debouncer(interval: .milliseconds(200))
+    private let clockDebouncer   = Debouncer(interval: .milliseconds(200))
+
     var body: some View {
         TabView {
             // Exactly 5 tabs — all visible on iPhone with no auto "More".
@@ -21,10 +29,10 @@ struct RootView: View {
                 .tabItem { Label("All Tasks", systemImage: "list.bullet") }
 
             HabitsView(store: store)
-                .tabItem { Label("Habits", systemImage: "repeat.circle") }
+                .tabItem { Label("Habits", systemImage: "arrow.triangle.2.circlepath") }
 
             LogbookView(store: store)
-                .tabItem { Label("Logbook", systemImage: "checkmark.seal") }
+                .tabItem { Label("Logbook", systemImage: "book.closed.fill") }
 
             SettingsView(store: store, notifications: notifications)
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
@@ -69,9 +77,16 @@ struct RootView: View {
         }
         .task(id: settings.serverURLString) {
             guard let client = settings.apiClient else { return }
+            store.clockManager = clocks
             // Fix #3: pass settings so syncFromServer fires and initialized
             // flips to true on normal launch, not only after Settings is opened.
             await store.loadMetadata(using: client, settings: settings)
+            // Populate active clocks from the server so the dock and Live
+            // Activities are in sync on launch without waiting for an SSE event.
+            await clocks.loadActiveClocks(using: client)
+            // Prime the habits slice on launch so HabitsView is ready when the
+            // user taps the tab without requiring a manual pull-to-refresh.
+            await store.loadHabits(using: client)
 
             // Fix #2: attach the SSE subscriber so daemon-driven events
             // (task edits in Emacs, file saves, clock changes) refresh the
@@ -202,19 +217,36 @@ struct RootView: View {
         sub?.onStateChange = { [weak store] state in
             store?.connectionState = state
         }
-        sub?.start { [weak store] event in
+        // Capture debouncer references (class instances) so the closures can
+        // schedule work without retaining the struct itself.
+        let rd = refreshDebouncer
+        let hd = habitsDebouncer
+        let cd = clockDebouncer
+        sub?.start { [weak store, weak clocks] event in
             guard let store else { return }
             Task { @MainActor in
                 guard let client = settings.apiClient else { return }
                 switch event {
-                case .taskChanged(_, let file, let pos):
-                    await store.invalidate(taskId: "\(file)::\(pos)", file: file, pos: pos, using: client)
-                case .fileChanged(let file):
-                    await store.invalidate(file: file, using: client)
+                case .taskChanged, .fileChanged:
+                    // Coalesce rapid multi-file saves into a single reload.
+                    rd.schedule {
+                        guard let client = settings.apiClient else { return }
+                        await store.refreshLoaded(using: client)
+                    }
                 case .clockChanged:
-                    await store.refreshClock(using: client)
+                    cd.schedule {
+                        guard let client = settings.apiClient else { return }
+                        await store.refreshClock(using: client)
+                        await clocks?.loadActiveClocks(using: client)
+                    }
                 case .configChanged:
+                    // Not debounced — rare and must reload metadata promptly.
                     await store.invalidateConfig(using: client, settings: settings)
+                case .habitsChanged:
+                    hd.schedule {
+                        guard let client = settings.apiClient else { return }
+                        await store.invalidateHabits(using: client)
+                    }
                 }
             }
         }

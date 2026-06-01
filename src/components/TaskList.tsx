@@ -1,20 +1,24 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import type { OrgTask, AgendaEntry, ViewFilter, TodoKeywords } from '../types';
+import { Check, PushPin, CaretRight, ArrowsClockwise, Fire, DotsThree, Trash, PencilSimple, X, CalendarBlank, Play, Stop } from '@phosphor-icons/react';
+import type { OrgTask, AgendaEntry, ViewFilter, TodoKeywords, Habit } from '../types';
 import { TaskItem } from './TaskItem';
-import { renderInline } from './NotesRenderer';
-import { type ClockStatus, loadSettings, updateScheduled, todayYMD } from '../api/tasks';
+import { renderInline, NotesRenderer } from './NotesRenderer';
+import { type ClockStatus, type CreateHabitBody, loadSettings, completeHabit, uncompleteHabit, skipHabit, rescheduleHabit, updateHabit, deleteHabit, updateScheduled, todayYMD } from '../api/tasks';
 import type { ClockManager } from '../hooks/useClockManager';
-import { HabitsView, TodayHabitsGroup } from './HabitsView';
-import { isHabit } from '../utils/habits';
+import { HabitsView, HabitFormModal, formStateFromHabit } from './HabitsView';
+import { isHabit, habitStatsFromDB, habitDisplayDate, compactCadenceInterval, habitRelativeDateLabel } from '../utils/habits';
 import { buildTodayItems } from '../utils/today';
 import { EisenhowerView } from './EisenhowerView';
 import { CalendarView } from './CalendarView';
+import { toggleChecklistLine, countChecklistItems, resetChecklist } from '../utils/checklist';
+import { resolvedStateColorToken } from './TodoStateMenu';
 
 type DisplayItem = OrgTask | AgendaEntry;
 
 interface TaskListProps {
   tasks: OrgTask[];
+  habits: Habit[];
   todayEntries: AgendaEntry[];
   upcomingEntries: AgendaEntry[];
   filter: ViewFilter;
@@ -24,6 +28,7 @@ interface TaskListProps {
   clockManager: ClockManager;
   allTags: string[];
   onRefresh: () => void;
+  onRefreshHabits: () => void;
   onRefreshClock: () => void;
   onCapture?: () => void;
   sidebarOpen?: boolean;
@@ -215,7 +220,7 @@ function GroupHeader({ label, depth, collapsed, onToggle, count }: { label: stri
       aria-expanded={!collapsed}
       className={`w-full px-3 md:px-5 ${pad} flex items-center gap-2 select-none text-left hover:bg-things-sidebar-hover/40 transition-colors`}
     >
-      <span className={`text-[11px] leading-none text-text-secondary transition-transform inline-block w-3 ${collapsed ? '' : 'rotate-90'}`}>{'\u25B6'}</span>
+      <CaretRight size={11} weight="bold" className={`text-text-secondary transition-transform inline-block w-3 ${collapsed ? '' : 'rotate-90'}`} />
       <span className={`${size} font-semibold text-text-tertiary uppercase tracking-wider`}>
         {label}
       </span>
@@ -234,23 +239,50 @@ function SectionHeader({ title, count }: { title: string; count: number }) {
   );
 }
 
-/** Render event banners */
+/** Category → dot color, reused for event bar */
+function eventBarColor(category: string | undefined): string {
+  const name = (category || '').toLowerCase();
+  if (!name) return 'rgb(var(--accent-teal))';
+  if (name === 'inbox') return 'rgb(var(--dot-blue))';
+  if (name === 'work') return 'rgb(var(--dot-purple))';
+  if (name === 'personal') return 'rgb(var(--dot-green))';
+  if (name === 'calendar') return 'rgb(var(--dot-orange))';
+  if (name === 'meta') return 'rgb(var(--dot-gray))';
+  const VARS = ['--dot-blue', '--dot-purple', '--dot-green', '--dot-orange', '--dot-yellow', '--dot-red', '--dot-gray'] as const;
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return `rgb(var(${VARS[h % VARS.length]}))`;
+}
+
+/** Dense Things-3-style event card: one tight line per event. */
 function EventBanners({ events }: { events: DisplayItem[] }) {
   if (events.length === 0) return null;
   return (
-    <div className="px-3 md:px-5 pt-2 pb-1 flex flex-col gap-0.5">
-      {events.map(event => (
-        <div
-          key={event.id + ('agendaType' in event ? (event as AgendaEntry).agendaType : '')}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-things-surface/60 border border-things-border-subtle/20"
-        >
-          <span className="w-[3px] h-4 rounded-full bg-accent-teal flex-shrink-0" />
-          <span className="text-[12px] text-text-primary flex-1">{renderInline(event.title)}</span>
-          {'timeOfDay' in event && (event as AgendaEntry).timeOfDay && (
-            <span className="text-[10px] text-accent-teal font-medium">{(event as AgendaEntry).timeOfDay}</span>
-          )}
-        </div>
-      ))}
+    <div className="px-3 md:px-5 pt-2 pb-1">
+      <div className="rounded-lg bg-things-surface border border-things-border-subtle/30 overflow-hidden px-3 py-1">
+        {events.map(event => {
+          const ae = 'agendaType' in event ? (event as AgendaEntry) : undefined;
+          const timeLabel = ae?.timeOfDay || 'all-day';
+          return (
+            <div
+              key={event.id + (ae?.agendaType ?? '')}
+              className="flex items-center gap-2 py-[3px]"
+            >
+              <span
+                aria-hidden
+                className="flex-shrink-0 w-[3px] h-4 rounded-full"
+                style={{ background: eventBarColor(event.category) }}
+              />
+              <span className="text-[12px] text-text-tertiary tabular-nums w-14 flex-shrink-0">
+                {timeLabel}
+              </span>
+              <span className="text-[13px] text-text-secondary truncate flex-1">
+                {renderInline(event.title)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -265,13 +297,12 @@ const DRAG_KEY = 'eav-drag-task-id';
 
 /** Recursively render grouped items with collapsible headers */
 function RenderGroups({
-  nodes, keywords, isDoneState, clockManager, allTasksForClock, allTags, onRefresh, onRefreshClock, makeDraggable,
+  nodes, keywords, isDoneState, clockManager, allTags, onRefresh, onRefreshClock, makeDraggable,
 }: {
   nodes: GroupNode[];
   keywords: TodoKeywords | null;
   isDoneState: (s: string | undefined) => boolean;
   clockManager: ClockManager;
-  allTasksForClock: (OrgTask | AgendaEntry)[];
   allTags: string[];
   onRefresh: () => void;
   onRefreshClock: () => void;
@@ -308,7 +339,7 @@ function RenderGroups({
             )}
             {!isCollapsed && (
               node.children.length > 0 ? (
-                <RenderGroups nodes={node.children} keywords={keywords} isDoneState={isDoneState} clockManager={clockManager} allTasksForClock={allTasksForClock} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} makeDraggable={makeDraggable} />
+                <RenderGroups nodes={node.children} keywords={keywords} isDoneState={isDoneState} clockManager={clockManager} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} makeDraggable={makeDraggable} />
               ) : (
                 node.items.map(task => {
                   const itemKey = task.id + ('agendaType' in task ? (task as AgendaEntry).agendaType : '');
@@ -319,7 +350,6 @@ function RenderGroups({
                       keywords={keywords}
                       isDoneState={isDoneState}
                       clockManager={clockManager}
-                      allTasksForClock={allTasksForClock}
                       allTags={allTags}
                       onRefresh={onRefresh}
                       onRefreshClock={onRefreshClock}
@@ -351,6 +381,494 @@ function RenderGroups({
 
 const ALL_GROUP_KEYS: GroupKey[] = ['agenda', 'priority', 'category', 'state'];
 
+function TodaySchedulePicker({
+  onConfirm,
+  onClose,
+}: {
+  onConfirm: (date: string) => void;
+  onClose: () => void;
+}) {
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const [date, setDate] = useState(todayStr);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  return (
+    <div className="px-2.5 py-2 flex flex-col gap-1.5">
+      <span className="text-[11px] text-text-tertiary font-medium">Schedule for</span>
+      <input
+        ref={inputRef}
+        type="date"
+        value={date}
+        onChange={e => setDate(e.target.value)}
+        className="w-full bg-things-bg border border-things-border rounded px-2 py-1 text-[12px] text-text-primary outline-none focus:border-accent/50"
+        onKeyDown={e => {
+          if (e.key === 'Enter' && date) { e.preventDefault(); onConfirm(date); }
+          if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+        }}
+      />
+      <div className="flex gap-1.5">
+        <button
+          onClick={onClose}
+          className="flex-1 py-1 rounded text-[11px] text-text-tertiary hover:bg-things-sidebar-hover transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={() => date && onConfirm(date)}
+          disabled={!date}
+          className="flex-1 py-1 rounded bg-accent/20 text-accent text-[11px] font-medium hover:bg-accent/30 transition-colors disabled:opacity-40"
+        >
+          Set
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// HabitStatePill + HabitPriorityBadge (shared with TodayHabitRow)
+// ---------------------------------------------------------------------------
+
+function HabitStatePill({ isDone, keywords }: { isDone: boolean; keywords: TodoKeywords | null }) {
+  const state = isDone
+    ? (keywords?.sequences[0]?.done[0] ?? 'DONE')
+    : (keywords?.sequences[0]?.active[0] ?? 'TODO');
+  const token = resolvedStateColorToken(state, isDone);
+  const tokenClasses: Record<string, { bg: string; text: string; border: string }> = {
+    'done-green':    { bg: 'bg-done-green/15',    text: 'text-done-green',    border: 'border-done-green/25' },
+    'accent':        { bg: 'bg-accent/12',         text: 'text-accent',        border: 'border-accent/20' },
+    'accent-teal':   { bg: 'bg-accent-teal/12',    text: 'text-accent-teal',   border: 'border-accent-teal/20' },
+    'priority-b':    { bg: 'bg-priority-b/12',     text: 'text-priority-b',    border: 'border-priority-b/20' },
+    'text-tertiary': { bg: 'bg-text-tertiary/12',  text: 'text-text-tertiary', border: 'border-text-tertiary/20' },
+  };
+  const cls = tokenClasses[token] ?? tokenClasses['accent'];
+  return (
+    <span className={`mt-px flex-shrink-0 rounded-md px-2 py-[3px] text-[10px] font-bold tracking-wide border ${cls.bg} ${cls.text} ${cls.border}`}>
+      {state}
+    </span>
+  );
+}
+
+function HabitPriorityBadge({ priority }: { priority?: string }) {
+  if (!priority) return null;
+  const styles: Record<string, string> = {
+    A: 'bg-priority-a/12 text-priority-a border-priority-a/25',
+    B: 'bg-priority-b/12 text-priority-b border-priority-b/25',
+    C: 'bg-accent/10 text-accent border-accent/20',
+    D: 'bg-text-tertiary/10 text-text-tertiary border-text-tertiary/20',
+  };
+  const cls = styles[priority.toUpperCase()] ?? 'bg-things-surface text-text-tertiary border-things-border';
+  return (
+    <span className={`mt-px flex-shrink-0 rounded px-2 py-[3px] text-[10px] font-bold border ${cls}`}>
+      {priority}
+    </span>
+  );
+}
+
+function TodayHabitRow({
+  habit,
+  onRefreshHabits,
+  clockManager,
+  keywords,
+  onEdit,
+}: {
+  habit: Habit;
+  onRefreshHabits: () => void;
+  clockManager: ClockManager;
+  keywords: TodoKeywords | null;
+  onEdit?: (h: Habit) => void;
+}) {
+  const [toggling, setToggling] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPhase, setMenuPhase] = useState<'main' | 'schedule'>('main');
+  const [expanded, setExpanded] = useState(false);
+  const [localNotes, setLocalNotes] = useState<string | null>(null);
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [editText, setEditText] = useState('');
+  const [savingNotes, setSavingNotes] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const today = new Date();
+  const stats = habitStatsFromDB(habit, today);
+  const done = stats.doneThisPeriod;
+  const isOverdue = habit.state === 'overdue';
+
+  const effectiveNotes = localNotes ?? (habit.notes ?? '');
+  const hasNotes = effectiveNotes.trim().length > 0;
+  const hasChecklist = countChecklistItems(effectiveNotes) > 0;
+  const isClocked = clockManager.isClocked(habit.id);
+
+  const displayDate = habitDisplayDate(habit);
+  const dueDateLabel = displayDate ? habitRelativeDateLabel(displayDate, today) : null;
+  const recurrenceLabel = compactCadenceInterval(habit.cadence);
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+        setMenuPhase('main');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
+  const handleToggle = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (toggling) return;
+    setToggling(true);
+    try {
+      if (done) {
+        const lastTs = habit.completions[0];
+        if (lastTs) {
+          await uncompleteHabit(habit.id, lastTs);
+          onRefreshHabits();
+        }
+      } else {
+        await completeHabit(habit.id);
+        onRefreshHabits();
+      }
+    } catch (err) {
+      console.error('Failed to toggle habit:', err);
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  const handleSkip = async () => {
+    setMenuOpen(false);
+    setMenuPhase('main');
+    try {
+      await skipHabit(habit.id);
+      onRefreshHabits();
+    } catch (err) {
+      console.error('Failed to skip habit:', err);
+    }
+  };
+
+  const handleReschedule = async (date: string) => {
+    setMenuOpen(false);
+    setMenuPhase('main');
+    try {
+      await rescheduleHabit(habit.id, date);
+      onRefreshHabits();
+    } catch (err) {
+      console.error('Failed to reschedule habit:', err);
+    }
+  };
+
+  const handleChecklistToggle = async (itemIndex: number) => {
+    const current = effectiveNotes;
+    const next = toggleChecklistLine(current, itemIndex);
+    if (next === current) return;
+    setLocalNotes(next);
+    try {
+      await updateHabit(habit.id, { notes: next });
+      onRefreshHabits();
+    } catch (err) {
+      console.error('Failed to update checklist:', err);
+      setLocalNotes(current);
+    }
+  };
+
+  const handleNotesSave = async () => {
+    if (savingNotes) return;
+    setSavingNotes(true);
+    try {
+      await updateHabit(habit.id, { notes: editText });
+      setLocalNotes(editText);
+      setEditingNotes(false);
+      onRefreshHabits();
+    } catch (err) {
+      console.error('Failed to save notes:', err);
+    } finally {
+      setSavingNotes(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setMenuOpen(false);
+    if (!confirm(`Delete habit "${habit.title}"?`)) return;
+    try {
+      await deleteHabit(habit.id);
+      onRefreshHabits();
+    } catch (err) {
+      console.error('Failed to delete habit:', err);
+    }
+  };
+
+  return (
+    <div
+      className={`group border-b transition-colors ${
+        expanded
+          ? 'bg-things-surface/60 border-things-border-subtle/30'
+          : 'border-things-border-subtle/30 hover:bg-things-sidebar-hover/30'
+      } ${done ? 'opacity-40' : ''}`}
+    >
+      <div className="flex items-center gap-2 px-3 md:px-5 py-2.5 md:py-1.5">
+        {/* Checkbox — round for habits */}
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={done}
+          onClick={handleToggle}
+          disabled={toggling}
+          title={done ? 'Undo completion' : 'Mark done'}
+          className={`relative flex-shrink-0 w-4 h-4 rounded-full transition-all ${
+            done
+              ? 'bg-done-green border-[1.5px] border-done-green'
+              : 'bg-transparent border-[1.5px] border-things-border hover:border-accent'
+          }`}
+        >
+          {done && (
+            <span
+              aria-hidden
+              className="absolute"
+              style={{
+                left: 3,
+                top: 1,
+                width: 4,
+                height: 8,
+                borderRight: '1.5px solid white',
+                borderBottom: '1.5px solid white',
+                transform: 'rotate(45deg)',
+              }}
+            />
+          )}
+        </button>
+
+        {/* State pill */}
+        <HabitStatePill isDone={done} keywords={keywords} />
+
+        {/* Priority badge */}
+        <HabitPriorityBadge priority={habit.priority} />
+
+        {/* Title + meta — click to expand */}
+        <div
+          className="flex-1 min-w-0 cursor-pointer select-none"
+          onClick={() => setExpanded(o => !o)}
+        >
+          <span className={`block truncate text-[14px] md:text-[13px] leading-snug ${done ? 'line-through text-text-tertiary' : 'text-text-primary'}`}>
+            {renderInline(habit.title)}
+          </span>
+          {/* Meta line */}
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            {isOverdue && !done && (
+              <span className="text-[9px] font-semibold uppercase tracking-wide text-priority-a">overdue</span>
+            )}
+            {habit.category && (
+              <span className="text-[10px] text-text-tertiary">{habit.category}</span>
+            )}
+            {dueDateLabel && !done && (
+              <span className={`text-[10px] flex items-center gap-0.5 ${isOverdue ? 'text-priority-a' : 'text-text-secondary'}`}>
+                <CalendarBlank size={9} weight="regular" aria-hidden />
+                {dueDateLabel}
+              </span>
+            )}
+            <span className="text-[10px] text-text-tertiary flex items-center gap-0.5">
+              {'↻'}{recurrenceLabel}
+            </span>
+            {habit.tags.map(tag => (
+              <span
+                key={tag}
+                className="text-[10px] px-1.5 py-[1px] rounded-full bg-things-surface text-text-secondary whitespace-nowrap"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* Row menu */}
+        <div className="relative flex-shrink-0" ref={menuRef}>
+          <button
+            onClick={(e) => { e.stopPropagation(); setMenuOpen(o => !o); if (!menuOpen) setMenuPhase('main'); }}
+            className="w-6 h-6 flex items-center justify-center rounded text-text-tertiary hover:text-text-secondary hover:bg-things-sidebar-hover transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+            title="More options"
+          >
+            <DotsThree size={16} weight="bold" />
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-7 z-50 w-44 bg-things-bg border border-things-border rounded-lg shadow-xl p-1">
+              {menuPhase === 'main' ? (
+                <>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setMenuOpen(false);
+                      setMenuPhase('main');
+                      if (done) {
+                        const lastTs = habit.completions[0];
+                        if (lastTs) { try { await uncompleteHabit(habit.id, lastTs); onRefreshHabits(); } catch (err) { console.error(err); } }
+                      } else {
+                        try { await completeHabit(habit.id); onRefreshHabits(); } catch (err) { console.error(err); }
+                      }
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-[13px] text-text-primary hover:bg-things-sidebar-hover transition-colors"
+                  >
+                    {done ? 'Undo Done' : 'Done'}
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleSkip(); }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-[13px] text-text-primary hover:bg-things-sidebar-hover transition-colors"
+                  >
+                    Skip
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setMenuPhase('schedule'); }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-[13px] text-text-primary hover:bg-things-sidebar-hover transition-colors"
+                  >
+                    Schedule…
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setMenuOpen(false);
+                      setMenuPhase('main');
+                      if (isClocked) {
+                        const session = clockManager.sessions.find(s => s.taskId === habit.id);
+                        if (session) clockManager.stop(session.id);
+                      } else {
+                        await clockManager.startHabit(habit.id, habit.title);
+                      }
+                    }}
+                    disabled={clockManager.sessions.find(s => s.taskId === habit.id)?.stoppingSince != null}
+                    className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-[13px] hover:bg-things-sidebar-hover transition-colors disabled:opacity-40 ${
+                      isClocked ? 'text-done-green' : 'text-text-primary'
+                    }`}
+                  >
+                    {isClocked ? <Stop size={13} weight="fill" /> : <Play size={13} weight="fill" />}
+                    {isClocked ? 'Clock Out' : 'Clock In'}
+                  </button>
+                  {countChecklistItems(effectiveNotes) > 0 && (
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        setMenuOpen(false);
+                        setMenuPhase('main');
+                        const reset = resetChecklist(effectiveNotes);
+                        setLocalNotes(reset);
+                        try { await updateHabit(habit.id, { notes: reset }); onRefreshHabits(); }
+                        catch (err) { console.error('Failed to reset checklist:', err); setLocalNotes(null); }
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-[13px] text-text-primary hover:bg-things-sidebar-hover transition-colors"
+                    >
+                      Reset checklist
+                    </button>
+                  )}
+                  <div className="my-1 mx-1 border-t border-things-border" />
+                  {onEdit && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setMenuPhase('main'); onEdit(habit); }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-[13px] text-text-primary hover:bg-things-sidebar-hover transition-colors"
+                    >
+                      <PencilSimple size={13} />
+                      Edit
+                    </button>
+                  )}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setMenuPhase('main'); handleDelete(); }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-[13px] text-red-500 hover:bg-red-500/10 transition-colors"
+                  >
+                    <Trash size={13} />
+                    Delete
+                  </button>
+                </>
+              ) : (
+                <TodaySchedulePicker
+                  onConfirm={handleReschedule}
+                  onClose={() => { setMenuOpen(false); setMenuPhase('main'); }}
+                />
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Expanded detail panel */}
+      {expanded && (
+        <div className="px-3 md:px-5 pb-3 pt-0 ml-2 md:ml-[62px]">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[10px] text-text-tertiary uppercase tracking-wider font-semibold">Notes</span>
+            <button
+              onClick={() => {
+                if (editingNotes) {
+                  setEditingNotes(false);
+                } else {
+                  setEditText(effectiveNotes);
+                  setEditingNotes(true);
+                }
+              }}
+              className={`text-[11px] px-1.5 py-0.5 rounded transition-colors ${
+                editingNotes ? 'text-accent' : 'text-text-tertiary hover:text-text-secondary'
+              }`}
+              title={editingNotes ? 'Cancel editing' : 'Edit notes'}
+            >
+              {editingNotes ? <X size={11} weight="regular" /> : <PencilSimple size={11} weight="regular" />}
+            </button>
+          </div>
+
+          {editingNotes ? (
+            <div className="mb-2">
+              <textarea
+                value={editText}
+                onChange={e => setEditText(e.target.value)}
+                className="w-full bg-things-bg border border-things-border rounded-md px-3 py-2 text-[12px] text-text-primary font-mono leading-relaxed outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/30 resize-y min-h-[60px]"
+                rows={Math.max(3, editText.split('\n').length + 1)}
+                autoFocus
+                spellCheck={false}
+              />
+              <div className="flex gap-2 mt-1.5">
+                <button
+                  onClick={handleNotesSave}
+                  disabled={savingNotes}
+                  className="px-3 py-1 rounded-md bg-accent/20 text-accent text-[11px] font-medium hover:bg-accent/30 transition-colors disabled:opacity-50"
+                >
+                  {savingNotes ? 'Saving...' : 'Save'}
+                </button>
+                <button
+                  onClick={() => setEditingNotes(false)}
+                  className="px-3 py-1 rounded-md bg-things-surface text-text-secondary text-[11px] hover:bg-things-sidebar-hover transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {hasNotes && (
+                <div className="mb-2">
+                  <NotesRenderer
+                    content={effectiveNotes}
+                    onToggleCheck={hasChecklist ? handleChecklistToggle : undefined}
+                  />
+                </div>
+              )}
+              {!hasNotes && (
+                <button
+                  onClick={() => { setEditText(''); setEditingNotes(true); }}
+                  className="text-[11px] text-text-tertiary hover:text-text-secondary mb-2 italic"
+                >
+                  + Add notes
+                </button>
+              )}
+            </>
+          )}
+
+          <div className="text-[10px] text-text-tertiary mt-1">{'↻'}{recurrenceLabel}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function formatElapsed(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -359,10 +877,196 @@ function formatElapsed(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+// ---------------------------------------------------------------------------
+// All Tasks: habit edit modal wrapper
+// ---------------------------------------------------------------------------
+
+function AllTasksHabitEditModal({
+  habit,
+  submitting,
+  onClose,
+  onSubmit,
+}: {
+  habit: Habit;
+  submitting: boolean;
+  onClose: () => void;
+  onSubmit: (body: CreateHabitBody) => void;
+}) {
+  return (
+    <HabitFormModal
+      initial={formStateFromHabit(habit)}
+      onSubmit={onSubmit}
+      onClose={onClose}
+      submitting={submitting}
+      editingId={habit.id}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// All Tasks: combined task + habit list with optional grouping by priority/category
+// ---------------------------------------------------------------------------
+
+type AllTasksItem =
+  | { kind: 'task'; item: DisplayItem }
+  | { kind: 'habit'; item: Habit };
+
+function AllTasksCombinedList({
+  items,
+  activeGroups,
+  keywords,
+  isDoneState,
+  clockManager,
+  allTags,
+  onRefresh,
+  onRefreshHabits,
+  onRefreshClock,
+  onEditHabit,
+}: {
+  items: AllTasksItem[];
+  activeGroups: GroupKey[];
+  keywords: TodoKeywords | null;
+  isDoneState: (s: string | undefined) => boolean;
+  clockManager: ClockManager;
+  allTags: string[];
+  onRefresh: () => void;
+  onRefreshHabits: () => void;
+  onRefreshClock: () => void;
+  onEditHabit: (h: Habit) => void;
+}) {
+  // Group key helpers for combined items
+  const getItemGroupValue = (item: AllTasksItem, gk: GroupKey): string => {
+    if (item.kind === 'task') return getGroupValue(item.item, gk);
+    const h = item.item as Habit;
+    switch (gk) {
+      case 'priority': return h.priority || '_none';
+      case 'category': return h.category || 'Uncategorized';
+      // Habits don't have todoState — put them in a fixed bucket
+      case 'state': return '_habit';
+      case 'agenda': return 'Scheduled';
+    }
+  };
+
+  const getItemGroupLabel = (gk: GroupKey, value: string): string => {
+    if (value === '_habit') return 'Habits';
+    return getGroupLabel(gk, value);
+  };
+
+  const renderItem = (item: AllTasksItem) => {
+    if (item.kind === 'habit') {
+      return (
+        <TodayHabitRow
+          key={`habit-${item.item.id}`}
+          habit={item.item as Habit}
+          onRefreshHabits={onRefreshHabits}
+          clockManager={clockManager}
+          keywords={keywords}
+          onEdit={onEditHabit}
+        />
+      );
+    }
+    return (
+      <TaskItem
+        key={item.item.id + ('agendaType' in item.item ? (item.item as AgendaEntry).agendaType : '')}
+        task={item.item as OrgTask | AgendaEntry}
+        keywords={keywords}
+        isDoneState={isDoneState}
+        clockManager={clockManager}
+        allTags={allTags}
+        onRefresh={onRefresh}
+        onRefreshClock={onRefreshClock}
+      />
+    );
+  };
+
+  if (activeGroups.length === 0) {
+    // Flat list — already sorted by the parent's allTasksCombined memo
+    return (
+      <div className="task-card">
+        {items.map(item => renderItem(item))}
+      </div>
+    );
+  }
+
+  // Group by first active group key
+  const gk = activeGroups[0];
+  const groupMap = new Map<string, AllTasksItem[]>();
+  const seen: string[] = [];
+  for (const item of items) {
+    const val = getItemGroupValue(item, gk);
+    if (!groupMap.has(val)) { groupMap.set(val, []); seen.push(val); }
+    groupMap.get(val)!.push(item);
+  }
+
+  const sortedKeys = [...seen].sort((a, b) => groupSortOrder(gk, a, b));
+
+  return (
+    <AllTasksGroupedList
+      groupKeys={sortedKeys}
+      groupMap={groupMap}
+      gk={gk}
+      getItemGroupLabel={getItemGroupLabel}
+      renderItem={renderItem}
+    />
+  );
+}
+
+function AllTasksGroupedList({
+  groupKeys,
+  groupMap,
+  gk,
+  getItemGroupLabel,
+  renderItem,
+}: {
+  groupKeys: string[];
+  groupMap: Map<string, AllTasksItem[]>;
+  gk: GroupKey;
+  getItemGroupLabel: (gk: GroupKey, val: string) => string;
+  renderItem: (item: AllTasksItem) => React.ReactNode;
+}) {
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem('eav-collapsed-groups') || '{}'); }
+    catch { return {}; }
+  });
+  const toggle = (key: string) => setCollapsed(prev => {
+    const next = { ...prev, [key]: !prev[key] };
+    try { localStorage.setItem('eav-collapsed-groups', JSON.stringify(next)); } catch { /* quota */ }
+    return next;
+  });
+
+  return (
+    <>
+      {groupKeys.map(val => {
+        const items = groupMap.get(val) ?? [];
+        const label = getItemGroupLabel(gk, val);
+        const collapseKey = `0-${label}`;
+        const isCollapsed = !!collapsed[collapseKey];
+        return (
+          <div key={val}>
+            <GroupHeader
+              label={label}
+              depth={0}
+              collapsed={isCollapsed}
+              onToggle={() => toggle(collapseKey)}
+              count={items.length}
+            />
+            {!isCollapsed && (
+              <div className="task-card">
+                {items.map(item => renderItem(item))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 export function TaskList({
-  tasks, todayEntries, upcomingEntries, filter, keywords, isDoneState, clockStatus, clockManager, allTags, onRefresh, onRefreshClock, onCapture, sidebarOpen, onToggleSidebar, warningDays = 14,
+  tasks, habits, todayEntries, upcomingEntries, filter, keywords, isDoneState, clockStatus, clockManager, allTags, onRefresh, onRefreshHabits, onRefreshClock, onCapture, sidebarOpen, onToggleSidebar, warningDays = 14,
 }: TaskListProps) {
-  const allTasksForClock: (OrgTask | AgendaEntry)[] = tasks;
+  const [editingAllTasksHabit, setEditingAllTasksHabit] = useState<Habit | null>(null);
+  const [allTasksHabitSubmitting, setAllTasksHabitSubmitting] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [controlsAnchor, setControlsAnchor] = useState<{ top: number; right: number } | null>(null);
   const controlsBtnRef = useRef<HTMLButtonElement>(null);
@@ -441,15 +1145,15 @@ export function TaskList({
       doneStates.add('KILL');
     }
 
-    // Habit hiding: the web settings key `showHabitsInToday` is the inverse
-    // of the iOS/Mac `hideHabits` boolean. Default-off means habits hide.
-    const hideHabits = !loadSettings().showHabitsInToday;
-
+    // Habits are now DB-managed and shown only in the Habits tab.
+    // Always hide org-habit entries from the Today feed so they don't
+    // double-appear. The `showHabitsInToday` setting is intentionally
+    // ignored now that habits are a separate system.
     const { events, main } = buildTodayItems(
       todayEntries,
       tasks,
       doneStates,
-      hideHabits,
+      true, // always hide org-habit entries
     );
 
     return {
@@ -457,6 +1161,79 @@ export function TaskList({
       todaySection: sortItems(main as DisplayItem[], sortKey),
     };
   }, [todayEntries, tasks, keywords, filter.type, sortKey]);
+
+  // ========== DUE HABITS FOR TODAY ==========
+  // Always show habits in Today (per iOS parity). Exclude done-this-period.
+  const showHabitsInToday = loadSettings().showHabitsInToday ?? true;
+  // All active due/overdue habits
+  const allDueHabits = useMemo(
+    () => habits.filter(h => h.active && (h.state === 'due' || h.state === 'overdue')),
+    [habits],
+  );
+  // Only undone ones appear in the main list
+  const dueHabits = useMemo(
+    () => allDueHabits.filter(h => !habitStatsFromDB(h).doneThisPeriod),
+    [allDueHabits],
+  );
+  // Habit chip stats: how many of today's due habits are already done this period
+  const habitDoneToday = useMemo(
+    () => allDueHabits.filter(h => habitStatsFromDB(h).doneThisPeriod).length,
+    [allDueHabits],
+  );
+  // Best current streak across all active habits
+  const bestHabitStreak = useMemo(
+    () => habits.reduce((best, h) => {
+      const s = habitStatsFromDB(h).currentStreak;
+      return s > best ? s : best;
+    }, 0),
+    [habits],
+  );
+
+  // ========== COMBINED TODAY ITEMS (tasks + habits, interleaved by priority) ==========
+  // Mirrors iOS HomeView.buildCombinedItems: habit priority sorts alongside task priority.
+  type TodayItem =
+    | { kind: 'task'; item: DisplayItem }
+    | { kind: 'habit'; item: Habit };
+
+  const combinedToday = useMemo((): TodayItem[] => {
+    if (filter.type !== 'today' || !showHabitsInToday) {
+      return todaySection.map(t => ({ kind: 'task' as const, item: t }));
+    }
+    const habitPriorityOrd = (p: string | undefined) => {
+      switch (p?.toUpperCase()) {
+        case 'A': return 0; case 'B': return 1; case 'C': return 2; case 'D': return 3; default: return 4;
+      }
+    };
+    const taskItems: TodayItem[] = todaySection.map(t => ({ kind: 'task' as const, item: t }));
+    const habitItems: TodayItem[] = dueHabits.map(h => ({ kind: 'habit' as const, item: h }));
+    const all = [...taskItems, ...habitItems];
+    if (sortKey === 'default') {
+      // Overdue float to top, then sort by priority within each group
+      const overdue = all.filter(i =>
+        i.kind === 'task'
+          ? ('scheduled' in i.item && i.item.scheduled?.start != null && (() => {
+              const c = (i.item as AgendaEntry | OrgTask).scheduled!.start!;
+              const today2 = new Date(); today2.setHours(0,0,0,0);
+              return new Date(c.year, c.month-1, c.day).getTime() < today2.getTime();
+            })())
+          : (i.item as Habit).state === 'overdue'
+      );
+      const rest = all.filter(i => !overdue.includes(i));
+      const byPriOrd = (a: TodayItem, b: TodayItem) => {
+        const pA = a.kind === 'task' ? priorityOrd(a.item.priority) : habitPriorityOrd((a.item as Habit).priority);
+        const pB = b.kind === 'task' ? priorityOrd(b.item.priority) : habitPriorityOrd((b.item as Habit).priority);
+        return pA - pB;
+      };
+      return [...overdue.sort(byPriOrd), ...rest.sort(byPriOrd)];
+    }
+    // Non-default sort: sort the combined list by priority
+    return all.sort((a, b) => {
+      const pA = a.kind === 'task' ? priorityOrd(a.item.priority) : habitPriorityOrd((a.item as Habit).priority);
+      const pB = b.kind === 'task' ? priorityOrd(b.item.priority) : habitPriorityOrd((b.item as Habit).priority);
+      if (pA !== pB) return pA - pB;
+      return a.item.title.localeCompare(b.item.title);
+    });
+  }, [filter.type, showHabitsInToday, todaySection, dueHabits, sortKey]);
 
   // ========== OTHER VIEWS ==========
   const items: DisplayItem[] = useMemo(() => {
@@ -467,8 +1244,9 @@ export function TaskList({
     if (filter.type === 'calendar') return [];
     let result: DisplayItem[];
     switch (filter.type) {
-      case 'upcoming': result = upcomingEntries; break;
-      case 'all': result = tasks.filter(t => t.todoState); break;
+      // Filter org-habit entries from Upcoming — they're DB-managed now.
+      case 'upcoming': result = upcomingEntries.filter(e => !e.isHabit); break;
+      case 'all': result = tasks.filter(t => t.todoState && !isHabit(t)); break;
       case 'logbook': result = tasks.filter(t => t.todoState && isDoneState(t.todoState)); break;
       case 'pinned': {
         const ymd = todayYMD();
@@ -502,6 +1280,37 @@ export function TaskList({
     }
     return sortItems(result, sortKey);
   }, [tasks, upcomingEntries, filter, sortKey, showDone, isDoneState]);
+
+  // ========== ALL TASKS COMBINED (tasks + active habits) ==========
+  // Active habits are interleaved with tasks in All Tasks, sorted by priority.
+  const allTasksCombined = useMemo((): AllTasksItem[] => {
+    if (filter.type !== 'all') return [];
+    const activeHabits = habits.filter(h => h.active);
+    const taskItems: AllTasksItem[] = items.map(t => ({ kind: 'task' as const, item: t }));
+    const habitItems: AllTasksItem[] = activeHabits.map(h => ({ kind: 'habit' as const, item: h }));
+    const all = [...taskItems, ...habitItems];
+    // Sort combined list: respect the chosen sortKey
+    const habitPriOrd = (p: string | undefined) => {
+      switch (p?.toUpperCase()) {
+        case 'A': return 0; case 'B': return 1; case 'C': return 2; case 'D': return 3; default: return 4;
+      }
+    };
+    if (sortKey === 'default') {
+      // Default: sort by priority then title
+      return all.sort((a, b) => {
+        const pA = a.kind === 'task' ? priorityOrd(a.item.priority) : habitPriOrd((a.item as Habit).priority);
+        const pB = b.kind === 'task' ? priorityOrd(b.item.priority) : habitPriOrd((b.item as Habit).priority);
+        if (pA !== pB) return pA - pB;
+        return a.item.title.localeCompare(b.item.title);
+      });
+    }
+    return all.sort((a, b) => {
+      const pA = a.kind === 'task' ? priorityOrd(a.item.priority) : habitPriOrd((a.item as Habit).priority);
+      const pB = b.kind === 'task' ? priorityOrd(b.item.priority) : habitPriOrd((b.item as Habit).priority);
+      if (pA !== pB) return pA - pB;
+      return a.item.title.localeCompare(b.item.title);
+    });
+  }, [filter.type, items, habits, sortKey]);
 
   // Logbook: bucket by CLOSED date — Today / Yesterday / This Week / This
   // Month / Earlier / Unknown. Mirrors the Mac client's groupTasksByClosedDate.
@@ -571,9 +1380,11 @@ export function TaskList({
   }, [items, filter.type]);
 
   const totalCount = filter.type === 'today'
-    ? calendarEvents.length + todaySection.length
+    ? calendarEvents.length + combinedToday.length
     : filter.type === 'habits'
-      ? tasks.filter(isHabit).length
+      ? habits.length
+    : filter.type === 'all'
+      ? allTasksCombined.length
     : filter.type === 'eisenhower' || filter.type === 'calendar'
       ? tasks.filter(t => t.todoState && !isDoneState(t.todoState)).length
       : items.length;
@@ -610,6 +1421,16 @@ export function TaskList({
               <span className="text-[9px] text-done-green/70 italic">Emacs</span>
             </span>
           )}
+          {filter.type === 'today' && habits.length > 0 && (
+            <span className="hidden md:inline-flex items-center gap-1 text-[11px] px-2 py-[3px] rounded-full bg-things-surface border border-things-border-subtle self-center text-text-secondary">
+              {bestHabitStreak > 0 && <Fire size={11} weight="fill" className="text-done-green flex-shrink-0" />}
+              <span className="tabular-nums">{habitDoneToday}/{dueHabits.length}</span>
+              <span className="text-text-tertiary">habits</span>
+              {bestHabitStreak > 0 && (
+                <span className="text-[9px] text-text-tertiary tabular-nums">{bestHabitStreak}d streak</span>
+              )}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -625,7 +1446,7 @@ export function TaskList({
             onClick={onRefresh}
             className="text-[13px] px-2.5 py-1.5 rounded-lg text-text-secondary hover:bg-things-sidebar-hover hover:text-text-primary transition-colors"
             title="Refresh from Emacs"
-          >{'\u21BB'}</button>
+          ><ArrowsClockwise size={13} weight="regular" /></button>
           <button
             ref={controlsBtnRef}
             onClick={(e) => {
@@ -670,11 +1491,10 @@ export function TaskList({
         {filter.type === 'habits' ? (
           /* ========== HABITS VIEW ========== */
           <HabitsView
-            tasks={tasks}
+            habits={habits}
+            onRefresh={onRefreshHabits}
+            clockManager={clockManager}
             keywords={keywords}
-            isDoneState={isDoneState}
-            allTags={allTags}
-            onRefresh={onRefresh}
           />
 
         ) : filter.type === 'eisenhower' ? (
@@ -706,7 +1526,7 @@ export function TaskList({
           <div className="flex flex-col items-center justify-center h-48 gap-2 text-text-tertiary text-sm">
             {filter.type === 'inbox' ? (
               <>
-                <span className="text-3xl opacity-40">{'✓'}</span>
+                <Check size={32} weight="bold" className="opacity-40" />
                 <span className="font-medium text-text-secondary">Inbox is clear</span>
                 <span className="text-[12px] text-center max-w-[260px]">
                   New captures land here. Refile them into project trees to keep this list empty.
@@ -714,7 +1534,7 @@ export function TaskList({
               </>
             ) : filter.type === 'pinned' ? (
               <>
-                <span className="text-3xl opacity-40">{'\u{1F4CC}'}</span>
+                <PushPin size={32} weight="regular" className="opacity-40" />
                 <span className="font-medium text-text-secondary">Nothing pinned for today</span>
                 <span className="text-[12px] text-center max-w-[280px]">
                   Pin a task with {'⌘⇧P'} or right-click &rarr; Pin to My Day.
@@ -728,30 +1548,34 @@ export function TaskList({
         ) : filter.type === 'today' ? (
           /* ========== TODAY VIEW ========== */
           <>
+            {/* Events card: compact, rendered on top */}
             <EventBanners events={calendarEvents} />
-            {loadSettings().showHabitsInToday && (
-              <TodayHabitsGroup
-                tasks={tasks}
-                onRefresh={onRefresh}
-                isMobile={window.innerWidth < 768}
-              />
-            )}
-            {todaySection.length > 0 && (
-              <>
-                <SectionHeader title="Today" count={todaySection.length} />
-                <div className="task-card">
-                  <RenderGroups
-                    nodes={multiGroup(todaySection, activeGroups)}
-                    keywords={keywords}
-                    isDoneState={isDoneState}
-                    clockManager={clockManager}
-                    allTasksForClock={allTasksForClock}
-                    allTags={allTags}
-                    onRefresh={onRefresh}
-                    onRefreshClock={onRefreshClock}
-                  />
-                </div>
-              </>
+            {/* Combined task + habit list, interleaved and sorted */}
+            {combinedToday.length > 0 && (
+              <div className="task-card">
+                {combinedToday.map(row =>
+                  row.kind === 'habit' ? (
+                    <TodayHabitRow
+                      key={`habit-${row.item.id}`}
+                      habit={row.item as Habit}
+                      onRefreshHabits={onRefreshHabits}
+                      clockManager={clockManager}
+                      keywords={keywords}
+                    />
+                  ) : (
+                    <TaskItem
+                      key={row.item.id + ('agendaType' in row.item ? (row.item as AgendaEntry).agendaType : '')}
+                      task={row.item as OrgTask | AgendaEntry}
+                      keywords={keywords}
+                      isDoneState={isDoneState}
+                      clockManager={clockManager}
+                      allTags={allTags}
+                      onRefresh={onRefresh}
+                      onRefreshClock={onRefreshClock}
+                    />
+                  )
+                )}
+              </div>
             )}
           </>
 
@@ -817,7 +1641,7 @@ export function TaskList({
                 <EventBanners events={dayEvents} />
                 {dayTasks.length > 0 && (
                   <div className="task-card">
-                    <RenderGroups nodes={grouped} keywords={keywords} isDoneState={isDoneState} clockManager={clockManager} allTasksForClock={allTasksForClock} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} makeDraggable />
+                    <RenderGroups nodes={grouped} keywords={keywords} isDoneState={isDoneState} clockManager={clockManager} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} makeDraggable />
                   </div>
                 )}
               </div>
@@ -837,7 +1661,6 @@ export function TaskList({
                     keywords={keywords}
                     isDoneState={isDoneState}
                     clockManager={clockManager}
-                    allTasksForClock={allTasksForClock}
                     allTags={allTags}
                     onRefresh={onRefresh}
                     onRefreshClock={onRefreshClock}
@@ -848,15 +1671,51 @@ export function TaskList({
             </div>
           ))
 
+        ) : filter.type === 'all' ? (
+          /* ========== ALL TASKS VIEW (tasks + active habits interleaved) ========== */
+          <>
+            <AllTasksCombinedList
+              items={allTasksCombined}
+              activeGroups={activeGroups}
+              keywords={keywords}
+              isDoneState={isDoneState}
+              clockManager={clockManager}
+              allTags={allTags}
+              onRefresh={onRefresh}
+              onRefreshHabits={onRefreshHabits}
+              onRefreshClock={onRefreshClock}
+              onEditHabit={h => setEditingAllTasksHabit(h)}
+            />
+            {editingAllTasksHabit && (
+              <AllTasksHabitEditModal
+                habit={editingAllTasksHabit}
+                submitting={allTasksHabitSubmitting}
+                onClose={() => setEditingAllTasksHabit(null)}
+                onSubmit={async (body) => {
+                  setAllTasksHabitSubmitting(true);
+                  try {
+                    await updateHabit(editingAllTasksHabit.id, body);
+                    setEditingAllTasksHabit(null);
+                    onRefreshHabits();
+                  } catch (err) {
+                    console.error('Failed to update habit:', err);
+                  } finally {
+                    setAllTasksHabitSubmitting(false);
+                  }
+                }}
+              />
+            )}
+          </>
+
         ) : filter.type === 'file' ? (
           /* ========== FILE VIEW ========== */
           <div className="task-card">
             {topLevel.map(task => (
               <div key={task.id}>
-                <TaskItem task={task} keywords={keywords} isDoneState={isDoneState} clockManager={clockManager} allTasksForClock={allTasksForClock} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
+                <TaskItem task={task} keywords={keywords} isDoneState={isDoneState} clockManager={clockManager} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
                 {children.get(task.id)?.map(child => (
                   <div key={child.id} className="pl-8">
-                    <TaskItem task={child} keywords={keywords} isDoneState={isDoneState} clockManager={clockManager} allTasksForClock={allTasksForClock} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
+                    <TaskItem task={child} keywords={keywords} isDoneState={isDoneState} clockManager={clockManager} allTags={allTags} onRefresh={onRefresh} onRefreshClock={onRefreshClock} />
                   </div>
                 ))}
               </div>
@@ -871,7 +1730,6 @@ export function TaskList({
               keywords={keywords}
               isDoneState={isDoneState}
               clockManager={clockManager}
-              allTasksForClock={allTasksForClock}
               allTags={allTags}
               onRefresh={onRefresh}
               onRefreshClock={onRefreshClock}
@@ -903,7 +1761,7 @@ export function TaskList({
                 }`}
               >
                 <span>{key === 'default' ? 'Agenda' : key}</span>
-                <span className={`text-[11px] ${sel ? 'opacity-100' : 'opacity-0'}`}>{'✓'}</span>
+                <Check size={11} weight="bold" className={sel ? 'opacity-100' : 'opacity-0'} />
               </button>
             );
           })}
@@ -929,7 +1787,7 @@ export function TaskList({
                 }`}
               >
                 <span>{key}</span>
-                <span className={`text-[11px] ${sel ? 'opacity-100' : 'opacity-0'}`}>{'✓'}</span>
+                <Check size={11} weight="bold" className={sel ? 'opacity-100' : 'opacity-0'} />
               </button>
             );
           })}

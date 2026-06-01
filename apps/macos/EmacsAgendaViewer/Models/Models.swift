@@ -45,11 +45,55 @@ struct OrgTimestamp: Codable, Hashable, Sendable {
     /// Returns midnight in `Calendar.current` for the extracted date.
     /// Returns nil when no YYYY-MM-DD prefix can be found.
     static func parseDateString(_ raw: String) -> Date? {
-        // Find the first YYYY-MM-DD run anywhere in the string.
-        guard let range = raw.range(of: #"\d{4}-\d{2}-\d{2}"#, options: .regularExpression) else {
-            return nil
+        // Hot path: this is called from list sort comparators and habit
+        // streak math, so the old regex-compile + DateFormatter cost
+        // dominated render time. Parse the first YYYY-MM-DD run by hand and
+        // memoize on the raw string (NSCache is thread-safe and bounded).
+        if let hit = dateStringCache.object(forKey: raw as NSString) {
+            return hit as Date
         }
-        return dayFormatter.date(from: String(raw[range]))
+        guard let date = scanLeadingDate(raw) else { return nil }
+        dateStringCache.setObject(date as NSDate, forKey: raw as NSString)
+        return date
+    }
+
+    // NSCache is internally thread-safe; the unsafe annotation only silences
+    // the global-mutable-state check (the cache has no unsynchronized state).
+    nonisolated(unsafe) private static let dateStringCache = NSCache<NSString, NSDate>()
+
+    /// Gregorian / current-time-zone calendar reused across `scanLeadingDate`
+    /// calls — building a `Calendar` per parse is itself measurable.
+    private static let gregorian: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = .current
+        return c
+    }()
+
+    /// Find the first `YYYY-MM-DD` run in `raw` with no regex and no
+    /// `DateFormatter`, returning midnight in the gregorian calendar. Scans
+    /// the UTF-8 bytes; multibyte scalars have the high bit set so they never
+    /// match the ASCII digit/dash test.
+    private static func scanLeadingDate(_ raw: String) -> Date? {
+        let b = Array(raw.utf8)
+        guard b.count >= 10 else { return nil }
+        let zero = UInt8(ascii: "0"), nine = UInt8(ascii: "9"), dash = UInt8(ascii: "-")
+        func d(_ x: UInt8) -> Bool { x >= zero && x <= nine }
+        var i = 0
+        let last = b.count - 10
+        while i <= last {
+            if d(b[i]), d(b[i+1]), d(b[i+2]), d(b[i+3]), b[i+4] == dash,
+               d(b[i+5]), d(b[i+6]), b[i+7] == dash, d(b[i+8]), d(b[i+9]) {
+                let year = Int(b[i]-zero)*1000 + Int(b[i+1]-zero)*100
+                         + Int(b[i+2]-zero)*10 + Int(b[i+3]-zero)
+                let month = Int(b[i+5]-zero)*10 + Int(b[i+6]-zero)
+                let day = Int(b[i+8]-zero)*10 + Int(b[i+9]-zero)
+                var dc = DateComponents()
+                dc.year = year; dc.month = month; dc.day = day
+                return gregorian.date(from: dc)
+            }
+            i += 1
+        }
+        return nil
     }
 
     private static let dayFormatter: DateFormatter = {
@@ -251,6 +295,16 @@ struct ClockStatus: Codable, Hashable, Sendable {
     let elapsed: Int?
 }
 
+struct Clock: Codable, Identifiable, Hashable, Sendable {
+    let id: Int64
+    let taskId: String
+    let file: String?
+    let title: String?
+    let start: Int64
+    let end: Int64?
+    let note: String?
+}
+
 struct RefileTarget: Codable, Hashable, Identifiable, Sendable {
     var id: String { "\(file):\(pos)" }
     let name: String
@@ -271,6 +325,42 @@ struct CaptureTemplate: Codable, Hashable, Identifiable, Sendable {
     let templateIsFunction: Bool?
     let prompts: [CapturePrompt]?
     let webSupported: Bool
+}
+
+struct HabitCadenceSpec: Codable, Hashable, Sendable {
+    /// One of `+`, `++`, `.+`.
+    let kind: String
+    /// The "due" interval value.
+    let value: Int64
+    /// One of `d`, `w`, `m`, `y`.
+    let unit: String
+    /// Relaxed-range upper interval value (the `/2w` in `.+1w/2w`). Nil for
+    /// simple cadences.
+    let maxValue: Int64?
+    /// Unit for the upper interval; can differ from `unit` (e.g. `+5d/3w`).
+    let maxUnit: String?
+}
+
+struct Habit: Codable, Identifiable, Hashable, Sendable {
+    /// Server-generated UUID; satisfies `Identifiable`.
+    let id: String
+    let title: String
+    let cadence: HabitCadenceSpec
+    let category: String?
+    let priority: String?
+    let tags: [String]
+    let notes: String?
+    /// `YYYY-MM-DD`, the base date for `+`/`++` cycle math.
+    let anchorDate: String?
+    let active: Bool
+    /// When true, the habit's checklist resets on each completion.
+    let resetChecklistOnComplete: Bool
+    /// Completion timestamps as org-style strings (`YYYY-MM-DD Day HH:MM`).
+    let completions: [String]
+    /// Server-computed `YYYY-MM-DD` of the next due date.
+    let nextDue: String?
+    /// Server-computed `due` | `overdue` | `ok`.
+    let state: String?
 }
 
 struct CapturePrompt: Codable, Hashable, Sendable {

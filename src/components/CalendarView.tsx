@@ -152,7 +152,6 @@ function DayPopover({
               keywords={keywords}
               isDoneState={isDoneState}
               clockManager={clockManager}
-              allTasksForClock={tasks}
               allTags={allTags}
               onRefresh={() => { onRefresh(); onClose(); }}
               onRefreshClock={onRefreshClock}

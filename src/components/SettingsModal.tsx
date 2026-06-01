@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
+import { Sun, Moon, SunHorizon } from '@phosphor-icons/react';
 import { loadSettings, saveSettings } from '../api/tasks';
 import type { ThemeMode } from '../hooks/useTheme';
 
@@ -9,10 +10,10 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-const THEME_OPTIONS: { value: ThemeMode; label: string; icon: string }[] = [
-  { value: 'light', label: 'Light', icon: '☀️' },
-  { value: 'dark', label: 'Dark', icon: '\u{1F319}' },
-  { value: 'auto', label: 'Auto', icon: '\u{1F305}' },
+const THEME_OPTIONS: { value: ThemeMode; label: string; icon: ReactElement }[] = [
+  { value: 'light', label: 'Light', icon: <Sun size={14} weight="fill" /> },
+  { value: 'dark', label: 'Dark', icon: <Moon size={14} weight="fill" /> },
+  { value: 'auto', label: 'Auto', icon: <SunHorizon size={14} weight="regular" /> },
 ];
 
 export function SettingsModal({ themeMode, onSetTheme, onClose }: SettingsModalProps) {

@@ -1,5 +1,133 @@
 #+title: Changelog
 
+** 0.6.11 (2026-06-01)
+
+*** Added
+
+- eavd now embeds an MCP (Model Context Protocol) server (Streamable-HTTP,
+  default ~127.0.0.1:3003/mcp~) so AI agents can read and modify the org
+  todo list. The full tool set covers:
+  - querying — ~list_tasks~ (incl. project filter), ~search_tasks~,
+    ~get_task~, ~get_agenda~ / ~get_agenda_range~;
+  - discovery — ~list_projects~, ~list_locations~;
+  - creation — ~add_task~ (defaults to a project's Inbox, supports an
+    explicit heading via ~location_id~ and sub-tasks via ~parent_task_id~;
+    the capture-based ~create_task~ is retained);
+  - updates — ~set_task_*~ for state, schedule, deadline, priority, tags,
+    and notes.
+  Connect with ~claude mcp add --transport http eav http://127.0.0.1:3003/mcp~.
+  Remote access over Tailscale via ~--mcp-host~ (default localhost; rmcp's
+  DNS-rebind Host check is relaxed only for non-loopback binds). New flags:
+  ~--mcp-port~, ~--mcp-host~, ~--no-mcp~.
+
+*** Fixed
+
+- macOS date picker: clicking "Add time" (or "Remove time") no longer
+  dismisses the popover before a time could be set. The button now only
+  updates local state and defers the single write to popover-close, matching
+  how the time spinner already batched its commit. Fixes task scheduling,
+  deadlines, and habit scheduling.
+
+*** Changed
+
+- Redesigned the running-clock Live Activity / Dynamic Island. A single
+  roster-driven activity now shows ALL concurrent clocks (previously, with
+  multiple timers running, iOS surfaced only one and hid the rest), styled
+  to match the in-app clock dock — doneGreen accent, self-ticking live
+  timers, pulsing indicator — across the compact, minimal, expanded, and
+  lock-screen surfaces.
+- macOS: habit rows in the Today and All Tasks views now render through the
+  same row component as regular tasks, for consistent layout and actions.
+- Catch-up release folding in prior uncommitted work: clocks and habits now
+  live as durable first-class entities in eavd's SQLite store (DB is source
+  of truth, no org writes), the web client gained matching clock/habit and
+  checklist support, and elisp + test suites were updated accordingly.
+
+** 0.6.10 (2026-06-01)
+
+*** Fixed
+
+- Toggling a checklist item inside a habit in the iOS Today view now
+  updates immediately. The memoized Today feed wasn't rebuilding on
+  notes-only changes, so checklist taps appeared to do nothing (only the
+  button highlight flashed).
+
+** 0.6.9 (2026-05-31)
+
+*** Fixed
+
+- Completing a clocked task or habit now stops the dock timer immediately
+  on iOS and Mac, instead of waiting on the server's clock-changed event
+  (which could be missed and leave a phantom clock ticking). The client
+  drops the local clock the moment you complete.
+
+** 0.6.8 (2026-05-31)
+
+*** Fixed
+
+- Overdue deadlines no longer disappear from Today. A past-due deadline
+  with no scheduled date (e.g. a repeating Weekly Review that slipped
+  past its due date) now stays in the Today view until it's done —
+  previously the Today classifier only kept overdue *scheduled* items.
+  Fixed on iOS, Mac, and web.
+
+** 0.6.7 (2026-05-31)
+
+*** Changed
+
+- macOS Upcoming now renders calendar events in the concise
+  one-line-per-event card style used by Today and iOS, instead of the
+  older full-width banners.
+
+** 0.6.6 (2026-05-31)
+
+*** Fixed
+
+- Completing a task (or a clocked habit) now stops its running clock on
+  every client — the daemon closes the open clock on completion and emits
+  a clock-changed event, instead of only the Mac app stopping it locally.
+
+** 0.6.5 (2026-05-31)
+
+*** Fixed
+
+- *Habit completion/undo from the checkbox no longer silently reverts.*
+  The daemon now accepts org-style string timestamps (e.g.
+  ="2026-05-31 Sun 14:32"=) on complete/uncomplete instead of rejecting
+  them with HTTP 422.
+- *Mac habit notes now render org inline markup* (=verbatim=, ~code~,
+  *bold*, links, timestamps) instead of showing the raw markers.
+
+** 0.6.4 (2026-05-31)
+
+*** Added
+
+- *Habits are now first-class task-style rows.* Done, skip, schedule,
+  checklist, and priority edits apply *instantly* (optimistic) with
+  proper error surfacing — no more silent no-ops or two-round-trip lag.
+- *Mac habit parity.* Editable priority on habit rows; the full
+  org-priority range (including priority D) is honored across *all*
+  priority pickers; editable habit notes inline; a delete-habit
+  confirmation; an interactive Habits dashboard (checkbox + context
+  menu); and correct dashboard priority colors.
+- Events card gained a "+N more" overflow with an un-hide affordance.
+
+*** Changed
+
+- *Habit due/done state is now server-truth.* This fixes ghost rows
+  that lingered after completing weekly/relaxed habits and the monthly
+  habit that read "done" all month.
+- Larger checkbox hit target and a teal in-progress pie fill.
+
+*** Fixed
+
+- *UI lag.* Feed derivation is memoized out of the SwiftUI body,
+  per-habit stats are computed once, date parsing is allocation-free,
+  and row notes are parsed once.
+- *Refresh clobbering.* SSE bursts are debounced and in-flight
+  optimistic mutations are protected from being overwritten by a
+  refresh; clock-dock entries are deduped.
+
 ** 0.6.3 (2026-05-24)
 
 *** Changed

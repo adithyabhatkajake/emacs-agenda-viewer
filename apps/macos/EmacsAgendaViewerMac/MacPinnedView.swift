@@ -16,7 +16,7 @@ struct MacPinnedView: View {
 
     var body: some View {
         content
-            .navigationTitle("Pinned")
+            .navigationTitle("My Day")
             .searchable(text: $searchText, placement: .toolbar, prompt: "Search pinned")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -72,7 +72,7 @@ struct MacPinnedView: View {
     private func pinnedHead(taskCount: Int) -> some View {
         let dayLabel = MacPinnedView.dayHeadFormatter.string(from: Date())
         VStack(alignment: .leading, spacing: 4) {
-            Text("PINNED")
+            Text("MY DAY")
                 .font(.system(size: 11, weight: .heavy))
                 .tracking(0.6)
                 .foregroundStyle(Theme.accent)

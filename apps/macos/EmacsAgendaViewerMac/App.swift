@@ -68,6 +68,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the RootView task fires and races the helper's bridge auto-load.
         Task { @MainActor [weak self] in
             guard let self, let host = self.daemonHost else { return }
+            // If the user has configured a remote server, don't spawn or wait
+            // on the bundled local helper — a remote-configured app must never
+            // be gated on a local daemon it doesn't use. Leave the phase at
+            // `.idle`; RootView only consults `daemonHost.phase` when
+            // `settings.usesBundledDaemon` is true.
+            if let s = self.settings, !s.usesBundledDaemon { return }
             host.phase = .starting
             do {
                 try await host.start()

@@ -20,6 +20,9 @@ import Foundation
 ///     * its scheduled timestamp is today
 ///     * its deadline timestamp is today
 ///     * its scheduled timestamp is in the past (overdue)
+///     * its deadline timestamp is in the past (overdue) — e.g. a repeating
+///       deadline like a Weekly Review that slipped past its due date stays
+///       in Today until it's done, mirroring org-agenda's past-due deadlines.
 /// - Habits are dropped when `hideHabits == true`.
 /// - Tasks whose `todoState` is in `doneStates` (case-insensitive) are dropped.
 ///   The daemon may include them when `org-agenda-skip-scheduled-if-done` is
@@ -69,7 +72,12 @@ enum TodayClassifier {
             let isTodayScheduled = matchesToday(entry.scheduled?.start)
             let isTodayDeadline = matchesToday(entry.deadline?.start)
             let isOverdueScheduled = isPast(entry.scheduled?.start)
-            guard isTodayScheduled || isTodayDeadline || isOverdueScheduled else { continue }
+            // A past-due deadline (no scheduled date, or a future one) must
+            // still surface in Today — org-agenda keeps overdue deadlines on
+            // the day view until done. Without this, a repeating deadline like
+            // "Weekly Review" <…+1w> that slipped past Friday vanished entirely.
+            let isOverdueDeadline = isPast(entry.deadline?.start)
+            guard isTodayScheduled || isTodayDeadline || isOverdueScheduled || isOverdueDeadline else { continue }
 
             if hideHabits && entry.isHabit { continue }
 

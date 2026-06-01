@@ -24,23 +24,23 @@ enum Theme {
     // MARK: - Surfaces
     static let background = Color.dynamic(
         light: Color.white,
-        dark:  Color(red: 45/255,  green: 45/255,  blue: 47/255)
+        dark:  Color(red: 0/255,   green: 0/255,   blue: 0/255)
     )
     static let surface = Color.dynamic(
         light: Color(red: 240/255, green: 240/255, blue: 242/255),
-        dark:  Color(red: 50/255,  green: 50/255,  blue: 52/255)
+        dark:  Color(red: 36/255,  green: 36/255,  blue: 40/255)
     )
     static let surfaceElevated = Color.dynamic(
         light: Color(red: 232/255, green: 232/255, blue: 237/255),
-        dark:  Color(red: 58/255,  green: 58/255,  blue: 60/255)
+        dark:  Color(red: 52/255,  green: 52/255,  blue: 56/255)
     )
     static let border = Color.dynamic(
         light: Color(red: 209/255, green: 209/255, blue: 214/255),
-        dark:  Color(red: 58/255,  green: 58/255,  blue: 60/255)
+        dark:  Color(red: 68/255,  green: 68/255,  blue: 74/255)
     )
     static let borderSubtle = Color.dynamic(
         light: Color(red: 229/255, green: 229/255, blue: 234/255),
-        dark:  Color(red: 56/255,  green: 56/255,  blue: 58/255)
+        dark:  Color(red: 50/255,  green: 50/255,  blue: 54/255)
     )
 
     // MARK: - Accents (theme-aware to match the design tokens)
@@ -56,15 +56,15 @@ enum Theme {
     // MARK: - Text
     static let textPrimary = Color.dynamic(
         light: Color(red: 29/255,  green: 29/255,  blue: 31/255),
-        dark:  Color(red: 245/255, green: 245/255, blue: 247/255)
+        dark:  Color(red: 250/255, green: 250/255, blue: 252/255)
     )
     static let textSecondary = Color.dynamic(
         light: Color(red: 110/255, green: 110/255, blue: 115/255),
-        dark:  Color(red: 152/255, green: 152/255, blue: 157/255)
+        dark:  Color(red: 176/255, green: 176/255, blue: 182/255)
     )
     static let textTertiary = Color.dynamic(
         light: Color(red: 174/255, green: 174/255, blue: 178/255),
-        dark:  Color(red: 99/255,  green: 99/255,  blue: 102/255)
+        dark:  Color(red: 134/255, green: 134/255, blue: 140/255)
     )
 
     // MARK: - Status (theme-aware per design tokens)

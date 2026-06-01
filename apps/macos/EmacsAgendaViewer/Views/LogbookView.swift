@@ -28,7 +28,7 @@ struct LogbookView: View {
         } else if let tasks = store.allTasks.value {
             let filtered = doneTasks(from: tasks)
             if filtered.isEmpty {
-                EmptyStateView(title: "No completed tasks yet", systemImage: "checkmark.seal")
+                EmptyStateView(title: "No completed tasks yet", systemImage: "book.closed.fill")
             } else {
                 groupedList(filtered)
             }
@@ -56,7 +56,7 @@ struct LogbookView: View {
                             task: task, doneStates: doneStates, store: store,
                             expandedIds: $expandedIds
                         )
-                        .listRowBackground(Theme.background)
+                        .listRowBackground(Theme.surface)
                         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                         .listRowSeparatorTint(Theme.borderSubtle)
                     }

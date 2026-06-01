@@ -294,9 +294,12 @@ struct DatePickerPopover: View {
                     .onChange(of: date) { _, _ in timeDirty = true }
                 Spacer()
                 Button {
+                    // Local-only state change; the write is batched to the
+                    // popover-close commit (see `.onDisappear`). Committing
+                    // here would write immediately, and the reindex/SSE
+                    // re-render tears down the row that anchors this popover.
                     hasTime = false
-                    timeDirty = false
-                    commit(closing: false)
+                    timeDirty = true
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.white.opacity(0.5))
@@ -305,6 +308,13 @@ struct DatePickerPopover: View {
                 .help("Remove time")
             } else {
                 Button {
+                    // Seed a sensible default time, then flip to the time
+                    // editor. Local-only: the write is deferred to the
+                    // popover-close commit (see `.onDisappear`). Committing
+                    // here would write immediately, and the resulting
+                    // reindex/SSE re-render relocates the task row that
+                    // anchors this popover — dismissing it before the user
+                    // can pick a time.
                     var comps = cal.dateComponents([.year, .month, .day], from: date)
                     let now = cal.dateComponents([.hour, .minute], from: Date())
                     comps.hour = now.hour
@@ -312,7 +322,7 @@ struct DatePickerPopover: View {
                     if (comps.minute ?? 0) == 0 { comps.hour = (comps.hour ?? 0) + 1 }
                     if let d = cal.date(from: comps) { date = d }
                     hasTime = true
-                    commit(closing: false)
+                    timeDirty = true
                 } label: {
                     Text("Add time")
                         .font(.system(size: 11, weight: .medium))

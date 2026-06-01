@@ -79,6 +79,9 @@ export async function mockApi(page: Page): Promise<void> {
   await page.route(/\/api\/config(\?|$)/, (r) =>
     r.fulfill(json({ deadlineWarningDays: 7 }))
   );
+  await page.route(/\/api\/clock\/active(\?|$)/, (r) =>
+    r.fulfill(json([]))
+  );
   await page.route(/\/api\/clock(\?|$)/, (r) =>
     r.fulfill(json({ clocking: false }))
   );

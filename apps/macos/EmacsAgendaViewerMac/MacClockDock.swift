@@ -8,7 +8,7 @@ struct MacClockDock: View {
     /// the title, priority box, category chip, or elapsed counter. Lets
     /// the host (RootView) navigate to the task in the All Tasks list.
     /// Nil means clicks are inert.
-    var onReveal: ((ClockManager.Session) -> Void)? = nil
+    var onReveal: ((Clock) -> Void)? = nil
 
     var body: some View {
         if clocks.sessions.isEmpty {
@@ -23,8 +23,8 @@ struct MacClockDock: View {
     @ViewBuilder
     private func content(now: Date) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(clocks.sessions) { session in
-                sessionRow(session, now: now)
+            ForEach(clocks.sessions) { clock in
+                clockRow(clock, now: now)
             }
             if let err = clocks.lastStopError {
                 HStack(spacing: 4) {
@@ -78,14 +78,16 @@ struct MacClockDock: View {
     }
 
     @ViewBuilder
-    private func sessionRow(_ session: ClockManager.Session, now: Date) -> some View {
-        let priority = priorityFor(session)
+    private func clockRow(_ clock: Clock, now: Date) -> some View {
+        let priority = priorityFor(clock)
+        let displayTitle = clock.title ?? clock.taskId
+        let category = categoryFor(clock)
         HStack(spacing: 10) {
             // Reveal area: everything between the stopwatch and the stop
             // button is one big invisible button. Hit-testing the buttons
             // takes precedence — they live outside this group below.
             Button {
-                onReveal?(session)
+                onReveal?(clock)
             } label: {
                 HStack(spacing: 10) {
                     Text("⏰")
@@ -94,13 +96,13 @@ struct MacClockDock: View {
                     if let p = priority, !p.isEmpty {
                         priorityBox(p)
                     }
-                    Text(session.title)
+                    Text(displayTitle)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                     Spacer(minLength: 8)
-                    if !session.category.isEmpty {
-                        Text(session.category.uppercased())
+                    if let cat = category, !cat.isEmpty {
+                        Text(cat.uppercased())
                             .font(.system(size: 10, weight: .bold))
                             .tracking(0.6)
                             .foregroundStyle(Theme.textSecondary)
@@ -111,7 +113,7 @@ struct MacClockDock: View {
                                     .fill(Theme.textSecondary.opacity(0.10))
                             )
                     }
-                    Text(ClockManager.formatElapsed(session.elapsed(now: now)))
+                    Text(ClockManager.formatElapsed(ClockManager.elapsed(for: clock, now: now)))
                         .font(.system(size: 12, weight: .semibold).monospacedDigit())
                         .foregroundStyle(Theme.priorityB)
                 }
@@ -120,13 +122,13 @@ struct MacClockDock: View {
             .buttonStyle(.plain)
             .help("Reveal task in the current list")
             .disabled(onReveal == nil)
-            stopButton(session)
-            cancelButton(session)
+            stopButton(clock)
+            cancelButton(clock)
         }
         .padding(.horizontal, 18)
         .frame(height: 40)
         .overlay(alignment: .top) {
-            if isNotFirst(session) {
+            if isNotFirst(clock) {
                 Rectangle()
                     .frame(height: 0.5)
                     .foregroundStyle(Theme.borderSubtle)
@@ -134,8 +136,8 @@ struct MacClockDock: View {
         }
     }
 
-    private func isNotFirst(_ session: ClockManager.Session) -> Bool {
-        clocks.sessions.first?.id != session.id
+    private func isNotFirst(_ clock: Clock) -> Bool {
+        clocks.sessions.first?.id != clock.id
     }
 
     @ViewBuilder
@@ -150,15 +152,10 @@ struct MacClockDock: View {
             )
     }
 
-    private func priorityFor(_ session: ClockManager.Session) -> String? {
-        // Match by id first, then fall back to file+title — the session's id is a
-        // file::pos snapshot from clock-in time, which goes stale once CLOCK lines
-        // shift the heading's position in the file.
+    private func priorityFor(_ clock: Clock) -> String? {
         func find<T: TaskDisplayable>(in tasks: [T]?) -> String? {
             guard let tasks else { return nil }
-            let t = tasks.first(where: {
-                $0.id == session.id || ($0.file == session.file && $0.title == session.title)
-            })
+            let t = tasks.first(where: { $0.id == clock.taskId })
             if let p = t?.priority, !p.isEmpty { return p }
             return nil
         }
@@ -167,11 +164,20 @@ struct MacClockDock: View {
             ?? find(in: store.upcoming.value)
     }
 
-    private func stopButton(_ session: ClockManager.Session) -> some View {
+    private func categoryFor(_ clock: Clock) -> String? {
+        func find<T: TaskDisplayable>(in tasks: [T]?) -> String? {
+            tasks?.first(where: { $0.id == clock.taskId })?.category
+        }
+        return find(in: store.allTasks.value)
+            ?? find(in: store.today.value)
+            ?? find(in: store.upcoming.value)
+    }
+
+    private func stopButton(_ clock: Clock) -> some View {
         Button {
             Task {
                 guard let client = settings.apiClient else { return }
-                await clocks.stop(taskId: session.id, using: client, store: store)
+                await clocks.clockOut(clockId: clock.id, using: client)
             }
         } label: {
             Image(systemName: "stop.circle.fill")
@@ -182,9 +188,12 @@ struct MacClockDock: View {
         .help("Stop and log")
     }
 
-    private func cancelButton(_ session: ClockManager.Session) -> some View {
+    private func cancelButton(_ clock: Clock) -> some View {
         Button {
-            clocks.cancel(taskId: session.id)
+            Task {
+                guard let client = settings.apiClient else { return }
+                await clocks.cancel(clockId: clock.id, using: client)
+            }
         } label: {
             Image(systemName: "xmark.circle")
                 .foregroundStyle(Theme.textTertiary)

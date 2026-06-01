@@ -4,152 +4,144 @@ import Observation
 @MainActor
 @Observable
 final class ClockManager {
-    struct Session: Identifiable, Hashable, Codable {
-        let id: String           // taskId
-        let file: String
-        let pos: Int
-        let title: String
-        let category: String
-        let startedAt: Date
-        // Non-nil while a stop() call is mid-await for this session.
-        // Excluded from persistence; rehydrated sessions are never mid-stop.
-        var stoppingSince: Date?
+    // MARK: - Session mirrors server Clock rows (end == nil → running)
 
-        func elapsed(now: Date = Date()) -> TimeInterval {
-            max(0, now.timeIntervalSince(startedAt))
-        }
+    private(set) var sessions: [Clock] = []
 
-        // Exclude stoppingSince from UserDefaults persistence.
-        private enum CodingKeys: String, CodingKey {
-            case id, file, pos, title, category, startedAt
-        }
-
-        static func == (lhs: Session, rhs: Session) -> Bool {
-            lhs.id == rhs.id
-        }
-
-        func hash(into hasher: inout Hasher) {
-            hasher.combine(id)
-        }
-    }
-
-    private static let storageKey = "activeClocks_v1"
-
-    private(set) var sessions: [Session] = [] {
-        didSet { persist() }
-    }
-    init() {
-        if let data = UserDefaults.standard.data(forKey: Self.storageKey),
-           let restored = try? JSONDecoder().decode([Session].self, from: data) {
-            sessions = restored
-        }
-    }
-
-    private func persist() {
-        if sessions.isEmpty {
-            UserDefaults.standard.removeObject(forKey: Self.storageKey)
-        } else if let data = try? JSONEncoder().encode(sessions) {
-            UserDefaults.standard.set(data, forKey: Self.storageKey)
-        }
-    }
-
-    func isClocked(taskId: String) -> Bool {
-        sessions.contains(where: { $0.id == taskId })
-    }
-
-    func start(task: any TaskDisplayable) {
-        // isClocked returns true while a stop() is mid-await, blocking concurrent start.
-        guard !isClocked(taskId: task.id) else { return }
-        sessions.append(Session(
-            id: task.id,
-            file: task.file,
-            pos: task.pos,
-            title: task.title,
-            category: task.category,
-            startedAt: Date()
-        ))
-    }
-
-    /// Last error encountered when trying to stop a clock — surfaced in the dock UI.
+    /// Last error from a stop or cancel operation — surfaced in the dock UI.
     var lastStopError: String?
 
-    // Overridable for unit tests; nil means use client.logClockEntry in production.
-    var _logClockEntry: ((String, Int, Int, Int) async throws -> Void)?
+    // MARK: - Load
 
-    /// Stop a session and push the entry to the server. Returns the duration in seconds.
-    /// `store` is consulted to refresh the heading position in case earlier clock
-    /// log writes shifted the file.
-    @discardableResult
-    func stop(taskId: String, using client: APIClient, store: TasksStore? = nil) async -> Int? {
-        guard let s = sessions.first(where: { $0.id == taskId }) else { return nil }
-        // Reentrancy guard: if a stop() is already in flight for this task, do nothing.
-        guard s.stoppingSince == nil else { return nil }
+    /// Inject sessions directly — used only by unit tests.
+    func _setSessions(_ clocks: [Clock]) {
+        sessions = clocks
+    }
 
-        let end = Date()
-        let startEpoch = Int(s.startedAt.timeIntervalSince1970)
-        let endEpoch = Int(end.timeIntervalSince1970)
-        guard endEpoch > startEpoch else {
-            lastStopError = nil
-            sessions.removeAll(where: { $0.id == taskId })
-            return 0
-        }
-
-        // Mark the session as stopping — keeps isClocked true, blocking concurrent start().
-        guard let idx = sessions.firstIndex(where: { $0.id == taskId }) else { return nil }
-        sessions[idx].stoppingSince = end
-
-        // Refresh the store FIRST so currentPos reflects any earlier mutations
-        // from this batch (each clock-out shifts the file).
-        if let store, let allTasks = store.allTasks.value, !allTasks.isEmpty {
-            await store.loadAllTasks(using: client)
-        }
-        // Re-resolve the index after the await — safe because stoppingSince prevents
-        // any concurrent stop() from touching this session.
-        guard let currentIdx = sessions.firstIndex(where: { $0.id == taskId }) else { return nil }
-        let pos = currentPos(for: sessions[currentIdx], store: store) ?? s.pos
-
+    /// Populate `sessions` from the server's active-clocks endpoint.
+    func loadActiveClocks(using client: APIClient) async {
         do {
-            let log = _logClockEntry ?? { file, p, start, end in
-                try await client.logClockEntry(file: file, pos: p, start: start, end: end)
+            sessions = try await client.fetchActiveClocks()
+        } catch {
+            // Silent — stale sessions are better than a crash on startup.
+        }
+    }
+
+    /// Remove any open clock rows for `taskId` from the local mirror WITHOUT a
+    /// network call. Completing a task/habit already closes its clock on the
+    /// server (patch_state / post_habit_complete), so the dock must stop
+    /// ticking immediately rather than waiting for the `clock-changed` SSE to
+    /// echo back — that echo can be missed, debounced, or fail silently inside
+    /// `loadActiveClocks`, which would otherwise leave a phantom clock ticking
+    /// forever with no recovery.
+    func dropLocalClock(taskId: String) {
+        sessions.removeAll { $0.taskId == taskId }
+    }
+
+    // MARK: - Queries
+
+    func isClocked(taskId: String) -> Bool {
+        sessions.contains(where: { $0.taskId == taskId })
+    }
+
+    func clockFor(taskId: String) -> Clock? {
+        sessions.first(where: { $0.taskId == taskId })
+    }
+
+    // MARK: - Clock in
+
+    /// Start a server-side clock for `task`. No-op when the task is already
+    /// clocked. The server opens an open-ended row and fires `clock-changed`
+    /// SSE; `loadActiveClocks` on the SSE event drives the local mirror.
+    func clockIn(task: any TaskDisplayable, using client: APIClient) async {
+        guard !isClocked(taskId: task.id) else { return }
+        do {
+            let clock = try await client.clockIn(
+                file: task.file,
+                pos: task.pos,
+                title: task.title
+            )
+            // Optimistic insert so the dock responds before the SSE round-trip.
+            // Dedupe by server id: the `clock-changed` SSE can drive
+            // `loadActiveClocks` (which already contains this row) in between
+            // the await above and this line, which would otherwise double it.
+            if !sessions.contains(where: { $0.id == clock.id }) {
+                sessions.append(clock)
             }
-            try await log(s.file, pos, startEpoch, endEpoch)
-            lastStopError = nil
-            sessions.removeAll(where: { $0.id == taskId })
-            // Refresh again so any subsequent clock-out sees the inserted CLOCK line shift.
-            if let store { await store.refreshLoaded(using: client) }
-            return endEpoch - startEpoch
         } catch {
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            lastStopError = "Couldn't log clock for \(s.title): \(msg)"
-            // Clear the stopping marker so the user can retry from the dock.
-            if let rollbackIdx = sessions.firstIndex(where: { $0.id == taskId }) {
-                sessions[rollbackIdx].stoppingSince = nil
+            lastStopError = "Couldn't clock in to \(task.title): \(msg)"
+        }
+    }
+
+    /// Start a server-side clock for a DB-backed habit (clocked by habit id).
+    /// No-op when the habit is already clocked.
+    func clockInHabit(id: String, title: String?, using client: APIClient) async {
+        guard !isClocked(taskId: id) else { return }
+        do {
+            let clock = try await client.clockInHabit(id: id, title: title)
+            if !sessions.contains(where: { $0.id == clock.id }) {
+                sessions.append(clock)
             }
+        } catch {
+            let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            lastStopError = "Couldn't clock in to \(title ?? id): \(msg)"
+        }
+    }
+
+    // MARK: - Clock out
+
+    /// Stop a running clock by its server id. Returns the elapsed seconds.
+    @discardableResult
+    func clockOut(clockId: Int64, using client: APIClient) async -> Int? {
+        guard let session = sessions.first(where: { $0.id == clockId }) else { return nil }
+        do {
+            try await client.clockOut(id: clockId)
+            lastStopError = nil
+            sessions.removeAll(where: { $0.id == clockId })
+            let elapsed = Int(Date().timeIntervalSince1970) - Int(session.start)
+            return max(0, elapsed)
+        } catch {
+            let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            lastStopError = "Couldn't stop clock for \(session.title ?? "task"): \(msg)"
             return nil
         }
     }
 
-    private func currentPos(for session: Session, store: TasksStore?) -> Int? {
-        guard let store else { return nil }
-        if let t = store.allTasks.value?.first(where: { $0.file == session.file && $0.title == session.title }) {
-            return t.pos
-        }
-        if let t = store.today.value?.first(where: { $0.file == session.file && $0.title == session.title }) {
-            return t.pos
-        }
-        if let t = store.upcoming.value?.first(where: { $0.file == session.file && $0.title == session.title }) {
-            return t.pos
-        }
-        return nil
+    /// Convenience: stop by taskId. Used from row actions.
+    @discardableResult
+    func stop(taskId: String, using client: APIClient, store: TasksStore? = nil) async -> Int? {
+        guard let session = sessions.first(where: { $0.taskId == taskId }) else { return nil }
+        return await clockOut(clockId: session.id, using: client)
     }
 
-    func cancel(taskId: String) {
-        sessions.removeAll(where: { $0.id == taskId })
+    // MARK: - Cancel
+
+    /// Cancel a running clock without persisting the interval.
+    func cancel(clockId: Int64, using client: APIClient) async {
+        do {
+            try await client.cancelClock(id: clockId)
+            sessions.removeAll(where: { $0.id == clockId })
+        } catch {
+            let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            lastStopError = "Couldn't cancel clock: \(msg)"
+        }
+    }
+
+    /// Convenience: cancel by taskId.
+    func cancel(taskId: String, using client: APIClient) async {
+        guard let session = sessions.first(where: { $0.taskId == taskId }) else { return }
+        await cancel(clockId: session.id, using: client)
     }
 }
 
 extension ClockManager {
-    static func formatElapsed(_ seconds: TimeInterval) -> String {
+    /// Elapsed seconds since `clock.start`. Pure computation; no actor state.
+    nonisolated static func elapsed(for clock: Clock, now: Date = Date()) -> TimeInterval {
+        max(0, now.timeIntervalSince1970 - Double(clock.start))
+    }
+
+    nonisolated static func formatElapsed(_ seconds: TimeInterval) -> String {
         let total = Int(seconds)
         let h = total / 3600
         let m = (total % 3600) / 60

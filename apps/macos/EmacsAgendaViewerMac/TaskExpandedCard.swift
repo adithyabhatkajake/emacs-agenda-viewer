@@ -212,7 +212,8 @@ struct TaskExpandedCard: View {
         }
         Divider()
         Menu("Priority") {
-            ForEach(["A", "B", "C", "D"], id: \.self) { p in
+            let priorityList = store.priorities?.all ?? ["A", "B", "C", "D"]
+            ForEach(priorityList, id: \.self) { p in
                 Button(p) { actions.setPriority(p) }
             }
             Divider()
@@ -345,6 +346,7 @@ struct TaskExpandedCard: View {
             TaskPriorityPickerPopover(
                 isPresented: $priorityPickerOpen,
                 currentPriority: task.priority ?? "",
+                priorities: store.priorities,
                 onSelect: { actions.setPriority($0) }
             )
         }

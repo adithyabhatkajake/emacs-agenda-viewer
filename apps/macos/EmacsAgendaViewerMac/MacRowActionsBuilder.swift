@@ -109,7 +109,10 @@ struct RowActionFactory {
                 }
             },
             clockIn: {
-                clocks.start(task: snapshot)
+                Task { @MainActor in
+                    guard let client = settings.apiClient else { return }
+                    await clocks.clockIn(task: snapshot, using: client)
+                }
             },
             clockOut: {
                 Task { @MainActor in

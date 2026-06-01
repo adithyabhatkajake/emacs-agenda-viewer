@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { OrgTask, AgendaEntry, AgendaFile, TodoKeywords, OrgConfig } from '../types';
-import { fetchTasks, fetchFiles, fetchKeywords, fetchConfig, fetchAgendaDay, fetchAgendaRange, fetchClockStatus, type ClockStatus } from '../api/tasks';
+import type { OrgTask, AgendaEntry, AgendaFile, TodoKeywords, OrgConfig, Habit } from '../types';
+import { fetchTasks, fetchFiles, fetchKeywords, fetchConfig, fetchAgendaDay, fetchAgendaRange, fetchClockStatus, fetchHabits, type ClockStatus } from '../api/tasks';
 import { useDaemonEvents } from './useDaemonEvents';
 
 function todayStr(): string {
@@ -16,6 +16,7 @@ function addDays(dateStr: string, days: number): string {
 
 export function useTasks() {
   const [tasks, setTasks] = useState<OrgTask[]>([]);
+  const [habits, setHabits] = useState<Habit[]>([]);
   const [todayEntries, setTodayEntries] = useState<AgendaEntry[]>([]);
   const [upcomingEntries, setUpcomingEntries] = useState<AgendaEntry[]>([]);
   const [files, setFiles] = useState<AgendaFile[]>([]);
@@ -35,13 +36,14 @@ export function useTasks() {
       // a separate round-trip. Done tasks are filtered out client-side
       // wherever they shouldn't appear (Today/Upcoming/All Tasks
       // already do this via `!isDoneState(...)`).
-      const [t, f, k, c, todayE, upcomingE] = await Promise.all([
+      const [t, f, k, c, todayE, upcomingE, h] = await Promise.all([
         fetchTasks(true),
         fetchFiles(),
         fetchKeywords(),
         fetchConfig(),
         fetchAgendaDay(today),
         fetchAgendaRange(addDays(today, 1), upcoming),
+        fetchHabits().catch(() => [] as Habit[]),
       ]);
       setTasks(t);
       setFiles(f);
@@ -49,6 +51,7 @@ export function useTasks() {
       setConfig(c);
       setTodayEntries(todayE);
       setUpcomingEntries(upcomingE);
+      setHabits(h);
       hasLoaded.current = true;
       setError(null);
       // Clock status fetch is best-effort
@@ -86,6 +89,13 @@ export function useTasks() {
     await loadData();
   }, [loadData]);
 
+  const refreshHabits = useCallback(async () => {
+    try {
+      const h = await fetchHabits();
+      setHabits(h);
+    } catch { /* ignore */ }
+  }, []);
+
   const refreshClock = useCallback(async () => {
     try {
       const clock = await fetchClockStatus();
@@ -112,6 +122,9 @@ export function useTasks() {
           // Full reload — keywords, priorities, files may have shifted.
           loadData();
           break;
+        case 'habits-changed':
+          refreshHabits();
+          break;
       }
     },
   });
@@ -137,6 +150,7 @@ export function useTasks() {
 
   return {
     tasks,
+    habits,
     todayEntries,
     upcomingEntries,
     files,
@@ -151,6 +165,7 @@ export function useTasks() {
     loading: initialLoading,
     error,
     refresh,
+    refreshHabits,
     refreshClock,
     daemonConnected,
   };

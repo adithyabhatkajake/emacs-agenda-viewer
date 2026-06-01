@@ -31,6 +31,17 @@ struct HabitCadence: Equatable, Sendable {
     /// is intentionally left to a setting (see `defaultHabitWindow`).
     var defaultWindow: Int { 14 }
 
+    /// Adapter from the DB-backed `HabitCadenceSpec` to the period math type.
+    static func from(_ spec: HabitCadenceSpec) -> HabitCadence {
+        switch spec.unit.lowercased() {
+        case "h", "d": return HabitCadence(component: .day,        value: max(1, Int(spec.value)), unitLabel: "d")
+        case "w":      return HabitCadence(component: .weekOfYear, value: max(1, Int(spec.value)), unitLabel: "w")
+        case "m":      return HabitCadence(component: .month,      value: max(1, Int(spec.value)), unitLabel: "mo")
+        case "y":      return HabitCadence(component: .year,       value: max(1, Int(spec.value)), unitLabel: "y")
+        default:       return HabitCadence(component: .day,        value: max(1, Int(spec.value)), unitLabel: spec.unit)
+        }
+    }
+
     static func from(_ repeater: OrgTimestamp.Repeater?) -> HabitCadence {
         // Org's repeater units: h / d / w / m / y (m = month here; minutes
         // never appear on a repeater in practice). Default to daily when a
@@ -84,9 +95,10 @@ enum HabitMath {
         lastRepeat: String? = nil,
         window: Int? = nil,
         now: Date = Date(),
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        cadenceOverride: HabitCadence? = nil
     ) -> HabitStats {
-        let cadence = HabitCadence.from(repeater)
+        let cadence = cadenceOverride ?? HabitCadence.from(repeater)
         let windowLength = window ?? cadence.defaultWindow
 
         // Bucket the completion dates by period. We hash periods by the
@@ -177,6 +189,25 @@ enum HabitMath {
             longestStreak: longestStreak,
             cells: cells,
             completionRate: rate
+        )
+    }
+
+    /// Compute stats for one DB-backed `Habit`.
+    static func stats(
+        for habit: Habit,
+        window: Int? = nil,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> HabitStats {
+        let cadence = HabitCadence.from(habit.cadence)
+        return stats(
+            completions: habit.completions,
+            repeater: nil,
+            lastRepeat: nil,
+            window: window ?? cadence.defaultWindow,
+            now: now,
+            calendar: calendar,
+            cadenceOverride: cadence
         )
     }
 
@@ -296,6 +327,167 @@ enum HabitsGrouping {
     }
 
     static func doneCount(_ habits: [OrgTask]) -> Int {
+        habits.filter { isDoneThisPeriod($0) }.count
+    }
+}
+
+// MARK: - Today filter
+
+extension Habit {
+    /// True when this habit should appear in the Today view: active and the
+    /// server-computed state indicates the period is due or already overdue.
+    var isDueToday: Bool {
+        guard active else { return false }
+        guard let s = state else { return false }
+        return s == "due" || s == "overdue"
+    }
+
+    /// Whether the habit's CURRENT cadence cycle has been satisfied, judged by
+    /// the server's own cycle boundary (`nextDue`) rather than an independent
+    /// calendar period. This agrees with the daemon's anchor advance — unlike
+    /// the ISO-week/month bucketing in `HabitMath`, which drifts for weekly and
+    /// relaxed cadences (and made a monthly habit read "done" for the whole
+    /// month after a single completion).
+    ///
+    /// A due/overdue habit is never "done" — its period is still open. For a
+    /// settled (`state == "ok"`) habit we check whether the latest completion
+    /// lands on/after the start of the current cycle (`nextDue` minus one due
+    /// interval). A never-completed settled habit is simply not-yet-due, so it
+    /// reads as not-done (it belongs in "Upcoming", not "Done").
+    var isDoneThisCycle: Bool {
+        guard state == "ok" else { return false }
+        guard let latest = completions.compactMap(OrgTimestamp.parseDateString).max() else {
+            return false
+        }
+        let cal = Calendar.current
+        guard let nd = nextDue.flatMap(OrgTimestamp.parseDateString) else {
+            // Settled with a completion but no due date: treat as done.
+            return true
+        }
+        let c = HabitCadence.from(cadence)
+        let boundary = cal.date(byAdding: c.component,
+                                value: -c.value,
+                                to: cal.startOfDay(for: nd)) ?? nd
+        return latest >= boundary
+    }
+}
+
+/// Returns the subset of `habits` that are active and due/overdue. The server
+/// advances a habit's anchor on completion, flipping its `state` to `ok`, so
+/// completed habits drop out of this filter automatically — no client-side
+/// period recomputation (which used to disagree with the server for weekly /
+/// relaxed cadences and leave ghost rows in Today).
+func dueHabitsToday(_ habits: [Habit]) -> [Habit] {
+    habits.filter { $0.isDueToday }
+}
+
+// MARK: - DB-backed Habit grouping
+
+struct HabitBucketNew: Equatable {
+    let title: String
+    let habits: [Habit]
+}
+
+/// Priority rank for a habit (or any optional priority string).
+/// A=0, B=1, C=2, D=3, nil/unknown=4 (sorts last).
+func habitPriorityRank(_ p: String?) -> Int {
+    switch p?.uppercased() {
+    case "A": return 0
+    case "B": return 1
+    case "C": return 2
+    case "D": return 3
+    default:  return 4
+    }
+}
+
+enum HabitsGroupingNew {
+    static func buckets(habits: [Habit]) -> [HabitBucketNew] {
+        var daily: [Habit] = []
+        var weekly: [Habit] = []
+        var monthly: [Habit] = []
+        var yearly: [Habit] = []
+        var other: [Habit] = []
+        for habit in habits {
+            switch HabitCadence.from(habit.cadence).component {
+            case .day:        daily.append(habit)
+            case .weekOfYear: weekly.append(habit)
+            case .month:      monthly.append(habit)
+            case .year:       yearly.append(habit)
+            default:          other.append(habit)
+            }
+        }
+        let prioritize: ([Habit]) -> [Habit] = { h in
+            h.sorted { a, b in
+                let aDone = isDoneThisPeriod(a)
+                let bDone = isDoneThisPeriod(b)
+                if aDone != bDone { return !aDone }
+                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+            }
+        }
+        var out: [HabitBucketNew] = []
+        if !daily.isEmpty   { out.append(HabitBucketNew(title: "Today",      habits: prioritize(daily))) }
+        if !weekly.isEmpty  { out.append(HabitBucketNew(title: "This Week",  habits: prioritize(weekly))) }
+        if !monthly.isEmpty { out.append(HabitBucketNew(title: "This Month", habits: prioritize(monthly))) }
+        if !yearly.isEmpty  { out.append(HabitBucketNew(title: "This Year",  habits: prioritize(yearly))) }
+        if !other.isEmpty   { out.append(HabitBucketNew(title: "Other",      habits: prioritize(other))) }
+        return out
+    }
+
+    /// Due-state bucketing: "Overdue" / "Today" / "Upcoming" / "Done".
+    ///
+    /// Done-this-period habits are removed from Overdue/Today and placed in a
+    /// "Done" bucket at the bottom so completing a habit makes it disappear
+    /// from the active buckets (mirrors the Today view behaviour). Within each
+    /// bucket, habits sort by priority (A first) then by nextDue ascending,
+    /// then title.
+    static func dueStateBuckets(habits: [Habit]) -> [HabitBucketNew] {
+        var overdue: [Habit] = []
+        var dueToday: [Habit] = []
+        var upcoming: [Habit] = []
+        var done: [Habit] = []
+        for habit in habits {
+            // A habit done this period is promoted to the Done bucket
+            // regardless of the server-supplied state field, so a freshly
+            // completed overdue habit leaves the Overdue section immediately.
+            if isDoneThisPeriod(habit) {
+                done.append(habit)
+                continue
+            }
+            switch habit.state {
+            case "overdue": overdue.append(habit)
+            case "due":     dueToday.append(habit)
+            default:        upcoming.append(habit)
+            }
+        }
+        let byPriority: ([Habit]) -> [Habit] = { h in
+            h.sorted { a, b in
+                let rA = habitPriorityRank(a.priority)
+                let rB = habitPriorityRank(b.priority)
+                if rA != rB { return rA < rB }
+                let ndA = a.nextDue ?? ""
+                let ndB = b.nextDue ?? ""
+                if ndA != ndB { return ndA < ndB }
+                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+            }
+        }
+        var out: [HabitBucketNew] = []
+        if !overdue.isEmpty  { out.append(HabitBucketNew(title: "Overdue",  habits: byPriority(overdue))) }
+        if !dueToday.isEmpty { out.append(HabitBucketNew(title: "Today",    habits: byPriority(dueToday))) }
+        if !upcoming.isEmpty { out.append(HabitBucketNew(title: "Upcoming", habits: byPriority(upcoming))) }
+        if !done.isEmpty     { out.append(HabitBucketNew(title: "Done",     habits: byPriority(done))) }
+        return out
+    }
+
+    /// Server-truth "settled for the current cycle". Delegates to
+    /// `Habit.isDoneThisCycle` (anchored on `nextDue`) instead of the
+    /// calendar-period `HabitMath.stats(...).cells.last`, which drifted from
+    /// the daemon for weekly / relaxed cadences. `HabitMath` is still used for
+    /// the historical streak strip, where calendar periods are what we want.
+    static func isDoneThisPeriod(_ habit: Habit) -> Bool {
+        habit.isDoneThisCycle
+    }
+
+    static func doneCount(_ habits: [Habit]) -> Int {
         habits.filter { isDoneThisPeriod($0) }.count
     }
 }

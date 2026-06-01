@@ -3,10 +3,16 @@
 //! Phase 1 owns the data structure and the rebuild path; phase 2 adds the
 //! `notify` watcher and SQLite snapshot persistence.
 
+pub mod cadence;
 pub mod snapshot;
+pub mod store;
 pub mod watcher;
 
+pub use cadence::{
+    add_interval, advance as advance_anchor, compute as compute_due, parse_cadence, DueResult,
+};
 pub use snapshot::{FileEntry, Snapshot};
+pub use store::{ClockRow, HabitRow, Store};
 pub use watcher::{FileChange, FileWatcher};
 
 use eav_core::OrgTask;
@@ -237,6 +243,31 @@ impl Index {
         self.inner.read().tasks.len()
     }
 
+    /// The task at `pos` in `file` if and only if its current `todo_state` is
+    /// a done keyword for that file. Returns `None` when the task is not done,
+    /// the task doesn't exist, or the file has no metadata in the index.
+    ///
+    /// Used by the write path to auto-close running clocks when a task is
+    /// marked done via `PATCH /api/tasks/:id/state`.
+    pub fn done_task_at(&self, file: &Path, pos: u64) -> Option<OrgTask> {
+        let canonical = canonicalize_path(file);
+        let inner = self.inner.read();
+        let meta = inner.file_meta.get(&canonical)?;
+        let ids = inner.by_file.get(&canonical)?;
+        for id in ids {
+            if let Some(t) = inner.tasks.get(id) {
+                if t.pos == pos {
+                    let state = t.todo_state.as_deref()?;
+                    if meta.is_done_keyword(state) {
+                        return Some(t.clone());
+                    }
+                    return None;
+                }
+            }
+        }
+        None
+    }
+
     /// Populate the index from a snapshot. Used at cold start while the live
     /// reindex runs in the background.
     ///
@@ -416,6 +447,41 @@ mod tests {
         assert_eq!(idx.tasks_by_tag("proj").len(), 1);
         assert_eq!(idx.tasks_by_tag("work").len(), 1);
         assert_eq!(idx.tasks_by_tag("urgent").len(), 1);
+    }
+
+    #[test]
+    fn done_task_at_returns_task_only_when_done() {
+        let idx = Index::new();
+        let p = fixture("/tmp/done_at.org");
+        // Build source so we know the byte positions of each heading.
+        // "* TODO open\n" is 13 bytes (pos 1) and "* DONE closed\n" starts at 13 (pos 13).
+        let src = "* TODO open\n* DONE closed\n";
+        idx.rebuild_file(&p, src);
+
+        let tasks = idx.tasks_in_file(&p);
+        assert_eq!(tasks.len(), 2, "expected 2 tasks");
+
+        let open_task = tasks.iter().find(|t| t.title == "open").unwrap();
+        let done_task = tasks.iter().find(|t| t.title == "closed").unwrap();
+
+        // done_task_at with the open task's pos must return None.
+        assert!(
+            idx.done_task_at(&p, open_task.pos).is_none(),
+            "done_task_at returned Some for a non-done task"
+        );
+
+        // done_task_at with the done task's pos must return Some.
+        let got = idx.done_task_at(&p, done_task.pos);
+        assert!(got.is_some(), "done_task_at returned None for a DONE task");
+        assert_eq!(got.unwrap().title, "closed");
+
+        // A pos that matches no task returns None.
+        assert!(idx.done_task_at(&p, 99999).is_none());
+
+        // A file not in the index returns None.
+        assert!(idx
+            .done_task_at(std::path::Path::new("/tmp/nosuchfile.org"), 1)
+            .is_none());
     }
 
     /// Regression: a file accessed by both its symlink path and its

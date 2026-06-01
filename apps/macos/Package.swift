@@ -61,6 +61,7 @@ let package = Package(
             ],
             sources: [
                 "EmacsAgendaViewer/Models/AgendaEntryClassification.swift",
+                "EmacsAgendaViewer/Models/Checklist.swift",
                 "EmacsAgendaViewer/Models/Models.swift",
                 "EmacsAgendaViewer/Networking/APIClient.swift",
                 "EmacsAgendaViewer/Networking/DaemonHostPidParse.swift",

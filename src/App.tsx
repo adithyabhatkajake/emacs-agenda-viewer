@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Gear } from '@phosphor-icons/react';
 import { Sidebar } from './components/Sidebar';
 import { TaskList } from './components/TaskList';
 import { CaptureModal } from './components/CaptureModal';
@@ -23,6 +24,7 @@ function useIsMobile() {
 export default function App() {
   const {
     tasks,
+    habits,
     todayEntries,
     upcomingEntries,
     files,
@@ -35,6 +37,7 @@ export default function App() {
     loading,
     error,
     refresh,
+    refreshHabits,
     refreshClock,
   } = useTasks();
 
@@ -113,7 +116,7 @@ export default function App() {
     return (
       <div className="flex-1 flex items-center justify-center bg-things-bg">
         <div className="text-center">
-          <div className="text-2xl mb-3 animate-pulse opacity-40">{'\u2699'}</div>
+          <div className="mb-3 animate-pulse opacity-40"><Gear size={32} weight="regular" /></div>
           <p className="text-sm text-text-secondary">
             Loading agenda from Emacs...
           </p>
@@ -152,6 +155,7 @@ export default function App() {
       )}
       <TaskList
         tasks={tasks}
+        habits={habits}
         todayEntries={todayEntries}
         upcomingEntries={upcomingEntries}
         filter={filter}
@@ -161,6 +165,7 @@ export default function App() {
         clockManager={clockManager}
         allTags={allTags}
         onRefresh={refresh}
+        onRefreshHabits={refreshHabits}
         onRefreshClock={refreshClock}
         onCapture={() => setCaptureOpen(true)}
         sidebarOpen={sidebarOpen}

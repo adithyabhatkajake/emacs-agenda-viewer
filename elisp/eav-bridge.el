@@ -100,6 +100,7 @@
     ("write.insert-entry"     . eav-bridge--write-insert-entry)
     ("write.clock-log"        . eav-bridge--write-clock-log)
     ("write.clock-tidy"       . eav-bridge--write-clock-tidy)
+    ("write.ensure-id"        . eav-bridge--write-ensure-id)
 
     ;; --- meta ---
     ("ping"                   . eav-bridge--ping)
@@ -311,6 +312,11 @@ Iterates `org-agenda-files', evaluating only `:sexp' entries via
                                (eav-bridge--p-int params "pos")))
          (parsed (eav-bridge--decode res)))
     parsed))
+
+(defun eav-bridge--write-ensure-id (params)
+  (eav-bridge--decode
+   (eav-ensure-id (eav-bridge--p params "file")
+                  (eav-bridge--p-int params "pos"))))
 
 ;; ----------------------------------------------------------------------------
 ;; Frame I/O

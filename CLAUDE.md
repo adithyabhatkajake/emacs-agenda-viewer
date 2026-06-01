@@ -37,6 +37,29 @@ the proxy config in `vite.config.ts` for the web client.
   the launchd plist for the Mac path; headless deployments keep their own
   copy via `scripts/install-daemon.sh`.
 
+## MCP server
+
+- `eavd` embeds an MCP (Model Context Protocol) server so AI agents can read
+  and modify the org todo list. It runs on its own listener (default
+  `127.0.0.1:3003`, path `/mcp`) using the Streamable-HTTP transport.
+- Implemented in `daemon/crates/eav-mcp` with the `rmcp` SDK. Tool handlers
+  reuse the live `AppState` (in-memory `Index`, `BridgeClient`, `Store`)
+  directly — no HTTP round-trip. It runs a separate axum listener because
+  `rmcp` tracks a newer axum than `eav-server` (axum 0.7); the versions
+  coexist as deps but their routers can't be merged.
+- Tools: read — `list_tasks`, `search_tasks`, `get_task`, `get_agenda`,
+  `get_agenda_range`, `list_capture_templates`; write — `create_task`,
+  `set_task_state`, `set_task_scheduled`, `set_task_deadline`,
+  `set_task_priority`, `set_task_tags`, `set_task_notes`. Writes resolve the
+  task `id` → `(file, pos)` via the index, call the bridge, then reindex —
+  same path as the HTTP handlers in `eav-server/src/routes.rs`.
+- Connect a client, e.g.:
+  `claude mcp add --transport http eav http://127.0.0.1:3003/mcp`
+- Flags: `--mcp-port` (default 3003), `--mcp-host` (default `127.0.0.1`),
+  `--no-mcp` to disable. Writes are unauthenticated (same trust model as the
+  HTTP API); remote access (e.g. over Tailscale) is opt-in via
+  `--mcp-host 0.0.0.0`.
+
 ## Bridge
 
 - `elisp/eav-bridge.el` is the in-Emacs UNIX-socket dispatcher used by eavd.
@@ -55,7 +78,9 @@ the proxy config in `vite.config.ts` for the web client.
 
 `./daemon/target/debug/eavd` (or the release build) supports:
 
-- `eavd` — run the HTTP/SSE server on port 3002
+- `eavd` — run the HTTP/SSE server on port 3002 (and the MCP server on 3003)
+- `eavd --mcp-port N` / `--mcp-host HOST` / `--no-mcp` — configure or disable
+  the embedded MCP server (see "MCP server" above)
 - `eavd --dump-tasks` / `--dump-active-tasks` — print parsed tasks JSON
 - `eavd --dump-agenda-day YYYY-MM-DD` — print agenda entries for a date
 - `eavd --files-from <path>` — read agenda files from `/api/files` JSON

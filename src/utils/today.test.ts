@@ -78,6 +78,16 @@ describe('buildTodayItems', () => {
     expect(main[0].id).toBe('t2');
   });
 
+  it('keeps an overdue-deadline task (no scheduled date) in main', () => {
+    // Regression: a repeating deadline like a Weekly Review <…+1w -0d> that
+    // slipped past its due date has no scheduled timestamp and a past
+    // deadline — it must still surface in Today.
+    const e = entry({ id: 't2b', agendaType: 'deadline', deadline: ts(yesterdayComp()) });
+    const { main } = buildTodayItems([e], [], DONE_STATES, false);
+    expect(main).toHaveLength(1);
+    expect(main[0].id).toBe('t2b');
+  });
+
   it('drops upcoming-deadline unconditionally', () => {
     const e = entry({
       id: 't3',

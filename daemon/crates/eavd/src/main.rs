@@ -10,7 +10,7 @@ use chrono::NaiveDate;
 use eav_agenda::{evaluate_day, evaluate_range, AgendaConfig};
 use eav_bridge::{BridgeClient, Event as BridgeEvent};
 use eav_core::{OrgTask, TodoKeywords};
-use eav_index::{FileChange, FileWatcher, Index, Snapshot};
+use eav_index::{FileChange, FileWatcher, Index, Snapshot, Store};
 use eav_parse::GlobalKeywords;
 use eav_server::{build_router, AppState, ServerEvent};
 use std::collections::HashSet;
@@ -29,6 +29,9 @@ async fn main() -> ExitCode {
     let mut http_host: Option<String> = None;
     let mut watch_parent: Option<i32> = None;
     let mut explicit_daemon = false;
+    let mut mcp_port: Option<u16> = None;
+    let mut mcp_host: Option<String> = None;
+    let mut no_mcp = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -148,6 +151,35 @@ async fn main() -> ExitCode {
             "--daemon" => {
                 explicit_daemon = true;
             }
+            "--mcp-port" => {
+                let val = match args.next() {
+                    Some(v) => v,
+                    None => {
+                        eprintln!("--mcp-port requires a number");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                match val.parse::<u16>() {
+                    Ok(p) => mcp_port = Some(p),
+                    Err(_) => {
+                        eprintln!("--mcp-port: invalid port {val}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            "--mcp-host" => {
+                let val = match args.next() {
+                    Some(v) => v,
+                    None => {
+                        eprintln!("--mcp-host requires an IP/hostname");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                mcp_host = Some(val);
+            }
+            "--no-mcp" => {
+                no_mcp = true;
+            }
             "--help" | "-h" => {
                 print_help();
                 return ExitCode::SUCCESS;
@@ -166,7 +198,17 @@ async fn main() -> ExitCode {
     }
 
     match mode {
-        Mode::Server => match run_server(http_port, http_host, static_dir, watch_parent).await {
+        Mode::Server => match run_server(
+            http_port,
+            http_host,
+            static_dir,
+            watch_parent,
+            mcp_port,
+            mcp_host,
+            no_mcp,
+        )
+        .await
+        {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("eavd: {e:#}");
@@ -195,6 +237,9 @@ async fn run_server(
     http_host: Option<String>,
     static_dir: Option<PathBuf>,
     watch_parent: Option<i32>,
+    mcp_port: Option<u16>,
+    mcp_host: Option<String>,
+    no_mcp: bool,
 ) -> anyhow::Result<()> {
     let bridge_path = default_bridge_socket();
     // Make sure the bridge is actually listening. On a fresh install the
@@ -225,10 +270,23 @@ async fn run_server(
         }
     }
 
+    // Open the durable store (clocks + habit completions). Falls back to an
+    // in-memory DB if the file is unwritable, so the daemon still starts.
+    let store = match Store::open(&Store::default_path()) {
+        Ok(s) => {
+            tracing::info!(path = ?Store::default_path(), "durable store opened");
+            s
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "durable store open failed; using in-memory fallback");
+            Store::open_in_memory().expect("in-memory store")
+        }
+    };
+
     // Shutdown channel: `/api/shutdown` and signal handlers fire `shutdown_tx`;
     // axum's `with_graceful_shutdown` awaits the matching `shutdown_rx`.
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let state = AppState::new(index.clone(), bridge.clone())
+    let state = AppState::new(index.clone(), bridge.clone(), store)
         .with_static_dir(static_dir)
         .with_shutdown_tx(shutdown_tx);
 
@@ -399,6 +457,23 @@ async fn run_server(
         }
     });
 
+    // MCP server (optional; disabled by --no-mcp).
+    let mcp_shutdown_tx_opt: Option<tokio::sync::oneshot::Sender<()>> = if !no_mcp {
+        let (mcp_tx, mcp_rx) = tokio::sync::oneshot::channel::<()>();
+        let mcp_port_num = mcp_port.unwrap_or(3003);
+        let mcp_host_str = mcp_host.as_deref().unwrap_or("127.0.0.1").to_string();
+        let mcp_bind: std::net::SocketAddr = format!("{mcp_host_str}:{mcp_port_num}").parse()?;
+        let mcp_state = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = eav_mcp::serve(mcp_state, mcp_bind, mcp_rx).await {
+                tracing::error!(error = %e, "MCP server exited with error");
+            }
+        });
+        Some(mcp_tx)
+    } else {
+        None
+    };
+
     // HTTP server.
     let router = build_router(state);
     let port = http_port.unwrap_or(3002);
@@ -412,6 +487,10 @@ async fn run_server(
         .with_graceful_shutdown(async move {
             let _ = shutdown_rx.await;
             tracing::info!("graceful shutdown requested");
+            // Also shut down the MCP listener if it's running.
+            if let Some(tx) = mcp_shutdown_tx_opt {
+                let _ = tx.send(());
+            }
         })
         .await?;
 
@@ -825,6 +904,9 @@ fn print_help() {
          eavd --static-dir <path>          serve SPA assets from <path> (`/` ⇒ index.html)\n  \
          eavd --watch-parent <PID>         exit when PID dies or stdin closes (Mac app helper mode)\n  \
          eavd --daemon                     explicit headless marker (no parent watchdog; default)\n  \
+         eavd --mcp-port N                 MCP server port (default 3003)\n  \
+         eavd --mcp-host HOST              MCP server bind host (default 127.0.0.1)\n  \
+         eavd --no-mcp                     disable the MCP server\n  \
          eavd --dump-tasks [files...]      parse files and print tasks JSON\n  \
          eavd --dump-active-tasks ...      same, only active (non-done) tasks\n  \
          eavd --dump-agenda-day YYYY-MM-DD parse files and print agenda entries\n  \

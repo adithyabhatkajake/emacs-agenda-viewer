@@ -7,11 +7,12 @@ members = [
     "crates/eav-agenda",
     "crates/eav-bridge",
     "crates/eav-server",
+    "crates/eav-mcp",
     "crates/eavd",
 ]
 
 [workspace.package]
-version = "0.6.3"
+version = "0.6.11"
 edition = "2021"
 rust-version = "1.80"
 authors = ["Adithya Bhat"]
@@ -59,6 +60,10 @@ parking_lot = "0.12"
 bytes = "1.7"
 regex = "1.10"
 
+# MCP SDK (pinned; features: server + macros + streamable-http-server transport)
+rmcp = { version = "=1.7.0", features = ["server", "macros", "transport-streamable-http-server"] }
+schemars = "1.0"
+
 # Internal crates
 eav-core   = { path = "crates/eav-core" }
 eav-parse  = { path = "crates/eav-parse" }
@@ -66,6 +71,7 @@ eav-index  = { path = "crates/eav-index" }
 eav-agenda = { path = "crates/eav-agenda" }
 eav-bridge = { path = "crates/eav-bridge" }
 eav-server = { path = "crates/eav-server" }
+eav-mcp    = { path = "crates/eav-mcp" }
 
 [profile.release]
 opt-level = 3

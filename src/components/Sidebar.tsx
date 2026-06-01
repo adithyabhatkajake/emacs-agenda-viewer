@@ -1,4 +1,9 @@
-import { useState } from 'react';
+import { useState, type ReactElement } from 'react';
+import {
+  Tray, ListBullets, PushPin, Star, CalendarBlank, Repeat, GridFour,
+  CalendarDots, BookBookmark, Plus, Tag, Gear, Moon, Sun, SunHorizon,
+  CaretRight, X,
+} from '@phosphor-icons/react';
 import type { AgendaFile, AgendaEntry, ViewFilter, OrgTask } from '../types';
 import type { ThemeMode } from '../hooks/useTheme';
 
@@ -29,43 +34,6 @@ function isActive(current: ViewFilter, check: ViewFilter): boolean {
   return true;
 }
 
-/** Map category names to emoji icons */
-function categoryIcon(name: string): string {
-  const lower = name.toLowerCase();
-  if (lower === 'inbox') return '\u{1F4E5}';
-  if (lower === 'work') return '\u{1F4BC}';
-  if (lower === 'personal') return '\u{1F3E0}';
-  if (lower === 'gril') return '\u{1F491}';
-  if (lower === 'calendar') return '\u{1F4C6}';
-  if (lower === 'gala') return '\u{1F389}';
-  if (lower === 'meta') return '\u{2699}\uFE0F';
-  return '\u{1F4C1}';
-}
-
-/** Map file names to emoji icons */
-function fileIcon(name: string): string {
-  const lower = name.toLowerCase();
-  if (lower === 'mobile') return '\u{1F4F1}';
-  if (lower === 'work') return '\u{1F4BC}';
-  if (lower === 'todo') return '\u{2705}';
-  if (lower === 'personal') return '\u{1F3E0}';
-  if (lower === 'ideas') return '\u{1F4A1}';
-  if (lower === 'visa') return '\u{1F4C4}';
-  if (lower === 'harshitha') return '\u{2764}\uFE0F';
-  if (lower === 'calendar-beorg') return '\u{1F4C5}';
-  if (lower === 'wedding-planning') return '\u{1F492}';
-  if (lower === 'meta') return '\u{2699}\uFE0F';
-  // Research project files
-  if (lower.includes('flp') || lower.includes('quantum')) return '\u{269B}\uFE0F';
-  if (lower.includes('vole') || lower.includes('rbc')) return '\u{1F510}';
-  if (lower.includes('sharding') || lower.includes('blockchain')) return '\u{26D3}\uFE0F';
-  if (lower.includes('psi') || lower.includes('crypto')) return '\u{1F512}';
-  if (lower.includes('smr') || lower.includes('distsys')) return '\u{1F310}';
-  if (lower.includes('mpc') || lower.includes('weighted')) return '\u{1F9EE}';
-  if (lower.includes('fhe')) return '\u{1F50F}';
-  if (lower.includes('leto') || lower.includes('utt')) return '\u{1F4DC}';
-  return '\u{1F4C4}';
-}
 
 function SidebarSection({ title, defaultCollapsed, children }: { title: string; defaultCollapsed?: boolean; children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed);
@@ -75,7 +43,11 @@ function SidebarSection({ title, defaultCollapsed, children }: { title: string; 
         onClick={() => setCollapsed(!collapsed)}
         className="flex items-center gap-1.5 w-full text-[11px] font-medium text-text-tertiary uppercase tracking-wider px-3 py-1.5 hover:text-text-secondary transition-colors"
       >
-        <span className={`text-[8px] transition-transform ${collapsed ? '' : 'rotate-90'}`}>{'\u25B6'}</span>
+        <CaretRight
+          size={8}
+          weight="bold"
+          className={`transition-transform flex-shrink-0 ${collapsed ? '' : 'rotate-90'}`}
+        />
         {title}
       </button>
       {!collapsed && (
@@ -100,7 +72,7 @@ export function Sidebar({
   onCapture,
   onOpenSettings,
 }: SidebarProps) {
-  const iconItem = (label: string, filter: ViewFilter, icon: string) => {
+  const iconItem = (label: string, filter: ViewFilter, icon: ReactElement) => {
     const active = isActive(activeFilter, filter);
     return (
       <button
@@ -112,7 +84,7 @@ export function Sidebar({
             : 'text-text-secondary hover:bg-things-sidebar-hover hover:text-text-primary'
         }`}
       >
-        <span className="w-5 text-center text-[14px] flex-shrink-0">{icon}</span>
+        <span className="w-5 flex items-center justify-center flex-shrink-0">{icon}</span>
         <span className="flex-1 text-left truncate">{label}</span>
       </button>
     );
@@ -133,14 +105,18 @@ export function Sidebar({
             <button
               onClick={onCapture}
               title="New task (Cmd+N)"
-              className="w-6 h-6 flex items-center justify-center rounded-md text-text-tertiary hover:text-accent hover:bg-accent/10 transition-colors text-[16px] leading-none font-light"
-            >+</button>
+              className="w-6 h-6 flex items-center justify-center rounded-md text-text-tertiary hover:text-accent hover:bg-accent/10 transition-colors"
+            >
+              <Plus size={16} weight="regular" />
+            </button>
           )}
           {isMobile && onClose && (
             <button
               onClick={onClose}
-              className="text-text-tertiary hover:text-text-secondary transition-colors text-lg leading-none"
-            >{'\u2715'}</button>
+              className="text-text-tertiary hover:text-text-secondary transition-colors"
+            >
+              <X size={18} weight="regular" />
+            </button>
           )}
         </div>
       </div>
@@ -149,36 +125,39 @@ export function Sidebar({
       <div className="flex-1 overflow-y-auto min-h-0">
         {/* Smart views */}
         <div className="px-3 pb-2 flex flex-col gap-0.5">
-          {iconItem('Inbox', { type: 'inbox' }, '\u{1F4E5}')}
-          {iconItem('All Tasks', { type: 'all' }, '\u{2630}')}
-          {iconItem('My Day', { type: 'pinned' }, '\u{1F4CC}')}
-          {iconItem('Today', { type: 'today' }, '\u{2B50}')}
-          {iconItem('Upcoming', { type: 'upcoming' }, '\u{1F4C5}')}
-          {iconItem('Habits', { type: 'habits' }, '\u{1F501}')}
-          {iconItem('Eisenhower', { type: 'eisenhower' }, '\u{1F3AF}')}
-          {iconItem('Calendar', { type: 'calendar' }, '\u{1F5D3}️')}
-          {iconItem('Logbook', { type: 'logbook' }, '\u{1F4D6}')}
+          {iconItem('Inbox', { type: 'inbox' }, <Tray size={16} weight={isActive(activeFilter, { type: 'inbox' }) ? 'fill' : 'regular'} />)}
+          {iconItem('All Tasks', { type: 'all' }, <ListBullets size={16} weight={isActive(activeFilter, { type: 'all' }) ? 'fill' : 'regular'} />)}
+          {iconItem('My Day', { type: 'pinned' }, <PushPin size={16} weight={isActive(activeFilter, { type: 'pinned' }) ? 'fill' : 'regular'} />)}
+          {iconItem('Today', { type: 'today' }, <Star size={16} weight={isActive(activeFilter, { type: 'today' }) ? 'fill' : 'regular'} />)}
+          {iconItem('Upcoming', { type: 'upcoming' }, <CalendarBlank size={16} weight={isActive(activeFilter, { type: 'upcoming' }) ? 'fill' : 'regular'} />)}
+          {iconItem('Habits', { type: 'habits' }, <Repeat size={16} weight={isActive(activeFilter, { type: 'habits' }) ? 'fill' : 'regular'} />)}
+          {iconItem('Eisenhower', { type: 'eisenhower' }, <GridFour size={16} weight={isActive(activeFilter, { type: 'eisenhower' }) ? 'fill' : 'regular'} />)}
+          {iconItem('Calendar', { type: 'calendar' }, <CalendarDots size={16} weight={isActive(activeFilter, { type: 'calendar' }) ? 'fill' : 'regular'} />)}
+          {iconItem('Logbook', { type: 'logbook' }, <BookBookmark size={16} weight={isActive(activeFilter, { type: 'logbook' }) ? 'fill' : 'regular'} />)}
         </div>
 
         {/* Categories */}
         <SidebarSection title="Categories">
-          {categories.map(cat =>
-            iconItem(cat, { type: 'category', category: cat }, categoryIcon(cat))
-          )}
+          {categories.map(cat => {
+            const active = isActive(activeFilter, { type: 'category', category: cat });
+            return iconItem(cat, { type: 'category', category: cat }, <Tray size={16} weight={active ? 'fill' : 'regular'} />);
+          })}
         </SidebarSection>
 
         {/* Files */}
         <SidebarSection title="Files" defaultCollapsed>
-          {files.map(f =>
-            iconItem(f.name, { type: 'file', path: f.path }, fileIcon(f.name))
-          )}
+          {files.map(f => {
+            const active = isActive(activeFilter, { type: 'file', path: f.path });
+            return iconItem(f.name, { type: 'file', path: f.path }, <ListBullets size={16} weight={active ? 'fill' : 'regular'} />);
+          })}
         </SidebarSection>
 
         {allTags.length > 0 && (
           <SidebarSection title="Tags" defaultCollapsed>
-            {allTags.map(tag =>
-              iconItem(tag, { type: 'tag', tag }, '\u{1F3F7}\uFE0F')
-            )}
+            {allTags.map(tag => {
+              const active = isActive(activeFilter, { type: 'tag', tag });
+              return iconItem(tag, { type: 'tag', tag }, <Tag size={16} weight={active ? 'fill' : 'regular'} />);
+            })}
           </SidebarSection>
         )}
       </div>
@@ -190,18 +169,20 @@ export function Sidebar({
           className="flex items-center gap-2 flex-1 px-3 py-1.5 rounded-lg text-[12px] text-text-secondary hover:bg-things-sidebar-hover hover:text-text-primary transition-colors"
           title={`Theme: ${themeMode} (click to cycle)`}
         >
-          <span className="text-[14px]">
-            {themeMode === 'dark' ? '\u{1F319}' : themeMode === 'light' ? '\u2600\uFE0F' : '\u{1F305}'}
-          </span>
+          {themeMode === 'dark'
+            ? <Moon size={14} weight="fill" />
+            : themeMode === 'light'
+              ? <Sun size={14} weight="fill" />
+              : <SunHorizon size={14} weight="regular" />}
           <span className="capitalize">{themeMode === 'auto' ? 'Auto' : themeMode}</span>
         </button>
         {onOpenSettings && (
           <button
             onClick={onOpenSettings}
             title="Settings"
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-text-tertiary hover:text-text-secondary hover:bg-things-sidebar-hover transition-colors text-[15px]"
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-text-tertiary hover:text-text-secondary hover:bg-things-sidebar-hover transition-colors"
           >
-            {'\u2699\uFE0F'}
+            <Gear size={15} weight="regular" />
           </button>
         )}
       </div>

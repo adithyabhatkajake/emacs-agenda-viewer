@@ -9,26 +9,79 @@ interface TodoStateMenuProps {
   disabled?: boolean;
 }
 
-function stateStyle(state: string, isDone: boolean): { bg: string; text: string; border: string; glow: string } {
-  if (isDone) {
-    if (state === 'KILL') return { bg: 'bg-priority-a/15', text: 'text-priority-a', border: 'border-priority-a/25', glow: 'shadow-priority-a/10' };
-    return { bg: 'bg-done-green/15', text: 'text-done-green', border: 'border-done-green/25', glow: 'shadow-done-green/10' };
+// --- G6: user override map storage ---
+
+const TODO_STATE_COLORS_KEY = 'eav-todo-state-colors';
+
+export function loadTodoStateColors(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(TODO_STATE_COLORS_KEY) || '{}') as Record<string, string>;
+  } catch {
+    return {};
   }
+}
+
+export function saveTodoStateColors(map: Record<string, string>): void {
+  localStorage.setItem(TODO_STATE_COLORS_KEY, JSON.stringify(map));
+}
+
+// --- D1: grouped-by-meaning color mapping (mirrors AppSettings.defaultTodoStateColor) ---
+
+type StateColorToken = 'done-green' | 'accent' | 'accent-teal' | 'priority-b' | 'text-tertiary';
+
+function defaultStateColorToken(state: string, isDone: boolean): StateColorToken {
+  if (isDone) return 'done-green';
+  // Checkbox-style pseudo-states are not real org keywords; keep legacy rendering
+  // by mapping to their closest semantic equivalents.
   switch (state) {
-    case 'TODO': return { bg: 'bg-accent/12', text: 'text-accent', border: 'border-accent/20', glow: 'shadow-accent/10' };
-    case 'NEXT': return { bg: 'bg-priority-b/12', text: 'text-priority-b', border: 'border-priority-b/20', glow: 'shadow-priority-b/10' };
-    case 'WAIT': return { bg: 'bg-dot-yellow/12', text: 'text-dot-yellow', border: 'border-dot-yellow/20', glow: 'shadow-dot-yellow/10' };
-    case 'FLLW': return { bg: 'bg-dot-purple/12', text: 'text-dot-purple', border: 'border-dot-purple/20', glow: 'shadow-dot-purple/10' };
-    case 'SMDY': return { bg: 'bg-text-tertiary/12', text: 'text-text-secondary', border: 'border-text-tertiary/20', glow: '' };
-    case 'ACTV': return { bg: 'bg-done-green/12', text: 'text-done-green', border: 'border-done-green/20', glow: 'shadow-done-green/10' };
-    case 'PROJ': return { bg: 'bg-dot-purple/12', text: 'text-dot-purple', border: 'border-dot-purple/20', glow: 'shadow-dot-purple/10' };
-    case 'DRFT': return { bg: 'bg-text-tertiary/12', text: 'text-text-secondary', border: 'border-text-tertiary/20', glow: '' };
-    case 'PROG': return { bg: 'bg-accent-teal/12', text: 'text-accent-teal', border: 'border-accent-teal/20', glow: 'shadow-accent-teal/10' };
-    case '[ ]': return { bg: 'bg-text-tertiary/12', text: 'text-text-secondary', border: 'border-text-tertiary/20', glow: '' };
-    case '[-]': return { bg: 'bg-dot-yellow/12', text: 'text-dot-yellow', border: 'border-dot-yellow/20', glow: 'shadow-dot-yellow/10' };
-    case '[?]': return { bg: 'bg-priority-b/12', text: 'text-priority-b', border: 'border-priority-b/20', glow: 'shadow-priority-b/10' };
-    default: return { bg: 'bg-text-tertiary/12', text: 'text-text-secondary', border: 'border-text-tertiary/20', glow: '' };
+    case '[ ]': return 'text-tertiary';
+    case '[-]': return 'priority-b';
+    case '[?]': return 'priority-b';
   }
+  switch (state.toUpperCase()) {
+    case 'TODO': return 'accent';
+    case 'NEXT':
+    case 'STARTED':
+    case 'DOING':
+    case 'ACTV':
+    case 'PROG': return 'accent-teal';
+    case 'WAIT':
+    case 'WAITING':
+    case 'HOLD':
+    case 'BLOCKED':
+    case 'SMDY': return 'priority-b';
+    case 'CANCELLED':
+    case 'CANCELED': return 'text-tertiary';
+    default: return 'accent';
+  }
+}
+
+// resolvedStateColorToken checks the user override map first, then falls back to the grouped default.
+// Overrides are stored as token strings matching StateColorToken values.
+export function resolvedStateColorToken(state: string, isDone: boolean): StateColorToken {
+  const overrides = loadTodoStateColors();
+  const key = state.toUpperCase();
+  if (overrides[key] && isValidToken(overrides[key])) {
+    return overrides[key] as StateColorToken;
+  }
+  return defaultStateColorToken(state, isDone);
+}
+
+const VALID_TOKENS: StateColorToken[] = ['done-green', 'accent', 'accent-teal', 'priority-b', 'text-tertiary'];
+function isValidToken(v: string): v is StateColorToken {
+  return (VALID_TOKENS as string[]).includes(v);
+}
+
+const TOKEN_CLASSES: Record<StateColorToken, { bg: string; text: string; border: string; glow: string }> = {
+  'done-green':   { bg: 'bg-done-green/15',   text: 'text-done-green',   border: 'border-done-green/25',   glow: 'shadow-done-green/10' },
+  'accent':       { bg: 'bg-accent/12',        text: 'text-accent',       border: 'border-accent/20',       glow: 'shadow-accent/10' },
+  'accent-teal':  { bg: 'bg-accent-teal/12',   text: 'text-accent-teal',  border: 'border-accent-teal/20',  glow: 'shadow-accent-teal/10' },
+  'priority-b':   { bg: 'bg-priority-b/12',    text: 'text-priority-b',   border: 'border-priority-b/20',   glow: 'shadow-priority-b/10' },
+  'text-tertiary': { bg: 'bg-text-tertiary/12', text: 'text-text-tertiary', border: 'border-text-tertiary/20', glow: '' },
+};
+
+function stateStyle(state: string, isDone: boolean): { bg: string; text: string; border: string; glow: string } {
+  return TOKEN_CLASSES[resolvedStateColorToken(state, isDone)];
 }
 
 function findSequence(state: string | undefined, keywords: TodoKeywords) {

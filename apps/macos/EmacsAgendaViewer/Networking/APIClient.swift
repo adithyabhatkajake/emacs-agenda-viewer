@@ -224,11 +224,216 @@ struct APIClient {
         try await patchTask(taskId, path: "property", body: Body(file: file, pos: pos, key: key, value: value))
     }
 
-    /// Appends a completed `CLOCK: [start]--[end] => H:MM` line to the task's LOGBOOK.
-    /// `start` and `end` are Unix epoch seconds.
-    func logClockEntry(file: String, pos: Int, start: Int, end: Int) async throws {
-        struct Body: Encodable { let file: String; let pos: Int; let start: Int; let end: Int }
-        try await send("POST", "/api/clock/log", body: Body(file: file, pos: pos, start: start, end: end))
+    /// Start a server-side clock for the given task. Returns the open Clock row.
+    func clockIn(file: String, pos: Int, title: String? = nil) async throws -> Clock {
+        struct Body: Encodable { let file: String; let pos: Int; let title: String? }
+        let url = try makeURL(path: "/api/clock/in")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try Self.encoder.encode(Body(file: file, pos: pos, title: title))
+        return try await execute(request)
+    }
+
+    /// Start a server-side clock for a DB-backed habit (clocked by id, not file/pos).
+    func clockInHabit(id: String, title: String? = nil) async throws -> Clock {
+        struct Body: Encodable { let taskId: String; let title: String? }
+        let url = try makeURL(path: "/api/clock/in")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try Self.encoder.encode(Body(taskId: id, title: title))
+        return try await execute(request)
+    }
+
+    /// Stop a server-side clock by its row id.
+    func clockOut(id: Int64) async throws {
+        struct Body: Encodable { let id: Int64 }
+        try await send("POST", "/api/clock/out", body: Body(id: id))
+    }
+
+    /// Return all currently running (end == nil) server-side clocks.
+    func fetchActiveClocks() async throws -> [Clock] {
+        try await get("/api/clock/active")
+    }
+
+    /// Cancel a clock row without persisting an interval.
+    func cancelClock(id: Int64) async throws {
+        struct DeleteResponse: Decodable { let success: Bool }
+        let url = try makeURL(path: "/api/clock/\(id)")
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 30
+        let _: DeleteResponse = try await execute(request)
+    }
+
+    // MARK: - Habit API (DB-backed)
+
+    private func habitPath(_ id: String, suffix: String = "") -> String {
+        let encoded = id.addingPercentEncoding(withAllowedCharacters: Self.pathComponentAllowed) ?? id
+        return suffix.isEmpty ? "/api/habits/\(encoded)" : "/api/habits/\(encoded)/\(suffix)"
+    }
+
+    func fetchHabits() async throws -> [Habit] {
+        try await get("/api/habits")
+    }
+
+    func createHabit(
+        title: String,
+        cadence: HabitCadenceSpec,
+        category: String? = nil,
+        priority: String? = nil,
+        tags: [String]? = nil,
+        notes: String? = nil,
+        anchorDate: String? = nil,
+        resetChecklistOnComplete: Bool? = nil
+    ) async throws -> Habit {
+        struct Body: Encodable {
+            let title: String
+            let cadence: HabitCadenceSpec
+            let category: String?
+            let priority: String?
+            let tags: [String]?
+            let notes: String?
+            let anchorDate: String?
+            let resetChecklistOnComplete: Bool?
+        }
+        let url = try makeURL(path: "/api/habits")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try Self.encoder.encode(
+            Body(title: title, cadence: cadence, category: category,
+                 priority: priority, tags: tags, notes: notes, anchorDate: anchorDate,
+                 resetChecklistOnComplete: resetChecklistOnComplete)
+        )
+        return try await execute(request)
+    }
+
+    /// PATCH a habit. The daemon clears a field only on an explicit JSON
+    /// `null`; a synthesized Encodable omits nil optionals (= "keep"), so
+    /// `clearsPriority` / `clearsNotes` force an explicit null to clear the
+    /// field (e.g. setting a habit's priority to None).
+    func updateHabit(
+        id: String,
+        title: String? = nil,
+        cadence: HabitCadenceSpec? = nil,
+        category: String? = nil,
+        priority: String? = nil,
+        tags: [String]? = nil,
+        notes: String? = nil,
+        anchorDate: String? = nil,
+        active: Bool? = nil,
+        resetChecklistOnComplete: Bool? = nil,
+        clearsPriority: Bool = false,
+        clearsNotes: Bool = false
+    ) async throws -> Habit {
+        struct Body: Encodable {
+            let title: String?
+            let cadence: HabitCadenceSpec?
+            let category: String?
+            let priority: String?
+            let tags: [String]?
+            let notes: String?
+            let anchorDate: String?
+            let active: Bool?
+            let resetChecklistOnComplete: Bool?
+            let clearsPriority: Bool
+            let clearsNotes: Bool
+            enum CodingKeys: String, CodingKey {
+                case title, cadence, category, priority, tags, notes
+                case anchorDate, active, resetChecklistOnComplete
+            }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encodeIfPresent(title, forKey: .title)
+                try c.encodeIfPresent(cadence, forKey: .cadence)
+                try c.encodeIfPresent(category, forKey: .category)
+                if clearsPriority { try c.encodeNil(forKey: .priority) }
+                else { try c.encodeIfPresent(priority, forKey: .priority) }
+                try c.encodeIfPresent(tags, forKey: .tags)
+                if clearsNotes { try c.encodeNil(forKey: .notes) }
+                else { try c.encodeIfPresent(notes, forKey: .notes) }
+                try c.encodeIfPresent(anchorDate, forKey: .anchorDate)
+                try c.encodeIfPresent(active, forKey: .active)
+                try c.encodeIfPresent(resetChecklistOnComplete, forKey: .resetChecklistOnComplete)
+            }
+        }
+        let url = try makeURL(path: habitPath(id))
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try Self.encoder.encode(
+            Body(title: title, cadence: cadence, category: category,
+                 priority: priority, tags: tags, notes: notes,
+                 anchorDate: anchorDate, active: active,
+                 resetChecklistOnComplete: resetChecklistOnComplete,
+                 clearsPriority: clearsPriority, clearsNotes: clearsNotes)
+        )
+        return try await execute(request)
+    }
+
+    func deleteHabit(id: String) async throws {
+        struct DeleteResp: Decodable { let success: Bool }
+        let url = try makeURL(path: habitPath(id))
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 30
+        let _: DeleteResp = try await execute(request)
+    }
+
+    /// Record a habit completion in the DB. `ts` is an optional ISO-8601 or
+    /// org-style timestamp; nil means "now" on the server.
+    func completeHabit(id: String, ts: String? = nil) async throws -> Habit {
+        struct Body: Encodable { let ts: String? }
+        let url = try makeURL(path: habitPath(id, suffix: "complete"))
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try Self.encoder.encode(Body(ts: ts))
+        return try await execute(request)
+    }
+
+    /// Remove a habit completion from the DB.
+    /// `ts` is the org-style timestamp string from `habit.completions`.
+    func uncompleteHabit(id: String, ts: String) async throws -> Habit {
+        struct Body: Encodable { let ts: String }
+        let url = try makeURL(path: habitPath(id, suffix: "uncomplete"))
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try Self.encoder.encode(Body(ts: ts))
+        return try await execute(request)
+    }
+
+    /// Skip the current due period (advance next-due, no credit).
+    func skipHabit(id: String) async throws -> Habit {
+        struct Body: Encodable {}
+        let url = try makeURL(path: habitPath(id, suffix: "skip"))
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try Self.encoder.encode(Body())
+        return try await execute(request)
+    }
+
+    /// Set the next-due date for a habit explicitly.
+    func rescheduleHabit(id: String, date: String) async throws -> Habit {
+        struct Body: Encodable { let date: String }
+        let url = try makeURL(path: habitPath(id, suffix: "reschedule"))
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try Self.encoder.encode(Body(date: date))
+        return try await execute(request)
     }
 
     /// Sweep loose CLOCK: lines under a heading into a :LOGBOOK: drawer.

@@ -509,8 +509,9 @@ fn custom_properties(drawer: &PropertyDrawer) -> BTreeMap<String, String> {
     out
 }
 
-/// Return the section body text (with the *leading* planning lines and
-/// canonical drawers stripped) plus the active timestamps it contains.
+/// Return the section body text (with planning lines, all drawers, bare
+/// CLOCK: lines, and loose state-change log lines stripped) plus the active
+/// timestamps it contains.
 ///
 /// Per `org-element-section`, planning is recognised only as the leading run
 /// after the heading (cf. `org-at-planning-p` checking
@@ -523,6 +524,12 @@ fn custom_properties(drawer: &PropertyDrawer) -> BTreeMap<String, String> {
 /// the drawer; any further `SCHEDULED:` / `DEADLINE:` line at the top of the
 /// section is body content (planning slot was previously occupied) and must
 /// not be stripped.
+///
+/// All drawers (`:NAME:` … `:END:`) are excluded regardless of where they
+/// appear in the section. If a drawer has no closing `:END:` within the
+/// section (malformed/unclosed), everything from its opening line to the end
+/// of the section is dropped — the section text is already bounded to this
+/// heading's subtree by orgize, so the bleed is at worst one heading.
 fn section_body(
     h: &Headline,
     _source: &str,
@@ -535,16 +542,17 @@ fn section_body(
     let raw_section = section.raw();
 
     let mut lines: Vec<&str> = Vec::new();
+    // True once we are past the leading planning region.
     let mut leading_planning_consumed = props_already_consumed;
-    let mut leading_drawer_open = false;
-    let mut leading_drawer_consumed = props_already_consumed;
+    // True while we are inside an open drawer (`:NAME:` … `:END:`).
+    let mut inside_drawer = false;
 
     for line in raw_section.lines() {
         let trimmed = line.trim_start();
 
-        // Phase 1: strip the leading planning region. A line matching
-        // SCHEDULED:/DEADLINE:/CLOSED: at the very top of the section is
-        // planning; once non-planning content appears, planning ends.
+        // Phase 1: strip the leading planning region (SCHEDULED:/DEADLINE:/
+        // CLOSED: at the very top of the section). Once non-planning content
+        // appears, planning recognition ends.
         if !leading_planning_consumed {
             if trimmed.starts_with("SCHEDULED:")
                 || trimmed.starts_with("DEADLINE:")
@@ -555,28 +563,33 @@ fn section_body(
             leading_planning_consumed = true;
         }
 
-        // Phase 2: skip the canonical leading PROPERTIES/LOGBOOK drawer (and
-        // friends). These can appear right after planning.
-        if !leading_drawer_consumed {
-            if leading_drawer_open {
-                if trimmed == ":END:" {
-                    leading_drawer_open = false;
-                }
-                continue;
+        // Phase 2: exclude ALL drawers throughout the section. A drawer starts
+        // with `:NAME:` (all-caps identifier flanked by colons) and ends with
+        // `:END:`. While inside a drawer every line is dropped. If `:END:` is
+        // missing the remaining section lines are dropped (worst case: one
+        // heading loses its body), which is correct — they belong to the drawer
+        // and not to the real body.
+        if inside_drawer {
+            if trimmed.eq_ignore_ascii_case(":END:") {
+                inside_drawer = false;
             }
-            if is_drawer_open(trimmed) {
-                leading_drawer_open = true;
-                continue;
-            }
-            // First "real" line — drawers no longer get auto-stripped.
-            leading_drawer_consumed = true;
+            continue;
+        }
+        if is_drawer_open(trimmed) {
+            inside_drawer = true;
+            continue;
         }
 
-        // Phase 3: still skip CLOCK lines (those are noise) but keep prose
-        // (including a stale SCHEDULED: that's body content now).
+        // Phase 3: skip bare CLOCK: lines and loose state-change log lines
+        // (the latter appear outside drawers only in malformed files, but
+        // filtering them keeps notes clean in all cases).
         if trimmed.starts_with("CLOCK:") {
             continue;
         }
+        if LOGBOOK_DONE.is_match(trimmed) {
+            continue;
+        }
+
         lines.push(line);
     }
 
@@ -913,5 +926,135 @@ Some prose with <2026-06-01 Mon> mentioned.
         assert_eq!(stamps[0].start.month, 6);
         assert!(t.notes.as_deref().unwrap().contains("Some prose"));
         assert!(!t.notes.as_deref().unwrap().contains(":ID:"));
+    }
+
+    // -------------------------------------------------------------------------
+    // notes extraction: drawer exclusion
+    // -------------------------------------------------------------------------
+
+    /// (a) A heading with PROPERTIES + LOGBOOK + a checklist item.
+    /// notes must be exactly the checklist line; no drawer content leaks in.
+    #[test]
+    fn notes_excludes_properties_and_logbook_drawers() {
+        let src = "\
+* TODO Review PR
+  SCHEDULED: <2026-05-28 Thu>
+  :PROPERTIES:
+  :ID: pr-review-001
+  :END:
+  :LOGBOOK:
+  - State \"DONE\"       from \"TODO\"       [2026-05-27 Wed 18:00]
+  :END:
+  - [ ] Check CI results
+  - [ ] Leave review comment
+";
+        let tasks = extract(src);
+        assert_eq!(tasks.len(), 1);
+        let notes = tasks[0].notes.as_deref().unwrap_or("");
+        // Must contain the checklist items.
+        assert!(
+            notes.contains("- [ ] Check CI results"),
+            "expected checklist in notes, got: {notes:?}"
+        );
+        assert!(
+            notes.contains("- [ ] Leave review comment"),
+            "expected second checklist item in notes, got: {notes:?}"
+        );
+        // Must NOT contain drawer artifacts.
+        assert!(
+            !notes.contains(":LOGBOOK:"),
+            "LOGBOOK header must not appear in notes: {notes:?}"
+        );
+        assert!(
+            !notes.contains(":END:"),
+            ":END: must not appear in notes: {notes:?}"
+        );
+        assert!(
+            !notes.contains("State \"DONE\""),
+            "state-change log lines must not appear in notes: {notes:?}"
+        );
+        assert!(
+            !notes.contains(":PROPERTIES:"),
+            ":PROPERTIES: must not appear in notes: {notes:?}"
+        );
+        assert!(
+            !notes.contains(":ID:"),
+            ":ID: must not appear in notes: {notes:?}"
+        );
+    }
+
+    /// (b) A heading whose LOGBOOK has no closing :END: before the next heading.
+    /// notes for this heading must exclude the logbook and must not bleed into
+    /// the next heading's content.
+    #[test]
+    fn notes_unclosed_logbook_does_not_bleed() {
+        let src = "\
+* TODO First task
+  :PROPERTIES:
+  :ID: first-001
+  :END:
+  :LOGBOOK:
+  - State \"DONE\"       from \"TODO\"       [2026-05-27 Wed 12:00]
+  - Note taken on [2026-05-27 Wed 12:00]
+* TODO Second task
+  This is the second task body.
+";
+        let tasks = extract(src);
+        // Both headings are tasks.
+        assert_eq!(tasks.len(), 2);
+
+        let first = tasks.iter().find(|t| t.title == "First task").unwrap();
+        let second = tasks.iter().find(|t| t.title == "Second task").unwrap();
+
+        // First task: unclosed logbook → notes should be None (no real body
+        // outside the drawer).
+        let first_notes = first.notes.as_deref().unwrap_or("");
+        assert!(
+            !first_notes.contains(":LOGBOOK:"),
+            "LOGBOOK must not appear in first task notes: {first_notes:?}"
+        );
+        assert!(
+            !first_notes.contains("State \"DONE\""),
+            "logbook state lines must not appear in first task notes: {first_notes:?}"
+        );
+        assert!(
+            !first_notes.contains("second task body"),
+            "first task notes must not bleed into second heading: {first_notes:?}"
+        );
+
+        // Second task must have its own body intact.
+        let second_notes = second.notes.as_deref().unwrap_or("");
+        assert!(
+            second_notes.contains("second task body"),
+            "second task body must be intact: {second_notes:?}"
+        );
+    }
+
+    /// (c) A heading with plain prose body — no drawers — must pass through
+    /// unchanged.
+    #[test]
+    fn notes_plain_prose_passes_through() {
+        let src = "\
+* TODO Write design doc
+  Here is a paragraph describing the design.
+
+  And a second paragraph with more details.
+  Multiple lines in it.
+";
+        let tasks = extract(src);
+        assert_eq!(tasks.len(), 1);
+        let notes = tasks[0].notes.as_deref().unwrap_or("");
+        assert!(
+            notes.contains("paragraph describing the design"),
+            "first paragraph must survive: {notes:?}"
+        );
+        assert!(
+            notes.contains("second paragraph"),
+            "second paragraph must survive: {notes:?}"
+        );
+        assert!(
+            notes.contains("Multiple lines in it"),
+            "multiline prose must survive: {notes:?}"
+        );
     }
 }

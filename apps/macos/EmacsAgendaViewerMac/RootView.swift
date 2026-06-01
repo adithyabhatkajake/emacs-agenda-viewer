@@ -11,7 +11,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .pinned: return "Pinned"
+        case .pinned: return "My Day"
         case .today: return "Today"
         case .upcoming: return "Upcoming"
         case .inbox: return "Inbox"
@@ -89,6 +89,7 @@ struct RootView: View {
             }
         }
         .task {
+            store.clockManager = clocks
             if calendarSync == nil {
                 calendarSync = CalendarSync(store: store, settings: settings, ek: eventKit)
             }
@@ -104,6 +105,7 @@ struct RootView: View {
             guard let client = settings.apiClient else { return }
             store.initialized = false
             await store.loadMetadata(using: client, settings: settings)
+            await clocks.loadActiveClocks(using: client)
 
             // Re-attach the SSE subscriber whenever the server URL changes.
             // Falls silent when the configured backend doesn't expose
@@ -113,7 +115,7 @@ struct RootView: View {
             sub?.onStateChange = { [weak store] state in
                 store?.connectionState = state
             }
-            sub?.start { [weak store] event in
+            sub?.start { [weak store, weak clocks] event in
                 guard let store else { return }
                 Task { @MainActor in
                     guard let client = settings.apiClient else { return }
@@ -124,12 +126,24 @@ struct RootView: View {
                         await store.invalidate(file: file, using: client)
                     case .clockChanged:
                         await store.refreshClock(using: client)
+                        await clocks?.loadActiveClocks(using: client)
                     case .configChanged:
                         await store.invalidateConfig(using: client, settings: settings)
+                    case .habitsChanged:
+                        await store.invalidateHabits(using: client)
                     }
                 }
             }
             eventSubscriber = sub
+        }
+        // If the user switches from a remote server back to the bundled local
+        // helper mid-session, spin it up now: the AppDelegate only starts the
+        // helper at launch (and skips it entirely for a remote config), so
+        // without this the bundled path would sit on an idle spinner forever.
+        .onChange(of: settings.usesBundledDaemon) { _, nowBundled in
+            if nowBundled, !daemonHost.isRunning, daemonHost.phase != .starting {
+                Task { await daemonHost.restart() }
+            }
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -190,22 +204,30 @@ struct RootView: View {
             // phase transitions to `.ready` and kick a refresh so any
             // pre-ready failed loads recover.
             Group {
-                switch daemonHost.phase {
-                case .idle, .starting:
-                    ConnectingStateView()
-                case .failedToStart(let reason):
-                    DaemonFailedView(kind: .failedToStart, reason: reason) {
-                        await daemonHost.restart()
+                if settings.usesBundledDaemon {
+                    switch daemonHost.phase {
+                    case .idle, .starting:
+                        ConnectingStateView()
+                    case .failedToStart(let reason):
+                        DaemonFailedView(kind: .failedToStart, reason: reason) {
+                            await daemonHost.restart()
+                        }
+                    case .crashed(let reason):
+                        // Distinct from failedToStart: the daemon WAS healthy
+                        // and then died, so we surface the signal/exit + stderr
+                        // tail captured by the termination handler. Same retry
+                        // path; different copy.
+                        DaemonFailedView(kind: .crashed, reason: reason) {
+                            await daemonHost.restart()
+                        }
+                    case .ready:
+                        detailContent
                     }
-                case .crashed(let reason):
-                    // Distinct from failedToStart: the daemon WAS healthy
-                    // and then died, so we surface the signal/exit + stderr
-                    // tail captured by the termination handler. Same retry
-                    // path; different copy.
-                    DaemonFailedView(kind: .crashed, reason: reason) {
-                        await daemonHost.restart()
-                    }
-                case .ready:
+                } else {
+                    // Remote server configured — the bundled local helper is
+                    // not in play, so don't gate on its phase. Each list view
+                    // renders its own loading / error state against the remote
+                    // server (which the metadata `.task` above also targets).
                     detailContent
                 }
             }
@@ -219,24 +241,9 @@ struct RootView: View {
     /// switch the sidebar — the user already chose what they're looking
     /// at; if their current view contains the row, it scrolls into view,
     /// otherwise the request silently no-ops.
-    /// The session id is the file::pos snapshot from clock-in time; if
-    /// CLOCK lines have shifted the heading we try to re-resolve through
-    /// already-loaded lists, falling back to the original.
-    private func revealClocked(_ session: ClockManager.Session) {
-        let resolved = resolveSessionId(session) ?? session.id
-        taskSelection.taskId = resolved
-        taskSelection.revealTaskId = resolved
-    }
-
-    private func resolveSessionId(_ session: ClockManager.Session) -> String? {
-        func search<T: TaskDisplayable>(_ tasks: [T]?) -> String? {
-            tasks?.first(where: {
-                $0.id == session.id || ($0.file == session.file && $0.title == session.title)
-            })?.id
-        }
-        return search(store.allTasks.value)
-            ?? search(store.today.value)
-            ?? search(store.upcoming.value)
+    private func revealClocked(_ clock: Clock) {
+        taskSelection.taskId = clock.taskId
+        taskSelection.revealTaskId = clock.taskId
     }
 
     private var sidebar: some View {
@@ -312,8 +319,8 @@ struct RootView: View {
             let count = tasks.filter { store.isDoneState($0.todoState) }.count
             return count > 0 ? count : nil
         case .habits:
-            guard let tasks = store.allTasks.value else { return nil }
-            let count = tasks.filter { $0.isHabit }.count
+            guard let habits = store.habits.value else { return nil }
+            let count = habits.count
             return count > 0 ? count : nil
         case .eisenhower, .calendar:
             return nil

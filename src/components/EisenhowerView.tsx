@@ -12,6 +12,7 @@
  */
 
 import { useState } from 'react';
+import { CaretRight } from '@phosphor-icons/react';
 import type { OrgTask, TodoKeywords } from '../types';
 import { updatePriority, updateScheduled } from '../api/tasks';
 import type { ClockManager } from '../hooks/useClockManager';
@@ -228,7 +229,7 @@ function QuadrantCell({
           className="text-[10px] text-text-tertiary transition-transform"
           aria-expanded={!collapsed}
         >
-          <span className={`inline-block transition-transform ${collapsed ? '' : 'rotate-90'}`}>{'▶'}</span>
+          <CaretRight size={10} weight="bold" className={`transition-transform ${collapsed ? '' : 'rotate-90'}`} />
         </button>
       )}
       <span className={`text-[12px] font-semibold ${meta.labelColorClass}`}>{meta.label}</span>
@@ -266,7 +267,6 @@ function QuadrantCell({
                   keywords={keywords}
                   isDoneState={isDoneState}
                   clockManager={clockManager}
-                  allTasksForClock={allTasks}
                   allTags={allTags}
                   onRefresh={onRefresh}
                   onRefreshClock={onRefreshClock}

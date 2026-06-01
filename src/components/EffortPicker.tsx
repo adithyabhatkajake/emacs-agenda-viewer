@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { Check } from '@phosphor-icons/react';
 
 interface EffortPickerProps {
   currentEffort: string | undefined;
@@ -76,7 +77,7 @@ export function EffortPicker({ currentEffort, onConfirm, onClose }: EffortPicker
                   }`}
                 >
                   {preset}
-                  {isCurrent && <span className="ml-1 text-[10px]">{'✓'}</span>}
+                  {isCurrent && <Check size={10} weight="bold" className="ml-1" />}
                 </button>
               );
             })}

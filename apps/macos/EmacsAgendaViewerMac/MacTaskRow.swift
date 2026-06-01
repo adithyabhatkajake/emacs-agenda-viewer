@@ -1,5 +1,22 @@
 import SwiftUI
 
+private struct Pie: Shape {
+    var startAngle: Angle
+    var endAngle: Angle
+
+    func path(in rect: CGRect) -> Path {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) / 2
+        var p = Path()
+        p.move(to: center)
+        p.addArc(center: center, radius: radius,
+                 startAngle: startAngle, endAngle: endAngle,
+                 clockwise: false)
+        p.closeSubpath()
+        return p
+    }
+}
+
 struct TaskRowActions {
     var toggleDone: () -> Void = {}
     var setPriority: (String) -> Void = { _ in }
@@ -38,7 +55,14 @@ struct MacTaskRow: View {
     let actions: TaskRowActions
     var progress: ChecklistProgress? = nil
     var keywords: TodoKeywords? = nil
+    var priorities: OrgPriorities? = nil
     var onAppear: (() -> Void)? = nil
+    /// Replaces the default task context menu when non-nil. Habits route
+    /// through this so they reuse all of the row chrome (highlight modes,
+    /// progress ring, inline-rendered title, pills) while keeping their own
+    /// menu (Done/Skip/Clock/Reset/Edit/Delete) instead of the task menu's
+    /// Pin/Deadline/Refile/Archive items.
+    var contextMenuOverride: (() -> AnyView)? = nil
     @State private var isHovering = false
     @FocusState private var titleFieldFocused: Bool
     /// Cached result of `renderInline(task.title)`. Seeded on appear and
@@ -55,15 +79,10 @@ struct MacTaskRow: View {
         VStack(alignment: .leading, spacing: 0) {
             if settings.rowProgressStyle == .line { progressLine }
             HStack(alignment: .top, spacing: 12) {
-                checkbox
+                completionRing
                     .padding(.top, 1)
-
                 titleRow
                     .frame(maxWidth: .infinity, alignment: .leading)
-
-                if settings.rowProgressStyle == .circle, progress != nil {
-                    progressCircle
-                }
             }
             .padding(.vertical, 9)
             .padding(.horizontal, 14)
@@ -94,7 +113,13 @@ struct MacTaskRow: View {
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .onTapGesture { actions.openInspector() }
-        .contextMenu { contextMenuItems }
+        .contextMenu {
+            if let contextMenuOverride {
+                contextMenuOverride()
+            } else {
+                contextMenuItems
+            }
+        }
         .draggable(task.id) { dragPreview }
         .onAppear {
             cachedRenderedTitle = renderInline(task.title)
@@ -105,25 +130,49 @@ struct MacTaskRow: View {
         }
     }
 
+    // Unified completion control. When the task has a checklist (progress != nil,
+    // itemCount > 0) and is not itself done, shows the arc progress ring.
+    // All other states fall back to the plain hollow circle / filled checkmark.
     @ViewBuilder
-    private var progressCircle: some View {
-        if let p = progress {
-            let doneFrac = CGFloat(p.done)
-            let ongoingFrac = CGFloat(p.ongoing)
-            ZStack {
-                Circle()
-                    .stroke(Theme.textTertiary.opacity(0.25), lineWidth: 2)
-                Circle()
-                    .trim(from: 0, to: doneFrac + ongoingFrac)
-                    .stroke(Theme.priorityB.opacity(0.7), style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                Circle()
-                    .trim(from: 0, to: doneFrac)
-                    .stroke(Theme.doneGreen, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
+    private var completionRing: some View {
+        if let p = progress, p.itemCount > 0, !isDone {
+            let doneFrac = Double(p.done)
+            let ongoingFrac = Double(p.ongoing)
+            let top = Angle.degrees(-90)
+            let doneEnd = Angle.degrees(-90 + doneFrac * 360)
+            let ongoingEnd = Angle.degrees(-90 + (doneFrac + ongoingFrac) * 360)
+            Button(action: actions.toggleDone) {
+                ZStack {
+                    Circle()
+                        .fill(Theme.textTertiary.opacity(0.20))
+                    if ongoingFrac > 0 {
+                        Pie(startAngle: top, endAngle: ongoingEnd)
+                            .fill(Theme.priorityB.opacity(0.7))
+                    }
+                    if doneFrac > 0 {
+                        Pie(startAngle: top, endAngle: doneEnd)
+                            .fill(Theme.doneGreen)
+                    }
+                }
+                .frame(width: 16, height: 16)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
             }
-            .frame(width: 14, height: 14)
+            .buttonStyle(.plain)
+            .padding(-6)
             .help(String(format: "%.0f%% complete · %d items", p.done * 100, p.itemCount))
+        } else {
+            let color: Color = isDone ? Theme.doneGreen : (isHovering ? Theme.textSecondary : Theme.textTertiary)
+            Button(action: actions.toggleDone) {
+                Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(color)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(-6)
+            .help(isDone ? "Mark as not done" : "Mark as done")
         }
     }
 
@@ -296,8 +345,8 @@ struct MacTaskRow: View {
 
     private var rowBackground: Color {
         if isSelected { return Theme.accent.opacity(0.18) }
-        if isHovering { return Theme.surface.opacity(0.6) }
-        return .clear
+        if isHovering { return Theme.surfaceElevated }
+        return Theme.surface
     }
 
     private enum DateKind { case scheduled, deadline }
@@ -320,24 +369,13 @@ struct MacTaskRow: View {
 
     @ViewBuilder
     private func scheduledPill(text: String) -> some View {
-        let tint = Theme.priorityC // accent-blue
         HStack(spacing: 3) {
             Image(systemName: "calendar")
                 .font(.system(size: 9.5, weight: .semibold))
             Text(text)
                 .font(.system(size: 11))
         }
-        .foregroundStyle(tint)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 1)
-        .background(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(tint.opacity(0.10))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .strokeBorder(tint.opacity(0.28), lineWidth: 0.5)
-        )
+        .foregroundStyle(Theme.textSecondary)
     }
 
     private func deadlineStyle(_ severity: DeadlineSeverity) -> (Color, Double, Double) {
@@ -352,8 +390,14 @@ struct MacTaskRow: View {
     private func deadlinePill(text: String, severity: DeadlineSeverity) -> some View {
         let (tint, bgOpacity, borderOpacity) = deadlineStyle(severity)
         HStack(spacing: 3) {
-            Image(systemName: "flag.fill")
+            if severity == .overdue {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .accessibilityLabel("Overdue")
+            }
+            Image(systemName: "exclamationmark.circle")
                 .font(.system(size: 9, weight: .semibold))
+                .accessibilityHidden(true)
             Text(text)
                 .font(.system(size: 11))
         }
@@ -419,8 +463,9 @@ struct MacTaskRow: View {
 
     @ViewBuilder
     private func priorityMenu(currentPriority: String) -> some View {
+        let priorityList = priorities?.all ?? ["A", "B", "C", "D"]
         Menu {
-            ForEach(["A", "B", "C", "D"], id: \.self) { p in
+            ForEach(priorityList, id: \.self) { p in
                 Button(p) { actions.setPriority(p) }
             }
             Divider()
@@ -452,13 +497,14 @@ struct MacTaskRow: View {
 
     @ViewBuilder
     private func priorityBox(_ priority: String) -> some View {
+        let color = settings.resolvedPriorityColor(for: priority)
         Text(priority.uppercased())
             .font(.system(size: 10, weight: .heavy, design: .monospaced))
-            .foregroundStyle(.white)
+            .foregroundStyle(color)
             .frame(width: 16, height: 16)
             .background(
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(settings.resolvedPriorityColor(for: priority))
+                    .fill(color.opacity(0.15))
             )
             .help("Priority \(priority.uppercased())")
     }
@@ -513,32 +559,15 @@ struct MacTaskRow: View {
     }
 
     private func tagChip(_ tag: String, inherited: Bool) -> some View {
-        Text("#\(tag)")
-            .font(.system(size: 10.5, design: .monospaced))
-            .foregroundStyle(Theme.textTertiary.opacity(inherited ? 0.7 : 1.0))
-            .padding(.horizontal, 6)
+        Text(tag)
+            .font(.caption2)
+            .foregroundStyle(inherited ? Theme.textTertiary : Theme.textSecondary)
+            .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .strokeBorder(Theme.borderSubtle, lineWidth: 0.5)
+                Capsule(style: .continuous)
+                    .fill(Theme.surfaceElevated.opacity(inherited ? 0.4 : 0.8))
             )
-    }
-
-    @ViewBuilder
-    private var checkbox: some View {
-        let color: Color = isDone ? Theme.doneGreen : (isHovering ? Theme.textSecondary : Theme.textTertiary)
-        Button(action: actions.toggleDone) {
-            Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 16, weight: .regular))
-                .foregroundStyle(color)
-                // 28pt hit target around the 16pt glyph; negative padding keeps
-                // the row's compact footprint (net 16pt) and original alignment.
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(-6)
-        .help(isDone ? "Mark as not done" : "Mark as done")
     }
 
     @ViewBuilder

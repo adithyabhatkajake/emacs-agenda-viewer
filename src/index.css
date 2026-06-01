@@ -51,18 +51,18 @@
 
 /* ========== Dark theme ========== */
 .dark {
-  --things-bg: 45 45 47;
-  --things-sidebar: 50 50 52;
-  --things-sidebar-hover: 58 58 60;
-  --things-sidebar-active: 72 72 74;
-  --things-surface: 50 50 52;
-  --things-border: 58 58 60;
-  --things-border-subtle: 56 56 58;
+  --things-bg: 0 0 0;
+  --things-sidebar: 26 26 28;
+  --things-sidebar-hover: 52 52 56;
+  --things-sidebar-active: 70 70 74;
+  --things-surface: 36 36 40;
+  --things-border: 68 68 74;
+  --things-border-subtle: 50 50 54;
   --accent: 95 160 244;
   --accent-teal: 100 210 255;
-  --text-primary: 245 245 247;
-  --text-secondary: 152 152 157;
-  --text-tertiary: 99 99 102;
+  --text-primary: 250 250 252;
+  --text-secondary: 176 176 182;
+  --text-tertiary: 134 134 140;
   --done-green: 48 209 88;
   --priority-a: 255 69 58;
   --priority-b: 255 159 10;
@@ -143,4 +143,7 @@ button, [role="button"] {
 }
 .task-card > div:last-child > .group:last-child {
   border-bottom: 0;
+}
+.dark .task-card {
+  background: rgb(var(--things-surface));
 }

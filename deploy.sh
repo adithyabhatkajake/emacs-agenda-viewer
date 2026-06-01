@@ -7,6 +7,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$PROJECT_DIR/apps/macos"
 DEST="$HOME/Applications/${APP_NAME}.app"
 EAV_EL="$PROJECT_DIR/elisp/eav.el"
+EAV_BRIDGE_EL="$PROJECT_DIR/elisp/eav-bridge.el"
 
 echo "==> Running elisp tests…"
 emacs -batch -l ert -l "$PROJECT_DIR/elisp/eav-tests.el" -f ert-run-tests-batch-and-exit
@@ -38,8 +39,12 @@ echo "==> Deploying to ~/Applications…"
 rm -rf "$DEST"
 cp -R "$BUILT_APP" "$DEST"
 
-echo "==> Reloading eav.el in Emacs…"
-emacsclient --eval "(load-file \"${EAV_EL}\")" >/dev/null 2>&1 || echo "  (emacs not reachable — skipped)"
+echo "==> Reloading eav.el + eav-bridge.el in Emacs…"
+# Reload both the semantics (eav.el) and the bridge dispatcher (eav-bridge.el).
+# `eav-bridge--methods` is a defvar, so a plain load-file won't refresh the
+# method table — makunbound it first so new/changed bridge methods register.
+# (The running socket server keeps serving; it looks up the table per call.)
+emacsclient --eval "(progn (load-file \"${EAV_EL}\") (makunbound 'eav-bridge--methods) (load-file \"${EAV_BRIDGE_EL}\") t)" >/dev/null 2>&1 || echo "  (emacs not reachable — skipped)"
 
 echo "==> Restarting EAV server…"
 launchctl kickstart -k "gui/$(id -u)/com.hermitsage.emacs-agenda-viewer" 2>/dev/null || echo "  (launchd service not found — skipped)"
@@ -61,6 +66,7 @@ open "$DEST"
 REMOTE="visa-nonsoe"
 REMOTE_DIR="/Users/adithyabhat/Github/Emacs-Agenda-Viewer"
 REMOTE_EAV_EL="$REMOTE_DIR/elisp/eav.el"
+REMOTE_BRIDGE_EL="$REMOTE_DIR/elisp/eav-bridge.el"
 
 echo "==> Syncing to ${REMOTE}…"
 if ! ssh -o ConnectTimeout=5 "$REMOTE" true 2>/dev/null; then
@@ -109,8 +115,11 @@ ssh "$REMOTE" "
   codesign --force --sign - target/release/eavd
 " || echo "  (eavd build failed — remote daemon may be stale)"
 
-echo "==> Reloading eav.el on ${REMOTE}…"
-ssh "$REMOTE" "emacsclient --eval '(load-file \"$REMOTE_EAV_EL\")'" >/dev/null 2>&1 \
+echo "==> Reloading eav.el + eav-bridge.el on ${REMOTE}…"
+# Reload both; makunbound the defvar method table so new bridge methods take.
+# Without the eav-bridge.el reload, a bare eavd restart reconnects to the
+# already-running bridge and never picks up new methods (e.g. write.ensure-id).
+ssh "$REMOTE" "emacsclient --eval '(progn (load-file \"$REMOTE_EAV_EL\") (makunbound (quote eav-bridge--methods)) (load-file \"$REMOTE_BRIDGE_EL\") t)'" >/dev/null 2>&1 \
   || echo "  (remote emacs not reachable — skipped)"
 
 # Restart the eavd service. Two paths:
@@ -133,6 +142,7 @@ ssh "$REMOTE" "
     sleep 1
     cd $REMOTE_DIR/daemon
     nohup ./target/release/eavd --http-port 3001 --http-host 0.0.0.0 \
+        --mcp-host 0.0.0.0 \
         --static-dir $REMOTE_DIR/dist --daemon \
         >>\$HOME/Library/Logs/eavd.log 2>&1 &
     disown

@@ -435,4 +435,28 @@ final class AppSettings {
     }
 
     var isConfigured: Bool { apiClient != nil }
+
+    /// True when the app should manage the bundled local `eavd` helper — i.e.
+    /// spawn it on launch and gate the UI on its readiness. That's the case on
+    /// a fresh install (empty URL: the AppDelegate fills it with the local
+    /// endpoint once the helper is serving) or when the configured URL
+    /// explicitly points at the local helper on 127.0.0.1:3002.
+    ///
+    /// A remote URL (e.g. a Tailscale host) means the user supplies their own
+    /// server, so the bundled helper must NOT be spawned and — crucially —
+    /// must not gate the UI. Otherwise a local-helper failure (no local Emacs
+    /// bridge socket, a port conflict, an unsigned binary) blocks an app that
+    /// is perfectly able to reach its configured remote server. Consulted only
+    /// by the macOS target; the iOS app has no bundled helper.
+    var usesBundledDaemon: Bool {
+        let trimmed = serverURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return true }
+        guard let url = APIClient(baseURLString: trimmed)?.baseURL,
+              let host = url.host else { return false }
+        let isLoopback = host == "127.0.0.1" || host == "localhost" || host == "::1"
+        // The bundled helper always binds 3002. A loopback URL on any other
+        // port is some other local server the user chose to point at, so treat
+        // only :3002 (or an unspecified port) as "the bundled helper".
+        return isLoopback && (url.port == nil || url.port == 3002)
+    }
 }

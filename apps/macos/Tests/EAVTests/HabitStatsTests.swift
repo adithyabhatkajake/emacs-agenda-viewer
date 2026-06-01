@@ -200,6 +200,80 @@ struct HabitStatsTests {
     }
 }
 
+// MARK: - dueHabitsToday / Habit.isDueToday
+
+@Suite("dueHabitsToday")
+struct DueHabitsTodayTests {
+    private static let dailyCadence = HabitCadenceSpec(kind: "+", value: 1, unit: "d", maxValue: nil, maxUnit: nil)
+
+    private func makeHabit(id: String = "h1", active: Bool = true, state: String?) -> Habit {
+        Habit(
+            id: id,
+            title: "Test",
+            cadence: Self.dailyCadence,
+            category: nil,
+            priority: nil,
+            tags: [],
+            notes: nil,
+            anchorDate: nil,
+            active: active,
+            resetChecklistOnComplete: false,
+            completions: [],
+            nextDue: nil,
+            state: state
+        )
+    }
+
+    @Test("due habit with state=due is included")
+    func dueHabitIncluded() {
+        let h = makeHabit(state: "due")
+        #expect(h.isDueToday)
+        #expect(dueHabitsToday([h]).count == 1)
+    }
+
+    @Test("overdue habit with state=overdue is included")
+    func overdueHabitIncluded() {
+        let h = makeHabit(state: "overdue")
+        #expect(h.isDueToday)
+        #expect(dueHabitsToday([h]).count == 1)
+    }
+
+    @Test("ok habit is excluded")
+    func okHabitExcluded() {
+        let h = makeHabit(state: "ok")
+        #expect(!h.isDueToday)
+        #expect(dueHabitsToday([h]).isEmpty)
+    }
+
+    @Test("inactive habit is excluded even when overdue")
+    func inactiveHabitExcluded() {
+        let h = makeHabit(active: false, state: "overdue")
+        #expect(!h.isDueToday)
+        #expect(dueHabitsToday([h]).isEmpty)
+    }
+
+    @Test("nil state habit is excluded")
+    func nilStateExcluded() {
+        let h = makeHabit(state: nil)
+        #expect(!h.isDueToday)
+        #expect(dueHabitsToday([h]).isEmpty)
+    }
+
+    @Test("mixed list filters correctly")
+    func mixedList() {
+        let habits = [
+            makeHabit(id: "a", active: true, state: "due"),
+            makeHabit(id: "b", active: true, state: "ok"),
+            makeHabit(id: "c", active: false, state: "overdue"),
+            makeHabit(id: "d", active: true, state: "overdue"),
+        ]
+        let due = dueHabitsToday(habits)
+        #expect(due.count == 2)
+        #expect(due.map(\.id).contains("a"))
+        #expect(due.map(\.id).contains("d"))
+    }
+}
+
 // MARK: - helpers
 
 private func makeDate(_ year: Int, _ month: Int, _ day: Int, cal: Calendar) -> Date {

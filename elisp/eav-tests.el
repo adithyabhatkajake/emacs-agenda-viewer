@@ -427,5 +427,80 @@ must treat that as success (LAST_REPEAT bumped) rather than reporting
             start (match-end 0)))
     count))
 
+;;; ========================================================================
+;;; eav-ensure-id
+;;; ========================================================================
+
+(ert-deftest eav-ensure-id-creates-and-returns-id ()
+  "A heading without :ID: gets one created; the returned id is non-empty."
+  (require 'org-id)
+  (let* ((tmp (make-temp-file "eav-ensure-id-" nil ".org"))
+         pos id-json id-value)
+    (unwind-protect
+        (progn
+          (with-temp-file tmp
+            (insert "* Heading without id\n"))
+          (setq pos (eav-tests--find-heading tmp "Heading without id"))
+          (should pos)
+          (setq id-json (eav-ensure-id tmp pos))
+          (setq id-value (alist-get 'id (json-read-from-string id-json)))
+          (should (stringp id-value))
+          (should (not (string-empty-p id-value)))
+          ;; The :ID: property must now be present in the file on disk.
+          (should (equal id-value
+                         (eav-tests--heading-property tmp "Heading without id" "ID"))))
+      (let ((buf (get-file-buffer tmp)))
+        (when buf
+          (with-current-buffer buf (set-buffer-modified-p nil))
+          (kill-buffer buf)))
+      (when (file-exists-p tmp) (delete-file tmp)))))
+
+(ert-deftest eav-ensure-id-idempotent ()
+  "Calling eav-ensure-id twice returns the same id string."
+  (require 'org-id)
+  (let* ((tmp (make-temp-file "eav-ensure-id-idem-" nil ".org"))
+         pos id1 id2)
+    (unwind-protect
+        (progn
+          (with-temp-file tmp
+            (insert "* Heading for idempotency\n"))
+          (setq pos (eav-tests--find-heading tmp "Heading for idempotency"))
+          (setq id1 (alist-get 'id
+                               (json-read-from-string
+                                (eav-ensure-id tmp pos))))
+          ;; Re-find pos after first call (buffer may have been saved/modified).
+          (setq pos (eav-tests--find-heading tmp "Heading for idempotency"))
+          (setq id2 (alist-get 'id
+                               (json-read-from-string
+                                (eav-ensure-id tmp pos))))
+          (should (equal id1 id2)))
+      (let ((buf (get-file-buffer tmp)))
+        (when buf
+          (with-current-buffer buf (set-buffer-modified-p nil))
+          (kill-buffer buf)))
+      (when (file-exists-p tmp) (delete-file tmp)))))
+
+(ert-deftest eav-ensure-id-preserves-existing-id ()
+  "A heading that already has :ID: keeps its original value."
+  (require 'org-id)
+  (let* ((tmp (make-temp-file "eav-ensure-id-exist-" nil ".org"))
+         (fixed-id "test-fixed-id-1234")
+         pos returned-id)
+    (unwind-protect
+        (progn
+          (with-temp-file tmp
+            (insert (format "* Heading with existing id\n:PROPERTIES:\n:ID: %s\n:END:\n"
+                            fixed-id)))
+          (setq pos (eav-tests--find-heading tmp "Heading with existing id"))
+          (setq returned-id (alist-get 'id
+                                       (json-read-from-string
+                                        (eav-ensure-id tmp pos))))
+          (should (equal returned-id fixed-id)))
+      (let ((buf (get-file-buffer tmp)))
+        (when buf
+          (with-current-buffer buf (set-buffer-modified-p nil))
+          (kill-buffer buf)))
+      (when (file-exists-p tmp) (delete-file tmp)))))
+
 (provide 'eav-tests)
 ;;; eav-tests.el ends here

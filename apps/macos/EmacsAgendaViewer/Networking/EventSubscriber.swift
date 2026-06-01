@@ -261,6 +261,7 @@ enum DaemonEvent: Sendable {
     case fileChanged(file: String)
     case clockChanged(file: String?, pos: Int?, clocking: Bool)
     case configChanged
+    case habitsChanged
 
     init?(name: String, payload: String) {
         struct Decoded: Decodable {
@@ -286,6 +287,8 @@ enum DaemonEvent: Sendable {
             self = .clockChanged(file: decoded.file, pos: decoded.pos, clocking: decoded.clocking ?? false)
         case "config-changed":
             self = .configChanged
+        case "habits-changed":
+            self = .habitsChanged
         default:
             return nil
         }

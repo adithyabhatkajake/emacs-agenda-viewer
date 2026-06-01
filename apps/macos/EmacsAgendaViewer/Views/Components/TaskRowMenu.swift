@@ -57,15 +57,15 @@ struct TaskRowMenu: View {
 
         Divider()
 
-        // Clock In / Out via ClockManager (local-only multi-clock — multiple
-        // sessions can run in parallel; stop writes a finished CLOCK: line
-        // to the task's LOGBOOK drawer).
+        // Clock In / Out via ClockManager (server-side clocks — start fires
+        // a POST /api/clock/in; stop fires POST /api/clock/out and persists
+        // the finished CLOCK: line to the task's LOGBOOK drawer via the daemon).
         Button {
             onClockToggle?()
             if isClockedHere {
                 run { _ = await clocks.stop(taskId: task.id, using: client!, store: store) }
             } else {
-                clocks.start(task: task)
+                run { await clocks.clockIn(task: task, using: client!) }
             }
         } label: {
             Label(isClockedHere ? "Clock Out" : "Clock In",

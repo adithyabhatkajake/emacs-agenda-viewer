@@ -1,5 +1,6 @@
-import { useRef, useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useMemo, useState, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
+import { Star, Moon, Sun, Island, CalendarBlank, ArrowDown, CalendarDots } from '@phosphor-icons/react';
 import type { OrgTask } from '../types';
 import { DatePicker } from './DatePicker';
 
@@ -52,17 +53,17 @@ type PresetId = 'today' | 'evening' | 'tomorrow' | 'weekend' | 'next-week' | 'so
 interface Preset {
   id: PresetId;
   label: string;
-  icon: string;
+  icon: ReactElement;
   sublabel?: string;
 }
 
 const PRESETS: Preset[] = [
-  { id: 'today',     label: 'Today',        icon: '★' },
-  { id: 'evening',   label: 'This Evening', icon: '🌙', sublabel: '18:00' },
-  { id: 'tomorrow',  label: 'Tomorrow',     icon: '☀️' },
-  { id: 'weekend',   label: 'This Weekend', icon: '🏖️' },
-  { id: 'next-week', label: 'Next Week',    icon: '📆' },
-  { id: 'someday',   label: 'Someday',      icon: '⤵️' },
+  { id: 'today',     label: 'Today',        icon: <Star size={16} weight="fill" /> },
+  { id: 'evening',   label: 'This Evening', icon: <Moon size={16} weight="regular" />, sublabel: '18:00' },
+  { id: 'tomorrow',  label: 'Tomorrow',     icon: <Sun size={16} weight="regular" /> },
+  { id: 'weekend',   label: 'This Weekend', icon: <Island size={16} weight="regular" /> },
+  { id: 'next-week', label: 'Next Week',    icon: <CalendarBlank size={16} weight="regular" /> },
+  { id: 'someday',   label: 'Someday',      icon: <ArrowDown size={16} weight="regular" /> },
 ];
 
 // ---------------------------------------------------------------------------
@@ -184,7 +185,7 @@ function TrayDropdown({ triggerRect, task, field, onSelect, onClose }: TrayDropd
               onClick={() => handlePreset('custom')}
               className="w-full text-left px-3 py-3 flex items-center gap-3 hover:bg-things-sidebar-hover/80 rounded-xl transition-colors"
             >
-              <span className="text-lg w-6 text-center">{'📅'}</span>
+              <CalendarDots size={18} className="w-6 flex-shrink-0" />
               <span className="text-[14px] text-text-primary flex-1">Custom…</span>
             </button>
           </div>
@@ -238,7 +239,7 @@ function TrayDropdown({ triggerRect, task, field, onSelect, onClose }: TrayDropd
           className="w-full text-left px-2.5 py-[6px] flex items-center gap-2.5 hover:bg-things-sidebar-hover/80 rounded-md mx-1 transition-colors"
           style={{ width: 'calc(100% - 8px)' }}
         >
-          <span className="text-sm w-5 text-center flex-shrink-0">{'📅'}</span>
+          <CalendarDots size={14} className="w-5 flex-shrink-0" />
           <span className="text-[12px] text-text-primary">Custom…</span>
         </button>
       ) : (
@@ -266,13 +267,15 @@ interface ScheduleTrayProps {
   field: 'scheduled' | 'deadline';
   /** The formatted string shown on the chip (e.g. "Today", "Tomorrow", "Mon") */
   label: string;
-  /** Color variant */
+  /** Deadline is past due */
   overdue?: boolean;
+  /** Deadline is 0–2 days away (not overdue) */
+  soon?: boolean;
   onSelect: (ts: string) => void;
   disabled?: boolean;
 }
 
-export function ScheduleTray({ task, field, label, overdue, onSelect, disabled }: ScheduleTrayProps) {
+export function ScheduleTray({ task, field, label, overdue, soon, onSelect, disabled }: ScheduleTrayProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [triggerRect, setTriggerRect] = useState<DOMRect | null>(null);
@@ -287,7 +290,7 @@ export function ScheduleTray({ task, field, label, overdue, onSelect, disabled }
   };
 
   const colorClass = field === 'deadline'
-    ? (overdue ? 'text-priority-a' : 'text-priority-b')
+    ? (overdue ? 'text-priority-a' : soon ? 'text-priority-b' : 'text-text-tertiary')
     : 'text-accent';
 
   return (

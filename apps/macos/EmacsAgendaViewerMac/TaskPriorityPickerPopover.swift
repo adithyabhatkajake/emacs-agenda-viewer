@@ -4,7 +4,13 @@ struct TaskPriorityPickerPopover: View {
     @Environment(AppSettings.self) private var settings
     @Binding var isPresented: Bool
     let currentPriority: String
+    var priorities: OrgPriorities? = nil
     let onSelect: (String) -> Void
+
+    private var priorityList: [String] {
+        if let pr = priorities, !pr.all.isEmpty { return pr.all }
+        return ["A", "B", "C", "D"]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -12,7 +18,7 @@ struct TaskPriorityPickerPopover: View {
                 .font(.system(size: 9, weight: .heavy)).tracking(0.6)
                 .foregroundStyle(Theme.textTertiary)
                 .padding(.bottom, 2)
-            ForEach(["A", "B", "C", "D"], id: \.self) { letter in
+            ForEach(priorityList, id: \.self) { letter in
                 priorityRow(letter, isCurrent: letter == currentPriority.uppercased())
             }
             if !currentPriority.isEmpty {

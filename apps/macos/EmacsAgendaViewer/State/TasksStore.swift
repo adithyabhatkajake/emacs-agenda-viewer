@@ -29,11 +29,19 @@ final class TasksStore {
     var today: LoadState<[AgendaEntry]> = .idle
     var upcoming: LoadState<[AgendaEntry]> = .idle
     var allTasks: LoadState<[OrgTask]> = .idle
+    var habits: LoadState<[Habit]> = .idle
     var files: [AgendaFile] = []
     var keywords: TodoKeywords?
     var priorities: OrgPriorities?
     var listConfig: OrgListConfig?
     var clock: ClockStatus?
+
+    /// The app's clock mirror, wired once at launch by RootView. Completing a
+    /// task/habit closes its clock on the server; we also drop it from this
+    /// local mirror right away so the dock stops ticking instantly instead of
+    /// waiting on the `clock-changed` SSE echo. `@ObservationIgnored` because
+    /// it's a wiring reference, not observable UI state.
+    @ObservationIgnored weak var clockManager: ClockManager?
 
     /// Last server-side error from a mutation, if any. Surfaced by views.
     var lastMutationError: String?
@@ -165,6 +173,16 @@ final class TasksStore {
         }
     }
 
+    func loadHabits(using client: APIClient) async {
+        if habits.value == nil { habits = .loading }
+        do {
+            let fetched = try await client.fetchHabits()
+            habits = .loaded(fetched)
+        } catch {
+            recordLoadFailure(into: &habits, error: error)
+        }
+    }
+
     func loadMetadata(using client: APIClient, settings: AppSettings? = nil) async {
         async let filesResult = try? client.fetchFiles()
         async let keywordsResult = try? client.fetchKeywords()
@@ -253,7 +271,33 @@ final class TasksStore {
                 let include = includeDone || self.allTasksIncludeDone
                 group.addTask { await self.loadAllTasks(using: client, includeDone: include) }
             }
+            if habits.value != nil {
+                group.addTask { await self.loadHabits(using: client) }
+            }
             group.addTask { await self.refreshClock(using: client) }
+        }
+        // Re-apply any still-in-flight optimistic patches on top of the freshly
+        // loaded server data, so a refresh that fired (e.g. from an unrelated
+        // SSE event) mid-mutation doesn't transiently revert the pending row.
+        reapplyInflightPatches()
+    }
+
+    /// Re-apply each in-flight optimistic patch to the loaded slices, in the
+    /// order they were issued. A patch is dropped from the list by
+    /// `runMutation` once its write completes (so the authoritative server
+    /// value then wins on the next refresh).
+    private func reapplyInflightPatches() {
+        guard !inflightPatches.isEmpty else { return }
+        for patch in inflightPatches {
+            if case .loaded(let entries) = today {
+                today = .loaded(entries.map { $0.id == patch.id ? $0.patching(patch.field) : $0 })
+            }
+            if case .loaded(let entries) = upcoming {
+                upcoming = .loaded(entries.map { $0.id == patch.id ? $0.patching(patch.field) : $0 })
+            }
+            if case .loaded(let tasks) = allTasks {
+                allTasks = .loaded(tasks.map { $0.id == patch.id ? $0.patching(patch.field) : $0 })
+            }
         }
     }
 
@@ -280,7 +324,19 @@ final class TasksStore {
         var todayEntries: [AgendaEntry]?
         var upcomingEntries: [AgendaEntry]?
         var allTasksList: [OrgTask]?
+        /// Identifies the in-flight optimistic patch this image belongs to, so
+        /// `runMutation` can drop it from `inflightPatches` on completion.
+        var patchToken: UUID?
     }
+
+    /// Optimistic patches whose network write hasn't completed yet. A refresh
+    /// triggered by an UNRELATED SSE event while a mutation is in flight would
+    /// otherwise reload server data that doesn't yet reflect the pending write,
+    /// briefly reverting the row until the write's own refresh lands. We
+    /// re-apply these on top of every refresh so the optimistic value survives
+    /// until the real write is acknowledged. (concurrency #2: slow-mutation
+    /// clobber.)
+    private var inflightPatches: [(token: UUID, id: String, field: OptimisticField)] = []
 
     /// Apply `field` to every element matching `taskId` in the loaded arrays,
     /// returning a pre-image for rollback. The sentinel strings `@TODO`/`@DONE`
@@ -290,10 +346,13 @@ final class TasksStore {
     /// the toggle-off case; less precise for toggle-on, but the reconcile
     /// after the round-trip corrects it).
     private func applyOptimistic(taskId: String, _ field: OptimisticField) -> PreImage {
+        let token = UUID()
+        inflightPatches.append((token: token, id: taskId, field: field))
         let pre = PreImage(
             todayEntries: today.value,
             upcomingEntries: upcoming.value,
-            allTasksList: allTasks.value
+            allTasksList: allTasks.value,
+            patchToken: token
         )
         if case .loaded(let entries) = today {
             today = .loaded(entries.map { e in
@@ -372,11 +431,17 @@ final class TasksStore {
         // Any completion path (checkbox/swipe via "@DONE", or an explicit done
         // keyword from the state picker) unpins. Moving to a non-done state or
         // clearing the state does not re-pin.
-        if ok, wasPinnedToday, state == "@DONE" || isDoneState(state) {
-            _ = await setProperty(
-                taskId: taskId, file: file, pos: pos,
-                key: "PINNED", value: "", using: client
-            )
+        if ok, state == "@DONE" || isDoneState(state) {
+            if wasPinnedToday {
+                _ = await setProperty(
+                    taskId: taskId, file: file, pos: pos,
+                    key: "PINNED", value: "", using: client
+                )
+            }
+            // The server (patch_state) closes a running clock when the heading
+            // becomes done; drop it from the local mirror so the dock stops
+            // ticking without waiting on the clock-changed SSE.
+            clockManager?.dropLocalClock(taskId: taskId)
         }
         return ok
     }
@@ -579,12 +644,198 @@ final class TasksStore {
         lastMutationError = nil
         do {
             try await op()
+            // Drop this mutation's in-flight patch BEFORE its own refresh so the
+            // authoritative server value wins for this task (other tasks' patches
+            // stay until their own writes land).
+            if let token = preImage?.patchToken {
+                inflightPatches.removeAll { $0.token == token }
+            }
             await refreshLoaded(using: client)
             return true
         } catch {
             if let pre = preImage { rollback(pre) }
+            if let token = preImage?.patchToken {
+                inflightPatches.removeAll { $0.token == token }
+            }
             lastMutationError = error.message
             return false
+        }
+    }
+
+    // MARK: - Habit mutations (optimistic)
+    //
+    // Habits render as task-style rows but used to wait two round-trips
+    // (`try? await … ; invalidateHabits`) with no local echo and swallowed
+    // errors — so every tick felt laggy and a failed tick was invisible.
+    // These mirror the task `applyOptimistic`/`runMutation` pattern: patch the
+    // `habits` slice immediately, run the op (which returns the authoritative
+    // `Habit`), reconcile with the server copy, and on failure roll back and
+    // surface the error via `lastMutationError` (the RootView banner). The
+    // mixed Today/All-Tasks rows derive from the same `habits` slice, so the
+    // patch flows there too without a full `refreshLoaded`.
+
+    /// org-style completion stamp, e.g. `2026-05-31 Sun 14:32`. Matches the
+    /// daemon's `%Y-%m-%d %a %H:%M` so optimistic and server completions agree.
+    private static let orgStampFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        f.dateFormat = "yyyy-MM-dd EEE HH:mm"
+        return f
+    }()
+
+    private static let dayStampFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    /// Apply `transform` to every habit matching `id`, returning the prior list
+    /// for rollback (nil when the slice isn't loaded yet).
+    @discardableResult
+    private func patchHabit(id: String, _ transform: (Habit) -> Habit) -> [Habit]? {
+        guard case .loaded(var list) = habits else { return nil }
+        let pre = list
+        var changed = false
+        for i in list.indices where list[i].id == id {
+            list[i] = transform(list[i]); changed = true
+        }
+        if changed { habits = .loaded(list) }
+        return pre
+    }
+
+    private func reconcileHabit(_ updated: Habit) {
+        guard case .loaded(var list) = habits else { return }
+        if let idx = list.firstIndex(where: { $0.id == updated.id }) {
+            list[idx] = updated
+        } else {
+            list.append(updated)
+        }
+        habits = .loaded(list)
+    }
+
+    private func restoreHabits(_ pre: [Habit]?) {
+        if let pre { habits = .loaded(pre) }
+    }
+
+    /// Record a completion. Optimistically marks the habit settled (`state`
+    /// ok + a completion stamped now) so it drops out of Today immediately;
+    /// resets the checklist locally when the habit opts in, matching the
+    /// server. Reconciles with the server's recomputed `nextDue`/`state`.
+    @discardableResult
+    func completeHabit(_ habit: Habit, using client: APIClient) async -> Bool {
+        lastMutationError = nil
+        let stamp = Self.orgStampFormatter.string(from: Date())
+        let pre = patchHabit(id: habit.id) { h in
+            var comps = h.completions
+            comps.insert(stamp, at: 0)   // daemon serves completions newest-first
+            let notes: String?? = h.resetChecklistOnComplete
+                ? .some(h.notes.map { OrgChecklist.resetAll($0) })
+                : .none
+            return h.copy(state: "ok", completions: comps, notes: notes)
+        }
+        do {
+            reconcileHabit(try await client.completeHabit(id: habit.id, ts: stamp))
+            // The server closed any running clock for this habit as part of
+            // /complete; mirror that locally so the dock stops immediately.
+            clockManager?.dropLocalClock(taskId: habit.id)
+            return true
+        } catch {
+            restoreHabits(pre); lastMutationError = error.message; return false
+        }
+    }
+
+    /// Undo the most recent completion (the newest stamp the daemon sent).
+    @discardableResult
+    func uncompleteHabit(_ habit: Habit, using client: APIClient) async -> Bool {
+        guard let ts = habit.completions.first else { return false }
+        lastMutationError = nil
+        let pre = patchHabit(id: habit.id) { h in
+            var comps = h.completions
+            if !comps.isEmpty { comps.removeFirst() }
+            return h.copy(state: "due", completions: comps)
+        }
+        do {
+            reconcileHabit(try await client.uncompleteHabit(id: habit.id, ts: ts))
+            return true
+        } catch {
+            restoreHabits(pre); lastMutationError = error.message; return false
+        }
+    }
+
+    /// Skip the current period (advance next-due, no credit).
+    @discardableResult
+    func skipHabit(_ habit: Habit, using client: APIClient) async -> Bool {
+        lastMutationError = nil
+        let pre = patchHabit(id: habit.id) { $0.copy(state: "ok") }
+        do {
+            reconcileHabit(try await client.skipHabit(id: habit.id))
+            return true
+        } catch {
+            restoreHabits(pre); lastMutationError = error.message; return false
+        }
+    }
+
+    /// Set the habit's next-due date explicitly.
+    @discardableResult
+    func rescheduleHabit(_ habit: Habit, to date: String, using client: APIClient) async -> Bool {
+        lastMutationError = nil
+        let today = Self.dayStampFormatter.string(from: Date())
+        let pre = patchHabit(id: habit.id) { $0.copy(state: date > today ? "ok" : "due", nextDue: date) }
+        do {
+            reconcileHabit(try await client.rescheduleHabit(id: habit.id, date: date))
+            return true
+        } catch {
+            restoreHabits(pre); lastMutationError = error.message; return false
+        }
+    }
+
+    /// Persist edited notes (e.g. a checklist toggle from a habit row).
+    @discardableResult
+    func setHabitNotes(_ habit: Habit, notes: String, using client: APIClient) async -> Bool {
+        lastMutationError = nil
+        let pre = patchHabit(id: habit.id) { $0.copy(notes: .some(notes)) }
+        do {
+            reconcileHabit(try await client.updateHabit(id: habit.id, notes: notes))
+            return true
+        } catch {
+            restoreHabits(pre); lastMutationError = error.message; return false
+        }
+    }
+
+    /// Set (or clear, with nil) a habit's priority inline. The daemon clears
+    /// only on an explicit JSON null, so `clearsPriority` drives that request.
+    @discardableResult
+    func setHabitPriority(_ habit: Habit, priority: String?, using client: APIClient) async -> Bool {
+        lastMutationError = nil
+        let pre = patchHabit(id: habit.id) { $0.copy(priority: .some(priority)) }
+        do {
+            reconcileHabit(try await client.updateHabit(
+                id: habit.id, priority: priority, clearsPriority: priority == nil))
+            return true
+        } catch {
+            restoreHabits(pre); lastMutationError = error.message; return false
+        }
+    }
+
+    /// Delete a habit, removing it from the slice immediately.
+    @discardableResult
+    func deleteHabit(_ habit: Habit, using client: APIClient) async -> Bool {
+        lastMutationError = nil
+        let pre: [Habit]? = habits.value
+        if case .loaded(var list) = habits {
+            list.removeAll { $0.id == habit.id }
+            habits = .loaded(list)
+        }
+        do {
+            try await client.deleteHabit(id: habit.id)
+            return true
+        } catch {
+            restoreHabits(pre); lastMutationError = error.message; return false
         }
     }
 
@@ -613,6 +864,11 @@ final class TasksStore {
         await refreshLoaded(using: client)
     }
 
+    /// Reload the habits slice. Triggered by `habits-changed` SSE events.
+    func invalidateHabits(using client: APIClient) async {
+        await loadHabits(using: client)
+    }
+
     /// Reload metadata (files, keywords, priorities). Triggered by
     /// `config-changed` events from the daemon.
     func invalidateConfig(using client: APIClient, settings: AppSettings) async {
@@ -624,5 +880,40 @@ final class TasksStore {
 private extension Error {
     var message: String {
         (self as? LocalizedError)?.errorDescription ?? localizedDescription
+    }
+}
+
+private extension Habit {
+    /// Returns a copy with selected fields overridden, for optimistic patches.
+    /// `state` / `nextDue` / `completions` / `active` follow "nil = keep".
+    /// `priority` and `notes` are double optionals so a caller can distinguish
+    /// keep (`.none`) from clear-to-nil (`.some(nil)`).
+    func copy(
+        state: String? = nil,
+        nextDue: String? = nil,
+        completions: [String]? = nil,
+        priority: String?? = .none,
+        notes: String?? = .none,
+        active: Bool? = nil
+    ) -> Habit {
+        let newPriority: String?
+        if case .some(let p) = priority { newPriority = p } else { newPriority = self.priority }
+        let newNotes: String?
+        if case .some(let n) = notes { newNotes = n } else { newNotes = self.notes }
+        return Habit(
+            id: id,
+            title: title,
+            cadence: cadence,
+            category: category,
+            priority: newPriority,
+            tags: tags,
+            notes: newNotes,
+            anchorDate: anchorDate,
+            active: active ?? self.active,
+            resetChecklistOnComplete: resetChecklistOnComplete,
+            completions: completions ?? self.completions,
+            nextDue: nextDue ?? self.nextDue,
+            state: state ?? self.state
+        )
     }
 }

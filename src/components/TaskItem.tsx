@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { Repeat, PushPin, Stop, Play, PencilSimple, X } from '@phosphor-icons/react';
 import type { OrgTask, AgendaEntry, OrgTimestamp, TodoKeywords } from '../types';
 import { updateTodoState, updatePriority, updateScheduled, updateDeadline, updateTitle, updateTags, setEffort, setPinned, todayYMD, fetchRefileTargets, refileTask, archiveTask, fetchNotes, saveNotes, type RefileTarget } from '../api/tasks';
 import type { ClockManager } from '../hooks/useClockManager';
@@ -41,7 +42,6 @@ interface TaskItemProps {
   keywords: TodoKeywords | null;
   isDoneState: (state: string | undefined) => boolean;
   clockManager: ClockManager;
-  allTasksForClock: (OrgTask | AgendaEntry)[];
   onRefresh: () => void;
   onRefreshClock: () => void;
   agendaType?: string;
@@ -124,7 +124,7 @@ function isOverdue(ts: { raw: string } | undefined): boolean {
   return date < today;
 }
 
-export function TaskItem({ task, keywords, isDoneState, clockManager, allTasksForClock, onRefresh, onRefreshClock, agendaType, allTags, allowArchive }: TaskItemProps) {
+export function TaskItem({ task, keywords, isDoneState, clockManager, onRefresh, onRefreshClock, agendaType, allTags, allowArchive }: TaskItemProps) {
   const [updating, setUpdating] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [notes, setNotes] = useState<string | null>(null);
@@ -257,6 +257,15 @@ export function TaskItem({ task, keywords, isDoneState, clockManager, allTasksFo
   const scheduledStr = formatTimestamp(task.scheduled);
   const deadlineStr = formatTimestamp(task.deadline);
   const deadlineOverdue = isOverdue(task.deadline);
+  const deadlineSoon = !deadlineOverdue && (() => {
+    if (!task.deadline) return false;
+    const m = task.deadline.raw.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return false;
+    const d = new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]));
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const diff = Math.floor((d.getTime() - today.getTime()) / 86400000);
+    return diff >= 0 && diff <= 2;
+  })();
   const isAgenda = 'agendaType' in task;
   const agendaEntry = isAgenda ? (task as AgendaEntry) : undefined;
   const timeOfDay = agendaEntry?.timeOfDay;
@@ -389,21 +398,41 @@ export function TaskItem({ task, keywords, isDoneState, clockManager, allTasksFo
           {/* Next-repeat chip */}
           {nextRepeatDate && (
             <span
-              className="flex-shrink-0 text-[10px] px-1.5 py-[2px] rounded-full bg-accent-teal/10 text-accent-teal border border-accent-teal/15 whitespace-nowrap"
+              className="flex-shrink-0 text-[10px] px-1.5 py-[2px] rounded-full bg-accent-teal/10 text-accent-teal border border-accent-teal/15 whitespace-nowrap flex items-center gap-0.5"
               title="Next repeat"
             >
-              {'🔁'} {formatRelativeDate(nextRepeatDate)}
+              <Repeat size={10} weight="regular" />{' '}{formatRelativeDate(nextRepeatDate)}
             </span>
           )}
           {/* Pinned chip */}
           {isPinned && (
             <span
-              className="flex-shrink-0 text-[10px] px-1.5 py-[2px] rounded-full bg-accent/10 text-accent border border-accent/15 whitespace-nowrap"
+              className="flex-shrink-0 text-[10px] px-1.5 py-[2px] rounded-full bg-accent/10 text-accent border border-accent/15 whitespace-nowrap flex items-center"
               title="Pinned to My Day"
             >
-              {'\u{1F4CC}'}
+              <PushPin size={10} weight="fill" />
             </span>
           )}
+          {/* Direct tag chips */}
+          {task.tags.map(tag => (
+            <span
+              key={tag}
+              className="flex-shrink-0 text-[10px] px-1.5 py-[2px] rounded-full bg-things-surface text-text-secondary whitespace-nowrap"
+            >
+              {tag}
+            </span>
+          ))}
+          {/* Inherited tag chips — dimmer */}
+          {task.inheritedTags
+            .filter(tag => !task.tags.includes(tag))
+            .map(tag => (
+              <span
+                key={tag}
+                className="flex-shrink-0 text-[10px] px-1.5 py-[2px] rounded-full bg-things-sidebar-hover/40 text-text-tertiary whitespace-nowrap"
+              >
+                {tag}
+              </span>
+            ))}
         </div>
 
         {/* Right meta — date chip (interactive for OrgTask, static for AgendaEntry) */}
@@ -434,6 +463,7 @@ export function TaskItem({ task, keywords, isDoneState, clockManager, allTasksFo
                   field="deadline"
                   label={deadlineStr}
                   overdue={deadlineOverdue}
+                  soon={deadlineSoon}
                   onSelect={handleDeadlineChange}
                   disabled={updating}
                 />
@@ -476,7 +506,7 @@ export function TaskItem({ task, keywords, isDoneState, clockManager, allTasksFo
               }`}
               title={editing ? 'Cancel editing' : 'Edit notes'}
             >
-              {editing ? '\u2715' : '\u270E'}
+              {editing ? <X size={11} weight="regular" /> : <PencilSimple size={11} weight="regular" />}
             </button>
           </div>
 
@@ -588,21 +618,22 @@ export function TaskItem({ task, keywords, isDoneState, clockManager, allTasksFo
             {task.todoState && (
               <button
                 onClick={() => {
-                  if (isClocked) {
-                    clockManager.stop(task.id, allTasksForClock);
+                  const session = clockManager.sessions.find(s => s.taskId === task.id);
+                  if (session) {
+                    clockManager.stop(session.id);
                   } else {
                     clockManager.start(task);
                   }
                 }}
-                disabled={clockManager.sessions.find(s => s.id === task.id)?.stoppingSince != null}
+                disabled={clockManager.sessions.find(s => s.taskId === task.id)?.stoppingSince != null}
                 className={`flex items-center gap-1.5 text-[11px] rounded-md px-2 py-[3px] border transition-all disabled:opacity-40 ${
                   isClocked
                     ? 'bg-done-green/15 text-done-green border-done-green/20 hover:bg-done-green/25'
                     : 'bg-things-surface text-text-tertiary border-things-border hover:text-text-secondary'
                 }`}
               >
-                <span>{isClocked ? '\u23F9' : '\u25B6'}</span>
-                {isClocked ? 'Stop Clock' : 'Clock In'}
+                {isClocked ? <Stop size={11} weight="fill" /> : <Play size={11} weight="fill" />}
+                {isClocked ? 'Clock Out' : 'Clock In'}
               </button>
             )}
           </div>
@@ -662,7 +693,7 @@ export function TaskItem({ task, keywords, isDoneState, clockManager, allTasksFo
               }}
               className="w-full text-left px-3 py-1.5 text-[12px] text-text-primary hover:bg-things-sidebar-hover/80 transition-colors"
             >
-              {isPinned ? 'Unpin from My Day' : '\u{1F4CC} Pin to My Day'}
+              {isPinned ? 'Unpin from My Day' : 'Pin to My Day'}
             </button>
           )}
           {allowArchive && (

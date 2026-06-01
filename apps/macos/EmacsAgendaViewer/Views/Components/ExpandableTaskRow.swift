@@ -202,17 +202,11 @@ struct ExpandableTaskRow: View {
             guard let s = task.todoState else { return false }
             return doneStates.contains(s.uppercased())
         }()
-        Button {
-            toggleDone()
-        } label: {
-            Image(systemName: isTaskDone ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 18, weight: .regular))
-                .foregroundStyle(isTaskDone ? Theme.doneGreen : Theme.textTertiary)
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(isTaskDone ? "Mark not done" : "Mark done")
+        ProgressCheckbox(
+            progress: checklistProgress(from: blocks),
+            isDone: isTaskDone,
+            onTap: toggleDone
+        )
     }
 
     @ViewBuilder

@@ -22,6 +22,10 @@ Usage: install-daemon.sh [--uninstall] [options]
   --uninstall         Stop and remove the service.
   --port PORT         TCP port for the HTTP server (default: 3002).
   --host HOST         Bind address (default: 127.0.0.1; use 0.0.0.0 for LAN).
+  --mcp-host HOST     Bind address for the MCP server (default: same as
+                      --host; i.e. a 0.0.0.0 HOST exposes MCP on the LAN too,
+                      while the 127.0.0.1 default keeps MCP localhost-only).
+  --mcp-port PORT     TCP port for the MCP server (default: 3003).
   --static-dir DIR    Serve a built SPA from DIR (replaces Express's
                       static-file role on a headless deploy).
   --bridge-sock PATH  Override the bridge socket path.
@@ -36,6 +40,8 @@ EOF
 UNINSTALL=0
 PORT=3002
 HOST="127.0.0.1"
+MCP_HOST=""
+MCP_PORT=3003
 STATIC_DIR=""
 BRIDGE_SOCK=""
 while [[ $# -gt 0 ]]; do
@@ -43,12 +49,21 @@ while [[ $# -gt 0 ]]; do
         --uninstall) UNINSTALL=1; shift ;;
         --port) PORT="$2"; shift 2 ;;
         --host) HOST="$2"; shift 2 ;;
+        --mcp-host) MCP_HOST="$2"; shift 2 ;;
+        --mcp-port) MCP_PORT="$2"; shift 2 ;;
         --static-dir) STATIC_DIR="$2"; shift 2 ;;
         --bridge-sock) BRIDGE_SOCK="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown arg: $1" >&2; usage; exit 1 ;;
     esac
 done
+
+# Default the MCP bind host to the HTTP host: a LAN/Tailscale install
+# (HOST=0.0.0.0) exposes MCP on the same interface, while the localhost
+# default keeps MCP localhost-only unless --mcp-host is given explicitly.
+if [[ -z "$MCP_HOST" ]]; then
+    MCP_HOST="$HOST"
+fi
 
 OS="$(uname -s)"
 case "$OS" in
@@ -77,6 +92,16 @@ case "$OS" in
         if [[ "$HOST" != "127.0.0.1" ]]; then
             EXTRA_ARGS="$EXTRA_ARGS    <string>--http-host</string>
     <string>$HOST</string>
+"
+        fi
+        if [[ "$MCP_HOST" != "127.0.0.1" ]]; then
+            EXTRA_ARGS="$EXTRA_ARGS    <string>--mcp-host</string>
+    <string>$MCP_HOST</string>
+"
+        fi
+        if [[ "$MCP_PORT" != "3003" ]]; then
+            EXTRA_ARGS="$EXTRA_ARGS    <string>--mcp-port</string>
+    <string>$MCP_PORT</string>
 "
         fi
         if [[ -n "$STATIC_DIR" ]]; then
@@ -153,6 +178,12 @@ PLISTEOF
         EXEC_ARGS="--http-port $PORT --daemon"
         if [[ "$HOST" != "127.0.0.1" ]]; then
             EXEC_ARGS="$EXEC_ARGS --http-host $HOST"
+        fi
+        if [[ "$MCP_HOST" != "127.0.0.1" ]]; then
+            EXEC_ARGS="$EXEC_ARGS --mcp-host $MCP_HOST"
+        fi
+        if [[ "$MCP_PORT" != "3003" ]]; then
+            EXEC_ARGS="$EXEC_ARGS --mcp-port $MCP_PORT"
         fi
         if [[ -n "$STATIC_DIR" ]]; then
             EXEC_ARGS="$EXEC_ARGS --static-dir $STATIC_DIR"

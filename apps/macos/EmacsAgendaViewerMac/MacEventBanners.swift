@@ -5,6 +5,81 @@ import SwiftUI
 // views can partition events vs tasks. Mac code keeps consuming the same
 // symbol.
 
+// MARK: - CompactEventCard
+
+/// Dense Mac event card matching the iOS EventCardView style:
+/// one tightly-spaced card containing all entries for a day, one line per
+/// event (color bar + time/all-day label + title).
+struct CompactEventCard: View {
+    let entries: [AgendaEntry]
+
+    @Environment(AppSettings.self) private var settings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(Theme.accent)
+                    .frame(width: 8, height: 8)
+                Text("ALL DAY")
+                    .font(.system(size: 10, weight: .heavy))
+                    .tracking(0.6)
+                    .foregroundStyle(Theme.textTertiary)
+                Text("\(entries.count)")
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(Theme.textTertiary)
+                Spacer()
+            }
+            .padding(.leading, 14)
+
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(entries) { entry in
+                    HStack(spacing: 8) {
+                        RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                            .fill(barColor(for: entry))
+                            .frame(width: 3, height: 16)
+                            .accessibilityHidden(true)
+                        Text(timeLabel(for: entry))
+                            .font(.system(size: 12).monospacedDigit())
+                            .foregroundStyle(Theme.textTertiary)
+                            .frame(width: 52, alignment: .leading)
+                            .lineLimit(1)
+                        Text(entry.title)
+                            .font(.system(size: 14))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 3)
+                    .padding(.horizontal, 12)
+                }
+            }
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Theme.surface)
+            )
+        }
+    }
+
+    private func barColor(for entry: AgendaEntry) -> Color {
+        if !entry.category.isEmpty,
+           let hex = settings.categoryColorHex(for: entry.category),
+           let c = Color(hex: hex) {
+            return c
+        }
+        return Theme.accent
+    }
+
+    private func timeLabel(for entry: AgendaEntry) -> String {
+        if let t = entry.timeOfDay, !t.isEmpty { return t }
+        return "all-day"
+    }
+}
+
+// MARK: - MacEventBanners (bulky banner style — kept for schedule tray and future use)
+
 struct MacEventBanners: View {
     let entries: [AgendaEntry]
     var showHeader: Bool = false

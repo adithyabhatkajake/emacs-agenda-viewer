@@ -27,12 +27,11 @@ struct MacUpcomingView: View {
         if !settings.isConfigured {
             UnconfiguredStateView()
         } else if let entries = store.upcoming.value {
-            // Honor the Today/Upcoming "hide habits" toggle here too —
-            // the dedicated Habits view is the place to look at them
-            // collectively; in Upcoming they crowd out one-shots.
-            let filtered = settings.hideHabitsInToday
-                ? entries.filter { !$0.isHabit }
-                : entries
+            // Habits are always filtered from Upcoming — the dedicated Habits
+            // view is the canonical place to review them. Org habit headings
+            // still exist in the index until migration; suppress them here to
+            // avoid double-display with the DB-backed Habits view.
+            let filtered = entries.filter { !$0.isHabit }
             if filtered.isEmpty {
                 EmptyStateView(title: "Nothing upcoming", systemImage: "calendar")
             } else {
@@ -102,7 +101,7 @@ struct MacUpcomingView: View {
             dayHead(for: group, tasks: tasks.count, events: events.count)
 
             if !events.isEmpty {
-                MacEventBanners(entries: events)
+                CompactEventCard(entries: events)
             }
 
             if !tasks.isEmpty {
@@ -126,6 +125,7 @@ struct MacUpcomingView: View {
                                 actions: rowActions,
                                 progress: factory.progress(for: entry),
                                 keywords: store.keywords,
+                                priorities: store.priorities,
                                 onAppear: factory.prefetch(for: entry)
                             )
                             .id(entry.id)

@@ -120,8 +120,8 @@ struct TaskDetailView: View {
     }
 
     private func liveElapsedLabel(now: Date) -> String? {
-        guard let s = clocks.sessions.first(where: { $0.id == task.id }) else { return nil }
-        return ClockManager.formatElapsed(s.elapsed(now: now))
+        guard let s = clocks.sessions.first(where: { $0.taskId == task.id }) else { return nil }
+        return ClockManager.formatElapsed(ClockManager.elapsed(for: s, now: now))
     }
 
     private func toggleClock() async {
@@ -130,7 +130,7 @@ struct TaskDetailView: View {
         if isClockedHere {
             _ = await clocks.stop(taskId: task.id, using: client, store: store)
         } else {
-            clocks.start(task: task)
+            await clocks.clockIn(task: task, using: client)
         }
         isMutating = false
     }

@@ -14,7 +14,8 @@ export type DaemonEvent =
   | { kind: 'task-changed'; id: string; file: string; pos: number }
   | { kind: 'file-changed'; file: string }
   | { kind: 'clock-changed'; file?: string; pos?: number; clocking: boolean }
-  | { kind: 'config-changed' };
+  | { kind: 'config-changed' }
+  | { kind: 'habits-changed' };
 
 interface Options {
   onEvent: (event: DaemonEvent) => void;
@@ -75,6 +76,7 @@ export function useDaemonEvents({ onEvent, maxConsecutiveFailures = 3 }: Options
       source.addEventListener('file-changed', (e) => dispatch((e as MessageEvent).data));
       source.addEventListener('clock-changed', (e) => dispatch((e as MessageEvent).data));
       source.addEventListener('config-changed', (e) => dispatch((e as MessageEvent).data));
+      source.addEventListener('habits-changed', (e) => dispatch((e as MessageEvent).data));
     }
 
     attach();

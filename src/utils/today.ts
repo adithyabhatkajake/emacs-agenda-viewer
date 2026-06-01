@@ -12,6 +12,7 @@
  *     * its scheduled timestamp is today
  *     * its deadline timestamp is today
  *     * its scheduled timestamp is in the past (overdue)
+ *     * its deadline timestamp is in the past (overdue)
  * - Habits are dropped when `hideHabits === true`.
  * - Tasks whose `todoState` is in `doneStates` (case-insensitive) are dropped.
  * - Dedupe by task id. When both a scheduled-today AND a deadline-today entry
@@ -98,7 +99,12 @@ export function buildTodayItems(
     const todayScheduled = matchesToday(entry.scheduled?.start);
     const todayDeadline = matchesToday(entry.deadline?.start);
     const overdueScheduled = isPast(entry.scheduled?.start);
-    if (!todayScheduled && !todayDeadline && !overdueScheduled) continue;
+    // A past-due deadline (no scheduled date, or a future one) must still
+    // surface in Today — org-agenda keeps overdue deadlines on the day view
+    // until done. Without this, a repeating deadline like "Weekly Review"
+    // <…+1w> that slipped past its due date vanished entirely.
+    const overdueDeadline = isPast(entry.deadline?.start);
+    if (!todayScheduled && !todayDeadline && !overdueScheduled && !overdueDeadline) continue;
 
     if (hideHabits && entry.isHabit) continue;
 

@@ -50,7 +50,8 @@ struct ClockCard: View {
     }
 
     @ViewBuilder
-    private func sessionRow(_ session: ClockManager.Session, now: Date) -> some View {
+    private func sessionRow(_ session: Clock, now: Date) -> some View {
+        let label = session.title ?? session.taskId
         HStack(spacing: 12) {
             Circle()
                 .fill(Theme.doneGreen)
@@ -66,7 +67,7 @@ struct ClockCard: View {
                     .tracking(1.2)
                     .textCase(.uppercase)
                     .foregroundStyle(Theme.textTertiary)
-                Text(session.title)
+                Text(label)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
@@ -75,7 +76,7 @@ struct ClockCard: View {
 
             Spacer(minLength: 8)
 
-            let elapsed = session.elapsed(now: now)
+            let elapsed = ClockManager.elapsed(for: session, now: now)
             Text(ClockManager.formatElapsed(elapsed))
                 .font(.system(size: 18, weight: .bold).monospacedDigit())
                 .tracking(-0.2)
@@ -85,7 +86,7 @@ struct ClockCard: View {
             Button {
                 Task {
                     guard let client = settings.apiClient else { return }
-                    _ = await clocks.stop(taskId: session.id, using: client, store: store)
+                    _ = await clocks.stop(taskId: session.taskId, using: client, store: store)
                 }
             } label: {
                 Image(systemName: "stop.fill")
@@ -95,7 +96,7 @@ struct ClockCard: View {
                     .background(Theme.priorityA.opacity(0.15), in: Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Stop clock for \(session.title)")
+            .accessibilityLabel("Stop clock for \(label)")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

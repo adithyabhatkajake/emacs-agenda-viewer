@@ -888,7 +888,9 @@ to `note', we honor that, just like an interactive completion would."
     (goto-char pos)
     (let ((before (substring-no-properties (or (org-get-todo-state) "")))
           (was-blocked (org-entry-blocked-p))
-          (last-repeat-before (org-entry-get (point) "LAST_REPEAT")))
+          (last-repeat-before (org-entry-get (point) "LAST_REPEAT"))
+          (ts-before (list (org-entry-get (point) "SCHEDULED")
+                           (org-entry-get (point) "DEADLINE"))))
       (cond
        ((string= state "@DONE") (org-todo 'done))
        ((string= state "@TODO") (org-todo 'todo))
@@ -898,8 +900,21 @@ to `note', we honor that, just like an interactive completion would."
       (save-buffer)
       (let* ((after (substring-no-properties (or (org-get-todo-state) "")))
              (last-repeat-after (org-entry-get (point) "LAST_REPEAT"))
-             (repeated (and last-repeat-after
-                            (not (equal last-repeat-before last-repeat-after)))))
+             (ts-after (list (org-entry-get (point) "SCHEDULED")
+                             (org-entry-get (point) "DEADLINE")))
+             ;; Ground truth that a +/++/.+ repeater fired: completing it shifts
+             ;; its SCHEDULED/DEADLINE timestamp forward. We rely on that rather
+             ;; than LAST_REPEAT because `org-log-repeat' records LAST_REPEAT at
+             ;; minute granularity (so two completions in the same minute — easy
+             ;; to trigger when a slow save makes the user tap done twice —
+             ;; collapse to an equal string) and writes nothing at all when
+             ;; repeat-logging is off. Both produced a spurious "did not change
+             ;; state" 400 even though the cycle succeeded. The timestamp
+             ;; comparison has neither blind spot; LAST_REPEAT stays as a
+             ;; secondary signal for the rare repeater without a dated cookie.
+             (repeated (or (not (equal ts-before ts-after))
+                           (and last-repeat-after
+                                (not (equal last-repeat-before last-repeat-after))))))
         ;; org-mode silently refuses transitions when
         ;; `org-enforce-todo-dependencies' is set and the task has unfinished
         ;; children, or `org-enforce-todo-checkbox-dependencies' with
@@ -1308,6 +1323,20 @@ When PREPEND is non-nil, insert at the beginning of the section."
            (org-back-to-heading t))))
       (save-buffer)))
   (json-encode '((success . t))))
+
+(defun eav-ensure-id (file pos)
+  "Return the org-id :ID: for the heading at POS in FILE, creating one if absent.
+Saves the buffer only when a new ID was created."
+  (require 'org-id)
+  (with-current-buffer (find-file-noselect file)
+    (save-excursion
+      (goto-char pos)
+      (org-back-to-heading t)
+      (let* ((modified-before (buffer-modified-p))
+             (id (org-id-get-create)))
+        (when (buffer-modified-p)
+          (save-buffer))
+        (json-encode `((id . ,id)))))))
 
 (provide 'eav)
 ;;; eav.el ends here

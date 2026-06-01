@@ -108,6 +108,22 @@ struct TodayClassifierTests {
         #expect(result.main.first?.id == "t2")
     }
 
+    @Test("Overdue-deadline task (no scheduled) stays in main")
+    func overdueDeadlineIncluded() {
+        // Regression: a repeating deadline like a Weekly Review <…+1w -0d>
+        // that slipped past its due date has no scheduled timestamp and a
+        // deadline in the PAST — it must still appear in Today (org-agenda
+        // keeps overdue deadlines on the day view until done).
+        let entry = makeAgendaEntry(
+            id: "t2b", agendaType: "deadline", deadline: yesterday()
+        )
+        let result = TodayClassifier.buildItems(
+            today: [entry], all: [], doneStates: ["DONE"], hideHabits: false
+        )
+        #expect(result.main.count == 1)
+        #expect(result.main.first?.id == "t2b")
+    }
+
     @Test("Upcoming-deadline is dropped unconditionally")
     func upcomingDeadlineDropped() {
         // A `upcoming-deadline` entry whose deadline date happens to be today

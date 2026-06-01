@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { Star, Moon, CalendarBlank, Clock, X, WarningCircle, CalendarPlus } from '@phosphor-icons/react';
 
 interface DatePickerProps {
   label: string;
@@ -212,15 +213,15 @@ function DatePickerDropdown({
       {/* Quick options */}
       <div className="px-1.5 pb-1">
         <button onClick={() => handleQuickPick(today)} className="w-full text-left px-2.5 py-[6px] flex items-center gap-2.5 hover:bg-things-sidebar-hover/80 rounded-md transition-colors">
-          <span className="text-dot-yellow text-sm">{'\u2605'}</span>
+          <Star size={14} weight="fill" className="text-dot-yellow" />
           <span className="text-[12px] text-text-primary">Today</span>
         </button>
         <button onClick={() => handleQuickPick(addDays(today, 1))} className="w-full text-left px-2.5 py-[6px] flex items-center gap-2.5 hover:bg-things-sidebar-hover/80 rounded-md transition-colors">
-          <span className="text-priority-b text-sm">{'\u{1F319}'}</span>
+          <Moon size={14} weight="regular" className="text-priority-b" />
           <span className="text-[12px] text-text-primary">Tomorrow</span>
         </button>
         <button onClick={() => { const d = new Date(); handleQuickPick(addDays(today, (8 - d.getDay()) % 7 || 7)); }} className="w-full text-left px-2.5 py-[6px] flex items-center gap-2.5 hover:bg-things-sidebar-hover/80 rounded-md transition-colors">
-          <span className="text-accent text-sm">{'\u{1F4C6}'}</span>
+          <CalendarBlank size={14} weight="regular" className="text-accent" />
           <span className="text-[12px] text-text-primary">Next Week</span>
         </button>
       </div>
@@ -229,7 +230,7 @@ function DatePickerDropdown({
 
       {/* Time input */}
       <div className="px-3 py-2 flex items-center gap-2">
-        <span className="text-accent-teal text-sm">{'\u{1F552}'}</span>
+        <Clock size={14} weight="regular" className="text-accent-teal flex-shrink-0" />
         <input
           type="time"
           value={pendingTime}
@@ -239,7 +240,7 @@ function DatePickerDropdown({
           className="flex-1 bg-things-bg border border-things-border rounded-md px-2 py-1 text-[12px] text-text-primary outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/30 transition-colors"
         />
         {pendingTime && (
-          <button onClick={() => { setPendingTime(''); if (pendingDate) confirmAndClose(pendingDate, null); }} className="text-text-tertiary hover:text-text-secondary text-[10px]" title="Clear time">{'\u2715'}</button>
+          <button onClick={() => { setPendingTime(''); if (pendingDate) confirmAndClose(pendingDate, null); }} className="text-text-tertiary hover:text-text-secondary" title="Clear time"><X size={10} weight="regular" /></button>
         )}
       </div>
 
@@ -269,7 +270,7 @@ function DatePickerDropdown({
           <div className="mx-2 my-0.5 border-t border-things-border/60" />
           <div className="px-1.5 pt-0.5 pb-0.5">
             <button onClick={() => { onClear(); onClose(); }} className="w-full text-left px-2.5 py-[6px] flex items-center gap-2.5 hover:bg-things-sidebar-hover/80 rounded-md transition-colors">
-              <span className="text-priority-a text-sm">{'\u2715'}</span>
+              <X size={14} weight="regular" className="text-priority-a" />
               <span className="text-[12px] text-priority-a">Remove {label.toLowerCase()}</span>
             </button>
           </div>
@@ -311,9 +312,9 @@ export function DatePicker({ label, currentDate, onSelect, onClear, disabled, co
           ${open ? 'ring-1 ring-white/20' : ''}
         `}
       >
-        <span className={hasDate ? (color === 'deadline' ? 'text-priority-a' : 'text-accent') : 'text-text-tertiary'}>
-          {color === 'deadline' ? '\u{1F3F4}' : '\u{1F4C5}'}
-        </span>
+        {color === 'deadline'
+          ? <WarningCircle size={12} weight={hasDate ? 'fill' : 'regular'} className={hasDate ? 'text-priority-a' : 'text-text-tertiary'} />
+          : <CalendarPlus size={12} weight={hasDate ? 'fill' : 'regular'} className={hasDate ? 'text-accent' : 'text-text-tertiary'} />}
         {hasDate ? displayDate : label}
       </button>
 

@@ -25,3 +25,4 @@ futures.workspace = true
 async-stream.workspace = true
 parking_lot.workspace = true
 chrono.workspace = true
+regex.workspace = true

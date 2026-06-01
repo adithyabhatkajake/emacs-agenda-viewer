@@ -31,6 +31,7 @@ pub enum ServerEvent {
         clocking: bool,
     },
     ConfigChanged,
+    HabitsChanged,
 }
 
 impl ServerEvent {
@@ -41,6 +42,7 @@ impl ServerEvent {
             ServerEvent::FileChanged { .. } => "file-changed",
             ServerEvent::ClockChanged { .. } => "clock-changed",
             ServerEvent::ConfigChanged => "config-changed",
+            ServerEvent::HabitsChanged => "habits-changed",
         }
     }
 }

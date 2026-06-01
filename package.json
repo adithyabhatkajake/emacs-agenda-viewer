@@ -15,6 +15,7 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
     "cors": "^2.8.5",
     "express": "^5.1.0"
   },

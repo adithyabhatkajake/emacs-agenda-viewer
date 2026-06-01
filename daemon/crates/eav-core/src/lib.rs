@@ -298,6 +298,25 @@ pub struct ClockStatus {
     pub elapsed: Option<i64>,
 }
 
+/// A single clock entry from eavd's SQLite store. Produced exclusively by the
+/// Rust daemon; never emitted by elisp. `end == None` means the timer is still
+/// running.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Clock {
+    pub id: i64,
+    pub task_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub start: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 // ----------------------------------------------------------------------------
 // Notes / outline
 // ----------------------------------------------------------------------------
@@ -362,6 +381,62 @@ pub struct CaptureTemplate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompts: Option<Vec<CapturePrompt>>,
     pub web_supported: bool,
+}
+
+// ----------------------------------------------------------------------------
+// Habits (DB-backed)
+// ----------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HabitCadenceSpec {
+    /// One of `+`, `++`, `.+` (mirrors org repeater semantics).
+    pub kind: String,
+    /// The "due" interval value.
+    pub value: i64,
+    /// One of `d`, `w`, `m`, `y`.
+    pub unit: String,
+    /// Relaxed-range upper interval value (the `/2w` in `.+1w/2w`). None for
+    /// simple cadences.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_value: Option<i64>,
+    /// Unit for the upper interval; can differ from `unit` (e.g. `+5d/3w`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_unit: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Habit {
+    /// Server-generated UUID.
+    pub id: String,
+    pub title: String,
+    pub cadence: HabitCadenceSpec,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// `YYYY-MM-DD`, the base date for `+`/`++` cycle math.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_date: Option<String>,
+    pub active: bool,
+    /// When true, the habit's checklist resets on each completion.
+    #[serde(default)]
+    pub reset_checklist_on_complete: bool,
+    /// Completion timestamps as org-style strings (`YYYY-MM-DD Day HH:MM`),
+    /// matching the shape the existing client habit-stats code already parses.
+    #[serde(default)]
+    pub completions: Vec<String>,
+    /// Server-computed `YYYY-MM-DD` of the next due date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_due: Option<String>,
+    /// Server-computed `due` | `overdue` | `ok`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
 }
 
 // ----------------------------------------------------------------------------
